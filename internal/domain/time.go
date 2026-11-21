@@ -10,6 +10,7 @@ import (
 
 var utcIsoSecondsRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$`)
 var yearMonthRe = regexp.MustCompile(`^(\d{4})-(\d{2})$`)
+var isoDateRe = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})$`)
 
 func IsValidUtcIsoSeconds(value string) bool {
 	if !utcIsoSecondsRe.MatchString(value) {
@@ -86,4 +87,44 @@ func GetMonthUtcBounds(monthYYYYMM string, tz string) (startUtc string, endUtc s
 func GetMonthStartUtc(monthYYYYMM string, tz string) (string, error) {
 	start, _, err := GetMonthUtcBounds(monthYYYYMM, tz)
 	return start, err
+}
+
+func GetDateRangeUtcBounds(startDateYYYYMMDD string, endDateYYYYMMDD string, tz string) (startUtc string, endUtc string, err error) {
+	startStr := strings.TrimSpace(startDateYYYYMMDD)
+	endStr := strings.TrimSpace(endDateYYYYMMDD)
+	if endStr == "" {
+		endStr = startStr
+	}
+	if startStr == "" {
+		startStr = endStr
+	}
+
+	sm := isoDateRe.FindStringSubmatch(startStr)
+	if sm == nil {
+		return "", "", fmt.Errorf("invalid startDate format (expected YYYY-MM-DD): %s", startDateYYYYMMDD)
+	}
+	em := isoDateRe.FindStringSubmatch(endStr)
+	if em == nil {
+		return "", "", fmt.Errorf("invalid endDate format (expected YYYY-MM-DD): %s", endDateYYYYMMDD)
+	}
+
+	loc, err := LoadTimezone(tz)
+	if err != nil {
+		return "", "", err
+	}
+
+	startDay, err := time.ParseInLocation("2006-01-02", startStr, loc)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid startDate: %s", startDateYYYYMMDD)
+	}
+	endDay, err := time.ParseInLocation("2006-01-02", endStr, loc)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid endDate: %s", endDateYYYYMMDD)
+	}
+	if endDay.Before(startDay) {
+		return "", "", fmt.Errorf("endDate (%s) cannot be earlier than startDate (%s)", endStr, startStr)
+	}
+
+	endExclusive := endDay.AddDate(0, 0, 1)
+	return ToUtcIsoSeconds(startDay), ToUtcIsoSeconds(endExclusive), nil
 }

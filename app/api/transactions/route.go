@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strconv"
 
 	"portspendernote/internal/db"
 	"portspendernote/internal/domain"
@@ -15,18 +16,24 @@ func GET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	items, err := domain.ListTransactions(gdb, domain.ListTransactionsParams{
-		Month:        q.Get("month"),
-		Category:     q.Get("category"),
-		AccountID:    q.Get("accountId"),
-		Search:       q.Get("search"),
-		UnmergedOnly: q.Get("unmergedOnly") == "true" || q.Get("unmergedOnly") == "1",
+	page, _ := strconv.Atoi(q.Get("page"))
+	pageSize, _ := strconv.Atoi(q.Get("pageSize"))
+	res, err := domain.ListTransactions(gdb, domain.ListTransactionsParams{
+		Month:          q.Get("month"),
+		StartDate:      q.Get("startDate"),
+		EndDate:        q.Get("endDate"),
+		Category:       q.Get("category"),
+		AccountID:      q.Get("accountId"),
+		Search:         q.Get("search"),
+		UnreviewedOnly: q.Get("unreviewedOnly") == "true" || q.Get("unreviewedOnly") == "1",
+		Page:           page,
+		PageSize:       pageSize,
 	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, items)
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 func POST(w http.ResponseWriter, r *http.Request) {

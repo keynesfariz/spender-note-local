@@ -183,32 +183,72 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 }
 
 type ListTransactionsParams struct {
-	Month        string
-	Category     string
-	AccountID    string
-	Search       string
-	UnmergedOnly bool
+	Month          string
+	StartDate      string
+	EndDate        string
+	Category       string
+	AccountID      string
+	Search         string
+	UnreviewedOnly bool
+	Page           int
+	PageSize       int
 }
 
-func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) ([]TransactionListItem, error) {
+type PaginatedTransactionsResponse struct {
+	Items                  []TransactionListItem `json:"items"`
+	TotalCount             int64                 `json:"totalCount"`
+	Page                   int                   `json:"page"`
+	PageSize               int                   `json:"pageSize"`
+	TotalInRangeCount      int64                 `json:"totalInRangeCount"`
+	UnreviewedInRangeCount int64                 `json:"unreviewedInRangeCount"`
+}
+
+func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTransactionsResponse, error) {
+	page := params.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := params.PageSize
+	if pageSize <= 0 {
+		pageSize = 25
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
 	tzPtr, curPtr := getLocaleConfig(gdb)
 	if tzPtr == nil || *tzPtr == "" || curPtr == nil || *curPtr == "" {
-		return []TransactionListItem{}, nil
+		return &PaginatedTransactionsResponse{
+			Items:    []TransactionListItem{},
+			Page:     page,
+			PageSize: pageSize,
+		}, nil
 	}
 	tz := *tzPtr
 	currency := *curPtr
 
-	var conds []string
-	var args []any
+	var rangeConds []string
+	var rangeArgs []any
 
-	if strings.TrimSpace(params.Month) != "" {
+	if strings.TrimSpace(params.StartDate) != "" || strings.TrimSpace(params.EndDate) != "" {
+		startUtc, endUtc, err := GetDateRangeUtcBounds(params.StartDate, params.EndDate, tz)
+		if err != nil {
+			return nil, err
+		}
+		rangeConds = append(rangeConds, "t.occurred_at_utc >= ? AND t.occurred_at_utc < ?")
+		rangeArgs = append(rangeArgs, startUtc, endUtc)
+	} else if strings.TrimSpace(params.Month) != "" {
 		startUtc, endUtc, err := GetMonthUtcBounds(params.Month, tz)
 		if err != nil {
 			return nil, err
 		}
-		conds = append(conds, "t.occurred_at_utc >= ? AND t.occurred_at_utc < ?")
-		args = append(args, startUtc, endUtc)
+		rangeConds = append(rangeConds, "t.occurred_at_utc >= ? AND t.occurred_at_utc < ?")
+		rangeArgs = append(rangeArgs, startUtc, endUtc)
 	}
+
+	conds := append([]string{}, rangeConds...)
+	args := append([]any{}, rangeArgs...)
+
 	if params.Category != "" && params.Category != "all" {
 		conds = append(conds, "t.category = ?")
 		args = append(args, params.Category)
@@ -226,10 +266,37 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) ([]Transactio
 		conds = append(conds, "(LOWER(t.merchant) LIKE ? OR LOWER(COALESCE(t.note, '')) LIKE ?)")
 		args = append(args, like, like)
 	}
+	if params.UnreviewedOnly {
+		conds = append(conds, "t.reviewed = 0")
+	}
 
+	rangeWhere := ""
+	if len(rangeConds) > 0 {
+		rangeWhere = "WHERE " + strings.Join(rangeConds, " AND ")
+	}
 	whereClause := ""
 	if len(conds) > 0 {
 		whereClause = "WHERE " + strings.Join(conds, " AND ")
+	}
+
+	type rangeStatsRow struct {
+		TotalInRange      int64 `gorm:"column:total_in_range"`
+		UnreviewedInRange int64 `gorm:"column:unreviewed_in_range"`
+	}
+	var rangeStats rangeStatsRow
+	if err := gdb.Raw(`
+		SELECT
+			COUNT(*) AS total_in_range,
+			COALESCE(SUM(CASE WHEN t.reviewed = 0 THEN 1 ELSE 0 END), 0) AS unreviewed_in_range
+		FROM transactions t
+		`+rangeWhere, rangeArgs...,
+	).Scan(&rangeStats).Error; err != nil {
+		return nil, err
+	}
+
+	var totalCount int64
+	if err := gdb.Raw(`SELECT COUNT(*) FROM transactions t `+whereClause, args...).Scan(&totalCount).Error; err != nil {
+		return nil, err
 	}
 
 	type rawTxRow struct {
@@ -251,6 +318,9 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) ([]Transactio
 		RolesCSV         *string `gorm:"column:roles_csv"`
 	}
 
+	offset := (page - 1) * pageSize
+	pageArgs := append(append([]any{}, args...), pageSize, offset)
+
 	var rows []rawTxRow
 	query := `
 		SELECT
@@ -261,9 +331,10 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) ([]Transactio
 		FROM transactions t
 		LEFT JOIN accounts a ON a.id = t.account_id
 		` + whereClause + `
-		ORDER BY t.occurred_at_utc DESC, t.created_at_utc DESC`
+		ORDER BY t.occurred_at_utc DESC, t.created_at_utc DESC
+		LIMIT ? OFFSET ?`
 
-	if err := gdb.Raw(query, args...).Scan(&rows).Error; err != nil {
+	if err := gdb.Raw(query, pageArgs...).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 
@@ -273,7 +344,7 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) ([]Transactio
 		if r.RolesCSV != nil && *r.RolesCSV != "" {
 			roles = strings.Split(*r.RolesCSV, ",")
 		}
-		item := TransactionListItem{
+		out = append(out, TransactionListItem{
 			ID:                r.ID,
 			SourceType:        r.SourceType,
 			AccountID:         r.AccountID,
@@ -292,13 +363,16 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) ([]Transactio
 			SourceCount:       len(roles),
 			SourceRoles:       roles,
 			IsForeignCurrency: r.Currency != currency,
-		}
-		if params.UnmergedOnly && item.SourceCount != 1 {
-			continue
-		}
-		out = append(out, item)
+		})
 	}
-	return out, nil
+	return &PaginatedTransactionsResponse{
+		Items:                  out,
+		TotalCount:             totalCount,
+		Page:                   page,
+		PageSize:               pageSize,
+		TotalInRangeCount:      rangeStats.TotalInRange,
+		UnreviewedInRangeCount: rangeStats.UnreviewedInRange,
+	}, nil
 }
 
 func GetTransactionDetail(gdb *gorm.DB, id string) (*TransactionDetailView, error) {
@@ -433,6 +507,7 @@ func CreateManualTransaction(gdb *gorm.DB, input CreateManualTransactionInput) (
 		Merchant:       merchant,
 		Category:       category,
 		ManualOverride: 0,
+		Reviewed:       1,
 		Note:           note,
 		CreatedAtUtc:   nowUtc,
 		UpdatedAtUtc:   nowUtc,
@@ -542,6 +617,7 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 			"merchant":        merchant,
 			"category":        category,
 			"manual_override": manualOverride,
+			"reviewed":        1,
 			"note":            note,
 			"updated_at_utc":  NowUtcIsoSeconds(),
 		}).Error; err != nil {
@@ -574,4 +650,227 @@ func DeleteTransaction(gdb *gorm.DB, id string) error {
 		}
 		return tx.Where("id = ?", id).Delete(&db.Transaction{}).Error
 	})
+}
+
+func nullableStringEqual(a, b *string) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func MarkTransactionsReviewed(gdb *gorm.DB, transactionIDs []string) (int64, error) {
+	seen := make(map[string]struct{}, len(transactionIDs))
+	ids := make([]string, 0, len(transactionIDs))
+	for _, raw := range transactionIDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return 0, errors.New("Select at least one transaction to mark reviewed.")
+	}
+
+	res := gdb.Model(&db.Transaction{}).Where("id IN ?", ids).Updates(map[string]any{
+		"reviewed":       1,
+		"updated_at_utc": NowUtcIsoSeconds(),
+	})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
+func DuplicateMergeTransactions(gdb *gorm.DB, keepID, dropID string) (*TransactionListItem, error) {
+	keepID = strings.TrimSpace(keepID)
+	dropID = strings.TrimSpace(dropID)
+	if keepID == "" || dropID == "" || keepID == dropID {
+		return nil, errors.New("Duplicate merge requires exactly 2 distinct transactions.")
+	}
+
+	var result TransactionListItem
+	err := gdb.Transaction(func(tx *gorm.DB) error {
+		var keepTx, dropTx db.Transaction
+		if err := tx.Where("id = ?", keepID).First(&keepTx).Error; err != nil {
+			return errors.New("Cannot merge: one or both transactions no longer exist.")
+		}
+		if err := tx.Where("id = ?", dropID).First(&dropTx).Error; err != nil {
+			return errors.New("Cannot merge: one or both transactions no longer exist.")
+		}
+		if keepTx.Currency != dropTx.Currency || !nullableStringEqual(keepTx.AccountID, dropTx.AccountID) {
+			return errors.New("Duplicate merge requires transactions with the same currency and account.")
+		}
+		if keepTx.AmountMinor != dropTx.AmountMinor {
+			return errors.New("Duplicate merge requires transactions with equal amounts.")
+		}
+
+		// Re-point transaction_sources before deleting the absorbed transaction so
+		// ON DELETE CASCADE does not drop linked emails and raw_emails stay extracted.
+		if err := tx.Model(&db.TransactionSource{}).Where("transaction_id = ?", dropID).Updates(map[string]any{
+			"transaction_id": keepID,
+			"match_state":    "confirmed",
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&db.TransactionSource{}).Where("transaction_id = ?", keepID).Update("match_state", "confirmed").Error; err != nil {
+			return err
+		}
+
+		if err := tx.Where("id = ?", dropID).Delete(&db.Transaction{}).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Model(&db.Transaction{}).Where("id = ?", keepID).Updates(map[string]any{
+			"reviewed":       1,
+			"updated_at_utc": NowUtcIsoSeconds(),
+		}).Error; err != nil {
+			return err
+		}
+
+		detail, err := GetTransactionDetail(tx, keepID)
+		if err != nil {
+			return err
+		}
+		result = detail.Transaction
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+type CombineTransactionsInput struct {
+	TransactionIDs []string `json:"transactionIds"`
+	Merchant       string   `json:"merchant"`
+	Category       *string  `json:"category"`
+	HasAccountID   bool     `json:"-"`
+	AccountID      *string  `json:"account_id"`
+	OccurredAtUtc  string   `json:"occurred_at_utc"`
+	HasNote        bool     `json:"-"`
+	Note           *string  `json:"note"`
+}
+
+func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*TransactionListItem, error) {
+	seen := make(map[string]struct{}, len(input.TransactionIDs))
+	ids := make([]string, 0, len(input.TransactionIDs))
+	for _, raw := range input.TransactionIDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) < 2 {
+		return nil, errors.New("Combine transactions requires at least 2 distinct transactions.")
+	}
+
+	merchant := strings.TrimSpace(input.Merchant)
+	if merchant == "" {
+		return nil, errors.New("Merchant name is required.")
+	}
+	occurred := strings.TrimSpace(input.OccurredAtUtc)
+	if !IsValidUtcIsoSeconds(occurred) {
+		return nil, errors.New("Transaction date must be a valid UTC ISO-8601 timestamp.")
+	}
+	category := DefaultCategory
+	if input.Category != nil && strings.TrimSpace(*input.Category) != "" {
+		category = strings.TrimSpace(*input.Category)
+	}
+
+	var result TransactionListItem
+	err := gdb.Transaction(func(tx *gorm.DB) error {
+		var rows []db.Transaction
+		if err := tx.Where("id IN ?", ids).Find(&rows).Error; err != nil {
+			return err
+		}
+		if len(rows) != len(ids) {
+			return errors.New("Cannot combine: one or more selected transactions no longer exist.")
+		}
+
+		baseCurrency := rows[0].Currency
+		baseAccountID := rows[0].AccountID
+		var totalAmount int64
+		for _, r := range rows {
+			if r.Currency != baseCurrency || !nullableStringEqual(r.AccountID, baseAccountID) {
+				return errors.New("Combine transactions requires all selected transactions to share the same currency and account.")
+			}
+			totalAmount += r.AmountMinor
+		}
+
+		accountID := baseAccountID
+		if input.HasAccountID {
+			if input.AccountID != nil && strings.TrimSpace(*input.AccountID) != "" {
+				trimmed := strings.TrimSpace(*input.AccountID)
+				if err := AssertAccountExists(tx, trimmed, ""); err != nil {
+					return err
+				}
+				accountID = &trimmed
+			} else {
+				accountID = nil
+			}
+		}
+
+		var note *string
+		if input.HasNote {
+			if input.Note != nil && strings.TrimSpace(*input.Note) != "" {
+				trimmed := strings.TrimSpace(*input.Note)
+				note = &trimmed
+			}
+		}
+
+		survivorID := ids[0]
+		absorbedIDs := ids[1:]
+
+		// Re-point transaction_sources from absorbed transactions before deletion.
+		if err := tx.Model(&db.TransactionSource{}).Where("transaction_id IN ?", absorbedIDs).Updates(map[string]any{
+			"transaction_id": survivorID,
+			"match_state":    "confirmed",
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&db.TransactionSource{}).Where("transaction_id = ?", survivorID).Update("match_state", "confirmed").Error; err != nil {
+			return err
+		}
+
+		if err := tx.Where("id IN ?", absorbedIDs).Delete(&db.Transaction{}).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Model(&db.Transaction{}).Where("id = ?", survivorID).Updates(map[string]any{
+			"account_id":      accountID,
+			"amount_minor":    totalAmount,
+			"occurred_at_utc": occurred,
+			"merchant":        merchant,
+			"category":        category,
+			"manual_override": 1,
+			"reviewed":        1,
+			"note":            note,
+			"updated_at_utc":  NowUtcIsoSeconds(),
+		}).Error; err != nil {
+			return err
+		}
+
+		detail, err := GetTransactionDetail(tx, survivorID)
+		if err != nil {
+			return err
+		}
+		result = detail.Transaction
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }

@@ -962,12 +962,10 @@ func MergeAccounts(gdb *gorm.DB, sourceAccountID, targetAccountID string) (map[s
 			return err
 		}
 
-		suggestionIDs := RunPostMergeDedupForAccount(tx, targetAccountID, NowUtcIsoSeconds())
 		result = map[string]any{
 			"account":           buildAccountSummary(tx, updatedTarget, updatedTarget.Currency, nil),
 			"movedTransactions": txMove.RowsAffected,
 			"movedIdentifiers":  movedIdents,
-			"suggestionIds":     suggestionIDs,
 		}
 		return nil
 	})

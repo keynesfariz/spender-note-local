@@ -166,6 +166,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   merchant TEXT NOT NULL,
   category TEXT NOT NULL,
   manual_override INTEGER NOT NULL DEFAULT 0 CHECK (manual_override IN (0, 1)),
+  reviewed INTEGER NOT NULL DEFAULT 1 CHECK (reviewed IN (0, 1)),
   note TEXT,
   created_at_utc TEXT NOT NULL CHECK (length(created_at_utc) = 20 AND created_at_utc LIKE '%Z'),
   updated_at_utc TEXT NOT NULL CHECK (length(updated_at_utc) = 20 AND updated_at_utc LIKE '%Z')
@@ -175,8 +176,6 @@ CREATE INDEX IF NOT EXISTS idx_transactions_occurred
   ON transactions(occurred_at_utc DESC);
 CREATE INDEX IF NOT EXISTS idx_transactions_account_occurred
   ON transactions(account_id, occurred_at_utc);
-CREATE INDEX IF NOT EXISTS idx_transactions_dedup
-  ON transactions(currency, amount_minor, occurred_at_utc);
 
 CREATE TABLE IF NOT EXISTS transaction_sources (
   id TEXT PRIMARY KEY,
@@ -187,33 +186,8 @@ CREATE TABLE IF NOT EXISTS transaction_sources (
   match_state TEXT NOT NULL CHECK (match_state IN ('auto', 'confirmed', 'single'))
 ) STRICT;
 
-CREATE TABLE IF NOT EXISTS rejected_merges (
-  email_a_id TEXT NOT NULL REFERENCES raw_emails(id) ON DELETE CASCADE,
-  email_b_id TEXT NOT NULL REFERENCES raw_emails(id) ON DELETE CASCADE,
-  created_at_utc TEXT NOT NULL CHECK (length(created_at_utc) = 20 AND created_at_utc LIKE '%Z'),
-  PRIMARY KEY (email_a_id, email_b_id),
-  CHECK (email_a_id < email_b_id)
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS merge_suggestions (
-  id TEXT PRIMARY KEY,
-  source_transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
-  target_transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
-  score REAL NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'dismissed')),
-  created_at_utc TEXT NOT NULL CHECK (length(created_at_utc) = 20 AND created_at_utc LIKE '%Z'),
-  CHECK (source_transaction_id < target_transaction_id),
-  UNIQUE (source_transaction_id, target_transaction_id)
-) STRICT;
-
 CREATE INDEX IF NOT EXISTS idx_transaction_sources_tx
   ON transaction_sources(transaction_id);
-
-CREATE INDEX IF NOT EXISTS idx_merge_suggestions_target_status
-  ON merge_suggestions(target_transaction_id, status);
-
-CREATE INDEX IF NOT EXISTS idx_merge_suggestions_status
-  ON merge_suggestions(status);
 `
 
 var (
@@ -269,6 +243,10 @@ func OpenDatabase(dbPath string, recoverStaleRuns bool) (*gorm.DB, error) {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 
+	if err := migrateSchema(gdb); err != nil {
+		return nil, fmt.Errorf("migrate schema: %w", err)
+	}
+
 	if err := gdb.Exec("INSERT OR IGNORE INTO app_settings (id) VALUES (1)").Error; err != nil {
 		return nil, fmt.Errorf("seed app_settings: %w", err)
 	}
@@ -292,6 +270,42 @@ func OpenDatabase(dbPath string, recoverStaleRuns bool) (*gorm.DB, error) {
 	}
 
 	return gdb, nil
+}
+
+func migrateSchema(gdb *gorm.DB) error {
+	type tableCol struct {
+		Name string `gorm:"column:name"`
+	}
+	var cols []tableCol
+	if err := gdb.Raw(`PRAGMA table_info(transactions)`).Scan(&cols).Error; err != nil {
+		return fmt.Errorf("inspect transactions columns: %w", err)
+	}
+	hasReviewed := false
+	for _, col := range cols {
+		if col.Name == "reviewed" {
+			hasReviewed = true
+			break
+		}
+	}
+	if !hasReviewed {
+		if err := gdb.Exec(`ALTER TABLE transactions ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 1 CHECK (reviewed IN (0, 1))`).Error; err != nil {
+			return fmt.Errorf("add transactions.reviewed column: %w", err)
+		}
+	}
+
+	if err := gdb.Exec(`CREATE INDEX IF NOT EXISTS idx_transactions_occurred_reviewed ON transactions(occurred_at_utc DESC, reviewed)`).Error; err != nil {
+		return fmt.Errorf("create reviewed index: %w", err)
+	}
+	if err := gdb.Exec(`DROP INDEX IF EXISTS idx_transactions_dedup`).Error; err != nil {
+		return fmt.Errorf("drop legacy dedup index: %w", err)
+	}
+	if err := gdb.Exec(`DROP TABLE IF EXISTS merge_suggestions`).Error; err != nil {
+		return fmt.Errorf("drop legacy merge_suggestions table: %w", err)
+	}
+	if err := gdb.Exec(`DROP TABLE IF EXISTS rejected_merges`).Error; err != nil {
+		return fmt.Errorf("drop legacy rejected_merges table: %w", err)
+	}
+	return nil
 }
 
 func GetDB() (*gorm.DB, error) {

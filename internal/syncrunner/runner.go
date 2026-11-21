@@ -638,7 +638,7 @@ func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *va
 				}
 			}
 
-			dedupRes, err := domain.DeduplicateAndSaveTransaction(tx, domain.ExtractedTransactionInput{
+			if _, err := domain.SaveExtractedTransaction(tx, domain.ExtractedTransactionInput{
 				EmailID:           email.ID,
 				EmailKind:         effectiveRole,
 				AmountMinor:       extracted.AmountMinor,
@@ -649,8 +649,7 @@ func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *va
 				CardLast4:         extracted.CardLast4,
 				ReferenceCode:     extracted.ReferenceCode,
 				ResolvedAccountID: accountID,
-			})
-			if err != nil {
+			}); err != nil {
 				return err
 			}
 
@@ -659,19 +658,11 @@ func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *va
 				"error_message": nil,
 			})
 
-			if dedupRes.Outcome == "merged" {
-				tx.Exec(`
-					UPDATE sync_runs
-					SET merged_count = merged_count + 1,
-					    provisional_accounts_created = provisional_accounts_created + ?
-					WHERE id = ?`, provisionalCreated, runID)
-			} else {
-				tx.Exec(`
-					UPDATE sync_runs
-					SET imported_count = imported_count + 1,
-					    provisional_accounts_created = provisional_accounts_created + ?
-					WHERE id = ?`, provisionalCreated, runID)
-			}
+			tx.Exec(`
+				UPDATE sync_runs
+				SET imported_count = imported_count + 1,
+				    provisional_accounts_created = provisional_accounts_created + ?
+				WHERE id = ?`, provisionalCreated, runID)
 			return nil
 		})
 		if txErr != nil {

@@ -152,6 +152,7 @@ type Transaction struct {
 	Merchant       string  `gorm:"column:merchant;not null" json:"merchant"`
 	Category       string  `gorm:"column:category;not null" json:"category"`
 	ManualOverride int     `gorm:"column:manual_override;not null;default:0" json:"manual_override"`
+	Reviewed       int     `gorm:"column:reviewed;not null" json:"reviewed"`
 	Note           *string `gorm:"column:note" json:"note"`
 	CreatedAtUtc   string  `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
 	UpdatedAtUtc   string  `gorm:"column:updated_at_utc;not null" json:"updated_at_utc"`
@@ -169,22 +170,3 @@ type TransactionSource struct {
 }
 
 func (TransactionSource) TableName() string { return "transaction_sources" }
-
-type RejectedMerge struct {
-	EmailAID     string `gorm:"column:email_a_id;primaryKey"`
-	EmailBID     string `gorm:"column:email_b_id;primaryKey"`
-	CreatedAtUtc string `gorm:"column:created_at_utc;not null"`
-}
-
-func (RejectedMerge) TableName() string { return "rejected_merges" }
-
-type MergeSuggestion struct {
-	ID                  string  `gorm:"column:id;primaryKey" json:"id"`
-	SourceTransactionID string  `gorm:"column:source_transaction_id;not null" json:"source_transaction_id"`
-	TargetTransactionID string  `gorm:"column:target_transaction_id;not null" json:"target_transaction_id"`
-	Score               float64 `gorm:"column:score;not null" json:"score"`
-	Status              string  `gorm:"column:status;not null;default:pending" json:"status"`
-	CreatedAtUtc        string  `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
-}
-
-func (MergeSuggestion) TableName() string { return "merge_suggestions" }

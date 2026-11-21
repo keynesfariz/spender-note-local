@@ -28,40 +28,39 @@ type SpendingGroupRow struct {
 }
 
 type MonthlySpendingSummary struct {
-	Configured                   bool               `json:"configured"`
-	Month                        *string            `json:"month"`
-	Timezone                     *string            `json:"timezone"`
-	Currency                     *string            `json:"currency"`
-	StartUtc                     *string            `json:"startUtc"`
-	EndUtc                       *string            `json:"endUtc"`
-	TotalSpentMinor              int64              `json:"totalSpentMinor"`
-	TransactionCount             int64              `json:"transactionCount"`
-	ForeignCurrencyCount         int64              `json:"foreignCurrencyCount"`
-	PendingMergeSuggestionsCount int64              `json:"pendingMergeSuggestionsCount"`
-	ByCategory                   []SpendingGroupRow `json:"byCategory"`
-	ByMerchant                   []SpendingGroupRow `json:"byMerchant"`
-	ByAccount                    []SpendingGroupRow `json:"byAccount"`
+	Configured           bool               `json:"configured"`
+	Month                *string            `json:"month"`
+	Timezone             *string            `json:"timezone"`
+	Currency             *string            `json:"currency"`
+	StartUtc             *string            `json:"startUtc"`
+	EndUtc               *string            `json:"endUtc"`
+	TotalSpentMinor      int64              `json:"totalSpentMinor"`
+	TransactionCount     int64              `json:"transactionCount"`
+	ForeignCurrencyCount int64              `json:"foreignCurrencyCount"`
+	ByCategory           []SpendingGroupRow `json:"byCategory"`
+	ByMerchant           []SpendingGroupRow `json:"byMerchant"`
+	ByAccount            []SpendingGroupRow `json:"byAccount"`
 }
 
 type TransactionListItem struct {
-	ID                     string   `json:"id"`
-	SourceType             string   `json:"source_type"`
-	AccountID              *string  `json:"account_id"`
-	AccountName            *string  `json:"account_name"`
-	PaymentMethodRaw       *string  `json:"payment_method_raw"`
-	AmountMinor            int64    `json:"amount_minor"`
-	Currency               string   `json:"currency"`
-	OccurredAtUtc          string   `json:"occurred_at_utc"`
-	Merchant               string   `json:"merchant"`
-	Category               string   `json:"category"`
-	ManualOverride         int      `json:"manual_override"`
-	Note                   *string  `json:"note"`
-	CreatedAtUtc           string   `json:"created_at_utc"`
-	UpdatedAtUtc           string   `json:"updated_at_utc"`
-	SourceCount            int      `json:"sourceCount"`
-	SourceRoles            []string `json:"sourceRoles"`
-	IsForeignCurrency      bool     `json:"isForeignCurrency"`
-	PendingSuggestionCount int64    `json:"pendingSuggestionCount"`
+	ID                string   `json:"id"`
+	SourceType        string   `json:"source_type"`
+	AccountID         *string  `json:"account_id"`
+	AccountName       *string  `json:"account_name"`
+	PaymentMethodRaw  *string  `json:"payment_method_raw"`
+	AmountMinor       int64    `json:"amount_minor"`
+	Currency          string   `json:"currency"`
+	OccurredAtUtc     string   `json:"occurred_at_utc"`
+	Merchant          string   `json:"merchant"`
+	Category          string   `json:"category"`
+	ManualOverride    int      `json:"manual_override"`
+	Reviewed          int      `json:"reviewed"`
+	Note              *string  `json:"note"`
+	CreatedAtUtc      string   `json:"created_at_utc"`
+	UpdatedAtUtc      string   `json:"updated_at_utc"`
+	SourceCount       int      `json:"sourceCount"`
+	SourceRoles       []string `json:"sourceRoles"`
+	IsForeignCurrency bool     `json:"isForeignCurrency"`
 }
 
 type TransactionSourceView struct {
@@ -78,21 +77,9 @@ type TransactionSourceView struct {
 	RawLlmJSON      *string `gorm:"column:raw_llm_json" json:"raw_llm_json"`
 }
 
-type MergeSuggestionView struct {
-	ID                 string  `json:"id"`
-	OtherTransactionID string  `json:"other_transaction_id"`
-	OtherMerchant      string  `json:"other_merchant"`
-	OtherAmountMinor   int64   `json:"other_amount_minor"`
-	OtherCurrency      string  `json:"other_currency"`
-	OtherOccurredAtUtc string  `json:"other_occurred_at_utc"`
-	Score              float64 `json:"score"`
-	Status             string  `json:"status"`
-}
-
 type TransactionDetailView struct {
-	Transaction      TransactionListItem     `json:"transaction"`
-	Sources          []TransactionSourceView `json:"sources"`
-	MergeSuggestions []MergeSuggestionView   `json:"mergeSuggestions"`
+	Transaction TransactionListItem     `json:"transaction"`
+	Sources     []TransactionSourceView `json:"sources"`
 }
 
 func getLocaleConfig(gdb *gorm.DB) (tz *string, cur *string) {
@@ -179,23 +166,19 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 		currency, startUtc, endUtc,
 	).Scan(&byAccount)
 
-	var pendingSug int64
-	gdb.Model(&db.MergeSuggestion{}).Where("status = 'pending'").Count(&pendingSug)
-
 	return &MonthlySpendingSummary{
-		Configured:                   true,
-		Month:                        &month,
-		Timezone:                     &tz,
-		Currency:                     &currency,
-		StartUtc:                     &startUtc,
-		EndUtc:                       &endUtc,
-		TotalSpentMinor:              totals.LocalTotal,
-		TransactionCount:             totals.LocalCount + totals.ForeignCount,
-		ForeignCurrencyCount:         totals.ForeignCount,
-		PendingMergeSuggestionsCount: pendingSug,
-		ByCategory:                   byCategory,
-		ByMerchant:                   byMerchant,
-		ByAccount:                    byAccount,
+		Configured:           true,
+		Month:                &month,
+		Timezone:             &tz,
+		Currency:             &currency,
+		StartUtc:             &startUtc,
+		EndUtc:               &endUtc,
+		TotalSpentMinor:      totals.LocalTotal,
+		TransactionCount:     totals.LocalCount + totals.ForeignCount,
+		ForeignCurrencyCount: totals.ForeignCount,
+		ByCategory:           byCategory,
+		ByMerchant:           byMerchant,
+		ByAccount:            byAccount,
 	}, nil
 }
 
@@ -261,11 +244,11 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) ([]Transactio
 		Merchant         string  `gorm:"column:merchant"`
 		Category         string  `gorm:"column:category"`
 		ManualOverride   int     `gorm:"column:manual_override"`
+		Reviewed         int     `gorm:"column:reviewed"`
 		Note             *string `gorm:"column:note"`
 		CreatedAtUtc     string  `gorm:"column:created_at_utc"`
 		UpdatedAtUtc     string  `gorm:"column:updated_at_utc"`
 		RolesCSV         *string `gorm:"column:roles_csv"`
-		PendingSugCount  int64   `gorm:"column:pending_sug_count"`
 	}
 
 	var rows []rawTxRow
@@ -274,8 +257,7 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) ([]Transactio
 			t.*,
 			a.name AS account_name,
 			` + paymentMethodSubquery + ` AS payment_method_raw,
-			(SELECT GROUP_CONCAT(ts.role) FROM transaction_sources ts WHERE ts.transaction_id = t.id) AS roles_csv,
-			(SELECT COUNT(*) FROM merge_suggestions ms WHERE ms.status = 'pending' AND (ms.source_transaction_id = t.id OR ms.target_transaction_id = t.id)) AS pending_sug_count
+			(SELECT GROUP_CONCAT(ts.role) FROM transaction_sources ts WHERE ts.transaction_id = t.id) AS roles_csv
 		FROM transactions t
 		LEFT JOIN accounts a ON a.id = t.account_id
 		` + whereClause + `
@@ -292,26 +274,26 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) ([]Transactio
 			roles = strings.Split(*r.RolesCSV, ",")
 		}
 		item := TransactionListItem{
-			ID:                     r.ID,
-			SourceType:             r.SourceType,
-			AccountID:              r.AccountID,
-			AccountName:            r.AccountName,
-			PaymentMethodRaw:       r.PaymentMethodRaw,
-			AmountMinor:            r.AmountMinor,
-			Currency:               r.Currency,
-			OccurredAtUtc:          r.OccurredAtUtc,
-			Merchant:               r.Merchant,
-			Category:               r.Category,
-			ManualOverride:         r.ManualOverride,
-			Note:                   r.Note,
-			CreatedAtUtc:           r.CreatedAtUtc,
-			UpdatedAtUtc:           r.UpdatedAtUtc,
-			SourceCount:            len(roles),
-			SourceRoles:            roles,
-			IsForeignCurrency:      r.Currency != currency,
-			PendingSuggestionCount: r.PendingSugCount,
+			ID:                r.ID,
+			SourceType:        r.SourceType,
+			AccountID:         r.AccountID,
+			AccountName:       r.AccountName,
+			PaymentMethodRaw:  r.PaymentMethodRaw,
+			AmountMinor:       r.AmountMinor,
+			Currency:          r.Currency,
+			OccurredAtUtc:     r.OccurredAtUtc,
+			Merchant:          r.Merchant,
+			Category:          r.Category,
+			ManualOverride:    r.ManualOverride,
+			Reviewed:          r.Reviewed,
+			Note:              r.Note,
+			CreatedAtUtc:      r.CreatedAtUtc,
+			UpdatedAtUtc:      r.UpdatedAtUtc,
+			SourceCount:       len(roles),
+			SourceRoles:       roles,
+			IsForeignCurrency: r.Currency != currency,
 		}
-		if params.UnmergedOnly && !(item.SourceCount == 1 || item.PendingSuggestionCount > 0) {
+		if params.UnmergedOnly && item.SourceCount != 1 {
 			continue
 		}
 		out = append(out, item)
@@ -334,6 +316,7 @@ func GetTransactionDetail(gdb *gorm.DB, id string) (*TransactionDetailView, erro
 		Merchant         string  `gorm:"column:merchant"`
 		Category         string  `gorm:"column:category"`
 		ManualOverride   int     `gorm:"column:manual_override"`
+		Reviewed         int     `gorm:"column:reviewed"`
 		Note             *string `gorm:"column:note"`
 		CreatedAtUtc     string  `gorm:"column:created_at_utc"`
 		UpdatedAtUtc     string  `gorm:"column:updated_at_utc"`
@@ -361,29 +344,6 @@ func GetTransactionDetail(gdb *gorm.DB, id string) (*TransactionDetailView, erro
 		WHERE ts.transaction_id = ?
 		ORDER BY re.internal_date_ms ASC`, id).Scan(&sources)
 
-	var sugsRaw []db.MergeSuggestion
-	gdb.Where("status = 'pending' AND (source_transaction_id = ? OR target_transaction_id = ?)", id, id).Find(&sugsRaw)
-	mergeSuggestions := make([]MergeSuggestionView, 0, len(sugsRaw))
-	for _, s := range sugsRaw {
-		otherID := s.SourceTransactionID
-		if otherID == id {
-			otherID = s.TargetTransactionID
-		}
-		var otherTx db.Transaction
-		if err := gdb.Select("merchant, amount_minor, currency, occurred_at_utc").Where("id = ?", otherID).First(&otherTx).Error; err == nil {
-			mergeSuggestions = append(mergeSuggestions, MergeSuggestionView{
-				ID:                 s.ID,
-				OtherTransactionID: otherID,
-				OtherMerchant:      otherTx.Merchant,
-				OtherAmountMinor:   otherTx.AmountMinor,
-				OtherCurrency:      otherTx.Currency,
-				OtherOccurredAtUtc: otherTx.OccurredAtUtc,
-				Score:              s.Score,
-				Status:             s.Status,
-			})
-		}
-	}
-
 	roles := make([]string, 0, len(sources))
 	for _, s := range sources {
 		roles = append(roles, s.Role)
@@ -395,27 +355,26 @@ func GetTransactionDetail(gdb *gorm.DB, id string) (*TransactionDetailView, erro
 
 	return &TransactionDetailView{
 		Transaction: TransactionListItem{
-			ID:                     txRow.ID,
-			SourceType:             txRow.SourceType,
-			AccountID:              txRow.AccountID,
-			AccountName:            txRow.AccountName,
-			PaymentMethodRaw:       txRow.PaymentMethodRaw,
-			AmountMinor:            txRow.AmountMinor,
-			Currency:               txRow.Currency,
-			OccurredAtUtc:          txRow.OccurredAtUtc,
-			Merchant:               txRow.Merchant,
-			Category:               txRow.Category,
-			ManualOverride:         txRow.ManualOverride,
-			Note:                   txRow.Note,
-			CreatedAtUtc:           txRow.CreatedAtUtc,
-			UpdatedAtUtc:           txRow.UpdatedAtUtc,
-			SourceCount:            len(sources),
-			SourceRoles:            roles,
-			IsForeignCurrency:      isForeign,
-			PendingSuggestionCount: int64(len(mergeSuggestions)),
+			ID:                txRow.ID,
+			SourceType:        txRow.SourceType,
+			AccountID:         txRow.AccountID,
+			AccountName:       txRow.AccountName,
+			PaymentMethodRaw:  txRow.PaymentMethodRaw,
+			AmountMinor:       txRow.AmountMinor,
+			Currency:          txRow.Currency,
+			OccurredAtUtc:     txRow.OccurredAtUtc,
+			Merchant:          txRow.Merchant,
+			Category:          txRow.Category,
+			ManualOverride:    txRow.ManualOverride,
+			Reviewed:          txRow.Reviewed,
+			Note:              txRow.Note,
+			CreatedAtUtc:      txRow.CreatedAtUtc,
+			UpdatedAtUtc:      txRow.UpdatedAtUtc,
+			SourceCount:       len(sources),
+			SourceRoles:       roles,
+			IsForeignCurrency: isForeign,
 		},
-		Sources:          sources,
-		MergeSuggestions: mergeSuggestions,
+		Sources: sources,
 	}, nil
 }
 

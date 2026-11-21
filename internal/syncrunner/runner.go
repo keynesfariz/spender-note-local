@@ -382,20 +382,7 @@ func runFullSyncJob(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 			break
 		}
 
-		if !result.HasMore {
-			nextCursor := sender.LastInternalDateMs
-			if maxInternalDateMs != nil {
-				v := *maxInternalDateMs
-				if nextCursor != nil && *nextCursor > v {
-					v = *nextCursor
-				}
-				nextCursor = &v
-			}
-			gdb.Model(&db.Sender{}).Where("id = ?", sender.ID).Updates(map[string]any{
-				"last_internal_date_ms": nextCursor,
-				"last_sync_at_utc":      domain.NowUtcIsoSeconds(),
-			})
-		}
+		updateSenderSyncState(gdb, sender, maxInternalDateMs, result.HasMore)
 	}
 
 	if hasMoreEmails {
@@ -407,6 +394,33 @@ func runFullSyncJob(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 	}
 
 	runExtractionPhase(ctx, gdb, runID, cfg, llmBaseURL)
+}
+
+func updateSenderSyncState(gdb *gorm.DB, sender db.Sender, maxInternalDateMs *int64, hasMore bool) {
+	updates := map[string]any{
+		"last_sync_at_utc": domain.NowUtcIsoSeconds(),
+	}
+	if !hasMore {
+		nextCursor := sender.LastInternalDateMs
+		if maxInternalDateMs != nil {
+			v := *maxInternalDateMs
+			if nextCursor == nil || v > *nextCursor {
+				nextCursor = &v
+			}
+		}
+		var maxRow struct {
+			MaxMs *int64 `gorm:"column:max_ms"`
+		}
+		gdb.Raw(`SELECT MAX(internal_date_ms) AS max_ms FROM raw_emails WHERE sender_id = ?`, sender.ID).Scan(&maxRow)
+		if maxRow.MaxMs != nil {
+			v := *maxRow.MaxMs
+			if nextCursor == nil || v > *nextCursor {
+				nextCursor = &v
+			}
+		}
+		updates["last_internal_date_ms"] = nextCursor
+	}
+	gdb.Model(&db.Sender{}).Where("id = ?", sender.ID).Updates(updates)
 }
 
 type llmExtractRequest struct {

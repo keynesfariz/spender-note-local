@@ -3,6 +3,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type FormEvent } from 'react';
 
+import { DatePicker } from '@/components/date-picker';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -273,11 +274,10 @@ export function AccountFormDialog({
 
             <Field>
               <FieldLabel>As of date</FieldLabel>
-              <Input
-                type="date"
-                required
+              <DatePicker
                 value={initialBalanceAsOf}
-                onChange={(e) => setInitialBalanceAsOf(e.target.value)}
+                onChange={setInitialBalanceAsOf}
+                ariaLabel="As of date"
               />
             </Field>
           </div>

@@ -111,7 +111,6 @@ export interface MonthlySpendingSummary {
   totalSpentMinor: number;
   transactionCount: number;
   foreignCurrencyCount: number;
-  pendingMergeSuggestionsCount: number;
   byCategory: SpendingGroupRow[];
   byMerchant: SpendingGroupRow[];
   byAccount: SpendingGroupRow[];
@@ -129,13 +128,22 @@ export interface TransactionListItem {
   merchant: string;
   category: string;
   manual_override: 0 | 1;
+  reviewed: 0 | 1;
   note: string | null;
   created_at_utc: string;
   updated_at_utc: string;
   sourceCount: number;
   sourceRoles: Array<'card_charge' | 'receipt'>;
   isForeignCurrency: boolean;
-  pendingSuggestionCount: number;
+}
+
+export interface PaginatedTransactionsResponse {
+  items: TransactionListItem[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  totalInRangeCount: number;
+  unreviewedInRangeCount: number;
 }
 
 export interface TransactionSourceView {
@@ -152,21 +160,9 @@ export interface TransactionSourceView {
   raw_llm_json: string | null;
 }
 
-export interface MergeSuggestionView {
-  id: string;
-  other_transaction_id: string;
-  other_merchant: string;
-  other_amount_minor: number;
-  other_currency: string;
-  other_occurred_at_utc: string;
-  score: number;
-  status: 'pending' | 'accepted' | 'dismissed';
-}
-
 export interface TransactionDetailView {
   transaction: TransactionListItem;
   sources: TransactionSourceView[];
-  mergeSuggestions: MergeSuggestionView[];
 }
 
 export interface SyncRunRow {
@@ -257,22 +253,30 @@ export const monthlySummaryQuery = (month?: string) =>
 
 export const transactionsQuery = (params?: {
   month?: string;
+  startDate?: string;
+  endDate?: string;
   category?: string;
   accountId?: string;
   search?: string;
-  unmergedOnly?: boolean;
+  unreviewedOnly?: boolean;
+  page?: number;
+  pageSize?: number;
 }) =>
   queryOptions({
     queryKey: ['transactions', 'list', params ?? {}] as const,
     queryFn: () => {
       const sp = new URLSearchParams();
       if (params?.month) sp.set('month', params.month);
+      if (params?.startDate) sp.set('startDate', params.startDate);
+      if (params?.endDate) sp.set('endDate', params.endDate);
       if (params?.category) sp.set('category', params.category);
       if (params?.accountId) sp.set('accountId', params.accountId);
       if (params?.search) sp.set('search', params.search);
-      if (params?.unmergedOnly) sp.set('unmergedOnly', 'true');
+      if (params?.unreviewedOnly) sp.set('unreviewedOnly', 'true');
+      if (params?.page) sp.set('page', String(params.page));
+      if (params?.pageSize) sp.set('pageSize', String(params.pageSize));
       const qs = sp.toString();
-      return apiFetch<TransactionListItem[]>(
+      return apiFetch<PaginatedTransactionsResponse>(
         `/api/transactions${qs ? `?${qs}` : ''}`,
       );
     },
@@ -463,19 +467,32 @@ export const splitTransactionSourceApi = (input: {
     },
   );
 
-export const acceptMergeSuggestionApi = (suggestionId: string) =>
-  apiFetch<{ survivorId: string }>(
-    `/api/merge-suggestions/${encodeURIComponent(suggestionId)}`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ action: 'accept' }),
-    },
-  ).then((r) => r.survivorId);
-
-export const rejectMergeSuggestionApi = (suggestionId: string) =>
-  apiFetch(`/api/merge-suggestions/${encodeURIComponent(suggestionId)}`, {
+export const duplicateMergeTransactionsApi = (input: {
+  keepTransactionId: string;
+  dropTransactionId: string;
+}) =>
+  apiFetch<TransactionListItem>('/api/transactions/merge', {
     method: 'POST',
-    body: JSON.stringify({ action: 'reject' }),
+    body: JSON.stringify({ mode: 'duplicate', ...input }),
+  });
+
+export const combineTransactionsApi = (input: {
+  transactionIds: string[];
+  merchant: string;
+  category?: string;
+  account_id?: string | null;
+  occurred_at_utc: string;
+  note?: string | null;
+}) =>
+  apiFetch<TransactionListItem>('/api/transactions/merge', {
+    method: 'POST',
+    body: JSON.stringify({ mode: 'combine', ...input }),
+  });
+
+export const markTransactionsReviewedApi = (transactionIds: string[]) =>
+  apiFetch<{ updatedCount: number }>('/api/transactions/review', {
+    method: 'POST',
+    body: JSON.stringify({ transactionIds }),
   });
 
 export const triggerSyncApi = () =>

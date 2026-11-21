@@ -3,6 +3,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type FormEvent } from 'react';
 
+import { DatePicker } from '@/components/date-picker';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -183,11 +184,10 @@ export function AddTransactionDialog({
 
             <Field>
               <FieldLabel>Date</FieldLabel>
-              <Input
-                type="date"
-                required
+              <DatePicker
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
+                onChange={setDate}
+                ariaLabel="Transaction date"
               />
             </Field>
 

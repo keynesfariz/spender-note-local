@@ -54,7 +54,13 @@ import {
   updateSenderApi,
   updateSyncSettingsApi,
 } from '@/lib/api';
-import { dateInputToUtcIso, utcToDateInputValue } from '@/lib/format';
+import { DatePicker } from '@/components/date-picker';
+import {
+  dateInputToUtcIso,
+  formatRelativeUtc,
+  formatUtcInTimezone,
+  utcToDateInputValue,
+} from '@/lib/format';
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
@@ -572,10 +578,12 @@ export function SettingsView({
             <div className="flex items-end gap-2">
               <Field className="min-w-0 flex-1">
                 <FieldLabel>Backfill start date</FieldLabel>
-                <Input
-                  type="date"
+                <DatePicker
                   value={newSenderBackfill}
-                  onChange={(e) => setNewSenderBackfill(e.target.value)}
+                  onChange={setNewSenderBackfill}
+                  placeholder="Optional"
+                  clearable
+                  ariaLabel="Backfill start date"
                 />
               </Field>
               <Button
@@ -608,30 +616,37 @@ export function SettingsView({
                           sender.backfill_from_utc,
                           settings.data?.timezone,
                         )}
-                        {sender.last_sync_at_utc
-                          ? ` · Last synced ${utcToDateInputValue(
+                        {sender.last_sync_at_utc ? (
+                          <span
+                            title={formatUtcInTimezone(
                               sender.last_sync_at_utc,
                               settings.data?.timezone,
-                            )}`
-                          : ' · Never synced'}
+                            )}
+                          >
+                            {' '}
+                            · Last synced{' '}
+                            {formatRelativeUtc(sender.last_sync_at_utc)}
+                          </span>
+                        ) : (
+                          ' · Never synced'
+                        )}
                       </p>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3">
-                      <Input
-                        type="date"
-                        aria-label={`Backfill date for ${sender.email}`}
-                        className="w-40"
+                      <DatePicker
+                        ariaLabel={`Backfill date for ${sender.email}`}
+                        className="w-44"
                         value={utcToDateInputValue(
                           sender.backfill_from_utc,
                           settings.data?.timezone,
                         )}
-                        onChange={(e) => {
-                          if (!e.target.value) return;
+                        onChange={(nextDate) => {
+                          if (!nextDate) return;
                           updateSenderMutation.mutate({
                             id: sender.id,
                             backfill_from_utc: dateInputToUtcIso(
-                              e.target.value,
+                              nextDate,
                               settings.data?.timezone,
                             ),
                           });

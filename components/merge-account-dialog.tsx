@@ -159,8 +159,7 @@ export function MergeAccountDialog({
                     All transactions, identifiers, and sender defaults on{' '}
                     {sourceAccount.name} will move to{' '}
                     {selectedTarget?.name ?? 'the destination account'}, and{' '}
-                    {sourceAccount.name} will be permanently deleted. Duplicate
-                    detection will re-run on the destination account.
+                    {sourceAccount.name} will be permanently deleted.
                   </AlertDescription>
                 </Alert>
               </>

@@ -170,10 +170,6 @@ export function SyncToast() {
               <dd className="font-mono font-medium">{run.imported_count}</dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Merged</dt>
-              <dd className="font-mono font-medium">{run.merged_count}</dd>
-            </div>
-            <div>
               <dt className="text-muted-foreground">Skipped</dt>
               <dd className="font-mono font-medium">{run.skipped_count}</dd>
             </div>

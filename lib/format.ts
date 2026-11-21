@@ -1,3 +1,14 @@
+import {
+  addDays,
+  addMonths,
+  differenceInCalendarDays,
+  format,
+  formatDistanceToNow,
+  isValid,
+  parse,
+  parseISO,
+} from 'date-fns';
+
 export const CURRENCY_EXPONENTS: Record<string, number> = {
   JPY: 0,
   KRW: 0,
@@ -157,29 +168,90 @@ export function formatUtcInTimezone(
     timeStyle: 'short',
   },
 ): string {
-  const ms = Date.parse(utcIso);
-  if (Number.isNaN(ms)) return utcIso;
+  const parsed = parseISO(utcIso);
+  if (!isValid(parsed)) return utcIso;
   try {
     return getDateTimeFormatter('en-US', timeZone || 'UTC', options).format(
-      new Date(ms),
+      parsed,
     );
   } catch {
     return utcIso;
   }
 }
 
+export function formatRelativeUtc(utcIso: string): string {
+  const parsed = parseISO(utcIso);
+  if (!isValid(parsed)) return utcIso;
+  return formatDistanceToNow(parsed, { addSuffix: true });
+}
+
+export function isoDateStringToDate(dateStr: string): Date | undefined {
+  const trimmed = dateStr.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return undefined;
+  const parsed = parse(trimmed, 'yyyy-MM-dd', new Date());
+  return isValid(parsed) ? parsed : undefined;
+}
+
+export function dateToIsoDateString(date: Date): string {
+  return format(date, 'yyyy-MM-dd');
+}
+
+export function formatDateString(dateStr: string): string {
+  const parsed = isoDateStringToDate(dateStr);
+  if (!parsed) return dateStr;
+  return format(parsed, 'MMM d, yyyy');
+}
+
+export function formatDateRangeLabel(fromStr: string, toStr: string): string {
+  const fromDate = isoDateStringToDate(fromStr);
+  const toDate = isoDateStringToDate(toStr || fromStr);
+  if (!fromDate) return 'Pick a date';
+  if (!toDate || fromStr === toStr || !toStr) {
+    return format(fromDate, 'MMM d, yyyy');
+  }
+  return `${format(fromDate, 'MMM d, yyyy')} – ${format(toDate, 'MMM d, yyyy')}`;
+}
+
+export function getTodayDateString(timeZone?: string | null): string {
+  return utcToDateInputValue(new Date().toISOString(), timeZone);
+}
+
+export function shiftDateRange(
+  fromStr: string,
+  toStr: string,
+  direction: -1 | 1,
+): { from: string; to: string } {
+  const fromDate = isoDateStringToDate(fromStr);
+  const toDate = isoDateStringToDate(toStr || fromStr);
+  if (!fromDate || !toDate) {
+    return { from: fromStr, to: toStr || fromStr };
+  }
+  const spanDays = Math.max(1, differenceInCalendarDays(toDate, fromDate) + 1);
+  const delta = direction * spanDays;
+  return {
+    from: dateToIsoDateString(addDays(fromDate, delta)),
+    to: dateToIsoDateString(addDays(toDate, delta)),
+  };
+}
+
+export function shiftYearMonth(yearMonth: string, delta: number): string {
+  const parsed = parse(yearMonth.trim(), 'yyyy-MM', new Date());
+  if (!isValid(parsed)) return yearMonth;
+  return format(addMonths(parsed, delta), 'yyyy-MM');
+}
+
 export function utcToDateInputValue(
   utcIso: string,
   timeZone: string | null | undefined,
 ): string {
-  const ms = Date.parse(utcIso);
-  if (Number.isNaN(ms)) return '';
+  const parsed = parseISO(utcIso);
+  if (!isValid(parsed)) return '';
   try {
     const parts = getDateTimeFormatter('en-CA', timeZone || 'UTC', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
-    }).formatToParts(new Date(ms));
+    }).formatToParts(parsed);
     const y = parts.find((p) => p.type === 'year')?.value ?? '2026';
     const m = parts.find((p) => p.type === 'month')?.value ?? '01';
     const d = parts.find((p) => p.type === 'day')?.value ?? '01';
@@ -217,14 +289,14 @@ export function utcToTimeInputValue(
   utcIso: string,
   timeZone: string | null | undefined,
 ): string {
-  const ms = Date.parse(utcIso);
-  if (Number.isNaN(ms)) return '';
+  const parsed = parseISO(utcIso);
+  if (!isValid(parsed)) return '';
   try {
     const parts = getDateTimeFormatter('en-US', timeZone || 'UTC', {
       hour: '2-digit',
       minute: '2-digit',
       hourCycle: 'h23',
-    }).formatToParts(new Date(ms));
+    }).formatToParts(parsed);
     const h = parts.find((p) => p.type === 'hour')?.value ?? '00';
     const m = parts.find((p) => p.type === 'minute')?.value ?? '00';
     return `${h === '24' ? '00' : h}:${m}`;

@@ -16,6 +16,7 @@ import {
 
 const NAV_ITEMS = [
   { href: '/', label: 'Spending' },
+  { href: '/transactions', label: 'Transactions' },
   { href: '/accounts', label: 'Accounts' },
   { href: '/settings', label: 'Settings' },
 ];

@@ -3,7 +3,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type FormEvent } from 'react';
 
+import { DatePicker } from '@/components/date-picker';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,9 +40,8 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  acceptMergeSuggestionApi,
   deleteTransactionApi,
-  rejectMergeSuggestionApi,
+  markTransactionsReviewedApi,
   splitTransactionSourceApi,
   transactionDetailQuery,
   updateTransactionApi,
@@ -65,14 +66,12 @@ function InspectorBody({
   localCurrency,
   timezone,
   onClose,
-  onSelectTransaction,
 }: {
   transactionId: string;
   accounts: AccountSummary[];
   localCurrency: string;
   timezone: string | null | undefined;
   onClose: () => void;
-  onSelectTransaction?: (id: string) => void;
 }) {
   const queryClient = useQueryClient();
   const detailQuery = useQuery(transactionDetailQuery(transactionId));
@@ -148,33 +147,16 @@ function InspectorBody({
     },
   });
 
-  const acceptMergeMutation = useMutation({
-    mutationFn: acceptMergeSuggestionApi,
-    onSuccess: (survivorId) => {
-      setFormError(null);
-      setStatusMessage('Transactions merged.');
-      if (survivorId && survivorId !== transactionId && onSelectTransaction) {
-        onSelectTransaction(survivorId);
-      }
-      invalidateAll();
-    },
-    onError: (err) => {
-      setFormError(
-        err instanceof Error ? err.message : 'Failed to accept merge.',
-      );
-    },
-  });
-
-  const rejectMergeMutation = useMutation({
-    mutationFn: rejectMergeSuggestionApi,
+  const markReviewedMutation = useMutation({
+    mutationFn: () => markTransactionsReviewedApi([transactionId]),
     onSuccess: () => {
       setFormError(null);
-      setStatusMessage('Merge suggestion dismissed.');
+      setStatusMessage('Marked as reviewed.');
       invalidateAll();
     },
     onError: (err) => {
       setFormError(
-        err instanceof Error ? err.message : 'Failed to dismiss suggestion.',
+        err instanceof Error ? err.message : 'Failed to mark transaction reviewed.',
       );
     },
   });
@@ -203,9 +185,6 @@ function InspectorBody({
   }
 
   const tx = detail.transaction;
-  const pendingSuggestions = detail.mergeSuggestions.filter(
-    (s) => s.status === 'pending',
-  );
 
   function handleSave(event: FormEvent) {
     event.preventDefault();
@@ -335,11 +314,10 @@ function InspectorBody({
 
           <Field>
             <FieldLabel>Occurred date</FieldLabel>
-            <Input
-              type="date"
-              required
+            <DatePicker
               value={date}
-              onChange={(e) => setDate(e.target.value)}
+              onChange={setDate}
+              ariaLabel="Occurred date"
             />
           </Field>
 
@@ -406,68 +384,42 @@ function InspectorBody({
             </AlertDialogContent>
           </AlertDialog>
 
-          <Button type="submit" disabled={updateMutation.isPending}>
-            {updateMutation.isPending ? 'Saving...' : 'Save changes'}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {tx.reviewed === 1 ? (
+              <Badge variant="secondary">Reviewed</Badge>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={markReviewedMutation.isPending}
+                onClick={() => markReviewedMutation.mutate()}
+              >
+                {markReviewedMutation.isPending ? 'Marking...' : 'Mark reviewed'}
+              </Button>
+            )}
+            <Button type="submit" disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? 'Saving...' : 'Save changes'}
+            </Button>
+          </div>
         </div>
       </form>
-
-      {pendingSuggestions.length > 0 && (
-        <>
-          <Separator />
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold">Pending merge suggestions</h3>
-            <ul className="space-y-2">
-              {pendingSuggestions.map((sug) => (
-                <li key={sug.id}>
-                  <Card>
-                    <CardContent className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
-                      <div>
-                        <p className="font-medium">
-                          {sug.other_merchant} ·{' '}
-                          {formatMinorCurrency(
-                            sug.other_amount_minor,
-                            sug.other_currency,
-                          )}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {formatUtcInTimezone(sug.other_occurred_at_utc, timezone)}{' '}
-                          · Score {Math.round(sug.score * 100)}%
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={acceptMergeMutation.isPending}
-                          onClick={() => acceptMergeMutation.mutate(sug.id)}
-                        >
-                          Accept merge
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={rejectMergeMutation.isPending}
-                          onClick={() => rejectMergeMutation.mutate(sug.id)}
-                        >
-                          Dismiss
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </>
-      )}
 
       <Separator />
       <div className="space-y-3">
         <h3 className="text-sm font-semibold">
           Attached cleaned emails ({detail.sources.length})
         </h3>
+        {tx.manual_override === 1 && detail.sources.length > 1 && (
+          <Alert>
+            <AlertDescription>
+              This transaction has a locked amount (edited or combined).
+              Splitting an email creates a separate transaction without
+              reducing this transaction&apos;s amount — adjust the amount
+              manually if needed.
+            </AlertDescription>
+          </Alert>
+        )}
         {detail.sources.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             No source emails attached (manual transaction).
@@ -524,14 +476,12 @@ export function TransactionInspectorDialog({
   localCurrency,
   timezone,
   onClose,
-  onSelectTransaction,
 }: {
   transactionId: string | null;
   accounts: AccountSummary[];
   localCurrency: string;
   timezone: string | null | undefined;
   onClose: () => void;
-  onSelectTransaction?: (id: string) => void;
 }) {
   return (
     <Dialog
@@ -544,8 +494,8 @@ export function TransactionInspectorDialog({
         <DialogHeader>
           <DialogTitle>Transaction details</DialogTitle>
           <DialogDescription>
-            Inspect extracted source emails, resolve merge suggestions, or edit
-            transaction fields.
+            Inspect attached source emails, mark reviewed, or edit transaction
+            fields.
           </DialogDescription>
         </DialogHeader>
         {transactionId && (
@@ -555,7 +505,6 @@ export function TransactionInspectorDialog({
             localCurrency={localCurrency}
             timezone={timezone}
             onClose={onClose}
-            onSelectTransaction={onSelectTransaction}
           />
         )}
       </DialogContent>

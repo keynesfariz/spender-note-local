@@ -7,7 +7,7 @@ import { useState, type ReactNode } from 'react';
 
 import { SyncToast } from '@/components/sync-toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   gmailStatusQuery,
   syncStatusQuery,
@@ -54,14 +54,16 @@ export function AppShell({ children }: { children: ReactNode }) {
                     ? pathname === '/'
                     : pathname.startsWith(item.href);
                 return (
-                  <Button
+                  <Link
                     key={item.href}
-                    variant={active ? 'secondary' : 'ghost'}
-                    size="sm"
-                    render={<Link href={item.href} />}
+                    href={item.href}
+                    className={buttonVariants({
+                      variant: active ? 'secondary' : 'ghost',
+                      size: 'sm',
+                    })}
                   >
                     {item.label}
-                  </Button>
+                  </Link>
                 );
               })}
             </nav>
@@ -89,9 +91,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                 Gmail authorization has expired. Reconnect your account to
                 continue syncing.
               </span>
-              <Button size="sm" render={<a href="/api/gmail/auth" />}>
+              <a
+                href="/api/gmail/auth"
+                className={buttonVariants({ size: 'sm' })}
+              >
                 Reconnect Gmail
-              </Button>
+              </a>
             </AlertDescription>
           </Alert>
         )}

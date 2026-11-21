@@ -20,7 +20,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Card,
   CardContent,
@@ -190,9 +190,9 @@ export function AccountsView() {
               Configure your country and currency in Settings before adding
               accounts.
             </span>
-            <Button size="sm" render={<Link href="/settings" />}>
+            <Link href="/settings" className={buttonVariants({ size: 'sm' })}>
               Go to Settings
-            </Button>
+            </Link>
           </AlertDescription>
         </Alert>
       )}

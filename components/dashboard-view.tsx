@@ -10,7 +10,7 @@ import { MonthlySummary } from '@/components/monthly-summary';
 import { TransactionInspectorDialog } from '@/components/transaction-inspector-dialog';
 import { TransactionList } from '@/components/transaction-list';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -251,9 +251,9 @@ export function DashboardView() {
               Configure your country and currency in Settings to start tracking
               monthly spending.
             </span>
-            <Button size="sm" render={<Link href="/settings" />}>
+            <Link href="/settings" className={buttonVariants({ size: 'sm' })}>
               Go to Settings
-            </Button>
+            </Link>
           </AlertDescription>
         </Alert>
       )}

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Card,
   CardAction,
@@ -229,9 +229,12 @@ export function SyncToast() {
                     >
                       Retry failed
                     </Button>
-                    <Button variant="link" size="sm" render={<Link href="/settings" />}>
+                    <Link
+                      href="/settings"
+                      className={buttonVariants({ variant: 'link', size: 'sm' })}
+                    >
                       Settings
-                    </Button>
+                    </Link>
                   </div>
                 </div>
               </>

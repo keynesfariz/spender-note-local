@@ -16,7 +16,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Card,
   CardAction,
@@ -443,11 +443,14 @@ export function SettingsView({
                 </AlertDialog>
               </>
             ) : (
-              <Button size="sm" render={<a href="/api/gmail/auth" />}>
+              <a
+                href="/api/gmail/auth"
+                className={buttonVariants({ size: 'sm' })}
+              >
                 {gmail.data?.status === 'expired'
                   ? 'Reconnect Gmail'
                   : 'Connect Gmail'}
-              </Button>
+              </a>
             )}
           </CardAction>
         </CardHeader>

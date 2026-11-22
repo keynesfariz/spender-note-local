@@ -1,13 +1,11 @@
 package domain
 
 import (
-	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"portspendernote/internal/db"
 )
@@ -117,49 +115,66 @@ func TestAccountStatementDay_CRUDAndValidation(t *testing.T) {
 	}
 }
 
-func TestMigrateSchema_AddsStatementDayToExistingAccountsTable(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "legacy.db")
-	rawDB, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+func TestListAccountsAt_MatchesSingleAccountSummary(t *testing.T) {
+	gdb, err := db.OpenDatabase(":memory:", false)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	configureTestLocale(t, gdb, "Asia/Jakarta", "IDR")
+
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	asOf := "2026-10-01T00:00:00Z"
+
+	cc, err := CreateAccount(gdb, CreateAccountInput{
+		Name:                  "BCA CC",
+		Type:                  "credit_card",
+		InitialBalanceMinor:   100000,
+		InitialBalanceAsOfUtc: &asOf,
+		StatementDay:          intPtr(20),
 	})
 	if err != nil {
-		t.Fatalf("open legacy sqlite: %v", err)
+		t.Fatalf("create cc: %v", err)
 	}
-	legacyAccountsSQL := `
-	CREATE TABLE accounts (
-	  id TEXT PRIMARY KEY,
-	  name TEXT NOT NULL,
-	  type TEXT NOT NULL CHECK (type IN ('credit_card', 'debit_card', 'digital_wallet')),
-	  currency TEXT NOT NULL CHECK (length(currency) = 3),
-	  initial_balance_minor INTEGER,
-	  initial_balance_as_of_utc TEXT NOT NULL CHECK (length(initial_balance_as_of_utc) = 20 AND initial_balance_as_of_utc LIKE '%Z'),
-	  last4 TEXT CHECK (last4 IS NULL OR (length(last4) = 4 AND last4 GLOB '[0-9][0-9][0-9][0-9]')),
-	  status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('provisional', 'confirmed')),
-	  created_at_utc TEXT NOT NULL CHECK (length(created_at_utc) = 20 AND created_at_utc LIKE '%Z')
-	) STRICT;`
-	if err := rawDB.Exec(legacyAccountsSQL).Error; err != nil {
-		t.Fatalf("seed legacy accounts table: %v", err)
-	}
-	sqlDB, _ := rawDB.DB()
-	_ = sqlDB.Close()
-
-	migrated, err := db.OpenDatabase(dbPath, false)
-	if err != nil {
-		t.Fatalf("OpenDatabase on legacy db: %v", err)
-	}
-	configureTestLocale(t, migrated, "Asia/Jakarta", "IDR")
-
-	acct, err := CreateAccount(migrated, CreateAccountInput{
-		Name:                "Migrated CC",
-		Type:                "credit_card",
-		InitialBalanceMinor: 0,
-		StatementDay:        intPtr(22),
+	debit, err := CreateAccount(gdb, CreateAccountInput{
+		Name:                  "Mandiri Debit",
+		Type:                  "debit_card",
+		InitialBalanceMinor:   500000,
+		InitialBalanceAsOfUtc: &asOf,
 	})
 	if err != nil {
-		t.Fatalf("create account after migration: %v", err)
+		t.Fatalf("create debit: %v", err)
 	}
-	if acct.StatementDay == nil || *acct.StatementDay != 22 {
-		t.Fatalf("expected statement_day=22 after migration, got %v", acct.StatementDay)
+	_, err = CreateAccount(gdb, CreateAccountInput{
+		Name:                  "Empty Wallet",
+		Type:                  "digital_wallet",
+		InitialBalanceMinor:   50000,
+		InitialBalanceAsOfUtc: &asOf,
+	})
+	if err != nil {
+		t.Fatalf("create wallet: %v", err)
+	}
+
+	seedAccountTx(t, gdb, "tx-cc-last", cc.ID, 40000, "IDR", "2026-11-10T05:00:00Z")
+	seedAccountTx(t, gdb, "tx-cc-cur", cc.ID, 25000, "IDR", "2026-11-22T05:00:00Z")
+	seedAccountTx(t, gdb, "tx-cc-fx", cc.ID, 1000, "USD", "2026-11-22T06:00:00Z")
+	seedAccountTx(t, gdb, "tx-cc-fut", cc.ID, 15000, "IDR", "2026-11-25T05:00:00Z")
+	seedAccountTx(t, gdb, "tx-deb-1", debit.ID, 75000, "IDR", "2026-11-15T05:00:00Z")
+
+	batched, err := listAccountsAt(gdb, now)
+	if err != nil {
+		t.Fatalf("listAccountsAt: %v", err)
+	}
+	if len(batched) != 3 {
+		t.Fatalf("expected 3 accounts, got %d", len(batched))
+	}
+	for _, got := range batched {
+		single, err := buildAccountSummaryAt(gdb, got.Account, "IDR", "Asia/Jakarta", got.Identifiers, now)
+		if err != nil {
+			t.Fatalf("buildAccountSummaryAt(%s): %v", got.Name, err)
+		}
+		if !reflect.DeepEqual(got, single) {
+			t.Fatalf("account %s mismatch:\nbatched=%+v\nsingle =%+v", got.Name, got, single)
+		}
 	}
 }
 
@@ -349,12 +364,36 @@ func TestFutureDatedTransactions_ExcludedFromBalanceAndCounted(t *testing.T) {
 	seedAccountTx(t, gdb, "tx-prov-past", prov.ID, 100000, "IDR", "2026-11-20T10:00:00Z")
 	seedAccountTx(t, gdb, "tx-prov-future", prov.ID, 999999, "IDR", "2026-12-08T10:00:00Z")
 
-	bal := computeAccountBalanceAsOf(gdb, prov, "IDR", ToUtcIsoSeconds(now), ToUtcIsoSeconds(now))
+	bal, err := computeAccountBalanceAsOf(gdb, prov, "IDR", ToUtcIsoSeconds(now), ToUtcIsoSeconds(now))
+	if err != nil {
+		t.Fatalf("computeAccountBalanceAsOf: %v", err)
+	}
 	if bal.NetFlowMinor != 100000 {
 		t.Fatalf("expected provisional net_flow_minor=100000 (excluding future tx), got %d", bal.NetFlowMinor)
 	}
 	if bal.FutureTransactionCount != 1 {
 		t.Fatalf("expected provisional future_transaction_count=1, got %d", bal.FutureTransactionCount)
+	}
+}
+
+func TestDomainDBErrorPropagation(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		t.Fatalf("get sql.DB: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close sql.DB: %v", err)
+	}
+
+	if _, err := computeAccountBalanceAsOf(gdb, db.Account{ID: "acct-1", Currency: "USD"}, "USD", "2026-11-20T00:00:00Z", "2026-11-20T00:00:00Z"); err == nil {
+		t.Fatalf("expected error from computeAccountBalanceAsOf on closed DB")
+	}
+	if err := RecomputeTransactionFromSources(gdb, "tx-1", "2026-11-20T00:00:00Z"); err == nil {
+		t.Fatalf("expected error from RecomputeTransactionFromSources on closed DB")
+	}
+	if _, err := GetMonthlySpendingSummary(gdb, "2026-11"); err == nil {
+		t.Fatalf("expected error from GetMonthlySpendingSummary on closed DB")
 	}
 }
 

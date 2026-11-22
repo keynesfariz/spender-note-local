@@ -143,7 +143,9 @@ func generateTypeScript() string {
 	buf.WriteString(`export type AccountStatus = "provisional" | "confirmed"` + "\n")
 
 	for _, spec := range typeSpecs {
-		buf.WriteString("\nexport interface " + spec.tsName + " {\n")
+		buf.WriteString("\nexport interface ")
+		buf.WriteString(spec.tsName)
+		buf.WriteString(" {\n")
 		writeStructFields(&buf, spec.goType, spec.overrides, knownNames)
 		buf.WriteString("}\n")
 	}

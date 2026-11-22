@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
@@ -69,6 +69,12 @@ function formatBytes(bytes: number): string {
 
 const NO_DEFAULT_ACCOUNT = '__none__';
 
+const SENDER_ROLE_OPTIONS = [
+  { value: 'auto', label: 'Auto-detect role' },
+  { value: 'card_charge', label: 'Card charge alert' },
+  { value: 'receipt', label: 'Merchant receipt' },
+] as const;
+
 export function SettingsView({
   gmailParam,
   errorParam,
@@ -118,6 +124,44 @@ export function SettingsView({
 
   const selectedCountry = (settings.data?.countryCatalog ?? []).find(
     (c) => c.code === countryCode,
+  );
+
+  const countryItems = useMemo(
+    () =>
+      (settings.data?.countryCatalog ?? []).map((c) => ({
+        value: c.code,
+        label: `${c.name} (${c.currency})`,
+      })),
+    [settings.data?.countryCatalog],
+  );
+
+  const timezoneItems = useMemo(
+    () =>
+      (selectedCountry?.timezones ?? []).map((tz) => ({
+        value: tz,
+        label: tz,
+      })),
+    [selectedCountry?.timezones],
+  );
+
+  const defaultAccountItems = useMemo(
+    () => [
+      { value: NO_DEFAULT_ACCOUNT, label: 'Default account (optional)' },
+      ...(accounts.data ?? []).map((acct) => ({
+        value: acct.id,
+        label: acct.name,
+      })),
+    ],
+    [accounts.data],
+  );
+
+  const modelItems = useMemo(
+    () =>
+      (settings.data?.availableModels ?? []).map((m) => ({
+        value: m.relativePath,
+        label: `${m.relativePath} (${formatBytes(m.sizeBytes)})`,
+      })),
+    [settings.data?.availableModels],
   );
 
   const localeMutation = useMutation({
@@ -336,7 +380,8 @@ export function SettingsView({
             <Field>
               <FieldLabel>Country</FieldLabel>
               <Select
-                value={countryCode}
+                items={countryItems}
+                value={countryCode || null}
                 disabled={settings.data?.currencyLocked}
                 onValueChange={(nextCode) => {
                   const code = nextCode ?? '';
@@ -351,9 +396,9 @@ export function SettingsView({
                   <SelectValue placeholder="Select country..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {(settings.data?.countryCatalog ?? []).map((c) => (
-                    <SelectItem key={c.code} value={c.code}>
-                      {c.name} ({c.currency})
+                  {countryItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -363,16 +408,17 @@ export function SettingsView({
             <Field>
               <FieldLabel>Timezone</FieldLabel>
               <Select
-                value={timezone}
+                items={timezoneItems}
+                value={timezone || null}
                 onValueChange={(val) => setTimezoneDraft(val ?? '')}
               >
                 <SelectTrigger className="w-full" aria-label="Timezone">
                   <SelectValue placeholder="Select timezone..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {(selectedCountry?.timezones ?? []).map((tz) => (
-                    <SelectItem key={tz} value={tz}>
-                      {tz}
+                  {timezoneItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -533,6 +579,7 @@ export function SettingsView({
             <Field>
               <FieldLabel>Sender role</FieldLabel>
               <Select
+                items={SENDER_ROLE_OPTIONS}
                 value={newSenderRole}
                 onValueChange={(v) => {
                   if (v === 'auto' || v === 'card_charge' || v === 'receipt') {
@@ -544,9 +591,11 @@ export function SettingsView({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="auto">Auto-detect role</SelectItem>
-                  <SelectItem value="card_charge">Card charge alert</SelectItem>
-                  <SelectItem value="receipt">Merchant receipt</SelectItem>
+                  {SENDER_ROLE_OPTIONS.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </Field>
@@ -554,6 +603,7 @@ export function SettingsView({
             <Field>
               <FieldLabel>Default account</FieldLabel>
               <Select
+                items={defaultAccountItems}
                 value={newSenderAccountId}
                 onValueChange={(v) =>
                   setNewSenderAccountId(v ?? NO_DEFAULT_ACCOUNT)
@@ -563,12 +613,9 @@ export function SettingsView({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={NO_DEFAULT_ACCOUNT}>
-                    Default account (optional)
-                  </SelectItem>
-                  {(accounts.data ?? []).map((acct) => (
-                    <SelectItem key={acct.id} value={acct.id}>
-                      {acct.name}
+                  {defaultAccountItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -749,16 +796,17 @@ export function SettingsView({
             <Field className="sm:col-span-3">
               <FieldLabel>Selected .gguf model</FieldLabel>
               <Select
-                value={modelPath}
+                items={modelItems}
+                value={modelPath || null}
                 onValueChange={(v) => setModelPathDraft(v ?? '')}
               >
                 <SelectTrigger className="w-full" aria-label="Selected .gguf model">
                   <SelectValue placeholder="Select a local GGUF model..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {(settings.data?.availableModels ?? []).map((m) => (
-                    <SelectItem key={m.relativePath} value={m.relativePath}>
-                      {m.relativePath} ({formatBytes(m.sizeBytes)})
+                  {modelItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
                     </SelectItem>
                   ))}
                 </SelectContent>

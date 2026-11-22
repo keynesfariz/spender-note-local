@@ -43,6 +43,11 @@ import { cn } from '@/lib/utils';
 
 const UNASSIGNED_ACCOUNT = '__unassigned__';
 
+const CATEGORY_OPTIONS = DEFAULT_CATEGORIES.map((cat) => ({
+  value: cat,
+  label: cat,
+}));
+
 export type ManualMergeMode = 'duplicate' | 'combine';
 
 export function ManualMergeDialog({
@@ -85,6 +90,26 @@ export function ManualMergeDialog({
     [transactions],
   );
   const sharedCurrency = transactions[0]?.currency ?? 'USD';
+
+  const primaryAccountId = sortedByOccurred[0]?.account_id ?? null;
+  const primaryAccountName = sortedByOccurred[0]?.account_name ?? null;
+  const accountItems = useMemo(() => {
+    const base = [
+      { value: UNASSIGNED_ACCOUNT, label: 'Unassigned' },
+      ...accounts.map((acct) => ({ value: acct.id, label: acct.name })),
+    ];
+    if (
+      accountId !== UNASSIGNED_ACCOUNT &&
+      !accounts.some((acct) => acct.id === accountId)
+    ) {
+      const fallbackLabel =
+        primaryAccountId === accountId && primaryAccountName
+          ? primaryAccountName
+          : 'Unknown account';
+      base.push({ value: accountId, label: fallbackLabel });
+    }
+    return base;
+  }, [accounts, accountId, primaryAccountId, primaryAccountName]);
 
   const lastInitKeyRef = useRef<string | null>(null);
   const selectionKey =
@@ -313,6 +338,7 @@ export function ManualMergeDialog({
                 <Field>
                   <FieldLabel>Category</FieldLabel>
                   <Select
+                    items={CATEGORY_OPTIONS}
                     value={category}
                     onValueChange={(v) => setCategory(v ?? 'Other')}
                   >
@@ -320,9 +346,9 @@ export function ManualMergeDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {DEFAULT_CATEGORIES.map((cat) => (
-                        <SelectItem key={cat} value={cat}>
-                          {cat}
+                      {CATEGORY_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -332,6 +358,7 @@ export function ManualMergeDialog({
                 <Field>
                   <FieldLabel>Account</FieldLabel>
                   <Select
+                    items={accountItems}
                     value={accountId}
                     onValueChange={(v) => setAccountId(v ?? UNASSIGNED_ACCOUNT)}
                   >
@@ -339,12 +366,9 @@ export function ManualMergeDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value={UNASSIGNED_ACCOUNT}>
-                        Unassigned
-                      </SelectItem>
-                      {accounts.map((acct) => (
-                        <SelectItem key={acct.id} value={acct.id}>
-                          {acct.name}
+                      {accountItems.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
                         </SelectItem>
                       ))}
                     </SelectContent>

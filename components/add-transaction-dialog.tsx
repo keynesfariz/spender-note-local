@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 
 import { DatePicker } from '@/components/date-picker';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -34,6 +34,11 @@ import {
 
 const UNASSIGNED_ACCOUNT = '__unassigned__';
 
+const CATEGORY_OPTIONS = DEFAULT_CATEGORIES.map((cat) => ({
+  value: cat,
+  label: cat,
+}));
+
 export function AddTransactionDialog({
   open,
   onOpenChange,
@@ -56,6 +61,14 @@ export function AddTransactionDialog({
   const [date, setDate] = useState('');
   const [note, setNote] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+
+  const accountItems = useMemo(
+    () => [
+      { value: UNASSIGNED_ACCOUNT, label: 'Unassigned' },
+      ...accounts.map((acct) => ({ value: acct.id, label: acct.name })),
+    ],
+    [accounts],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -146,6 +159,7 @@ export function AddTransactionDialog({
             <Field>
               <FieldLabel>Category</FieldLabel>
               <Select
+                items={CATEGORY_OPTIONS}
                 value={category}
                 onValueChange={(v) => setCategory(v ?? 'Other')}
               >
@@ -153,9 +167,9 @@ export function AddTransactionDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {DEFAULT_CATEGORIES.map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {cat}
+                  {CATEGORY_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -165,6 +179,7 @@ export function AddTransactionDialog({
             <Field>
               <FieldLabel>Account</FieldLabel>
               <Select
+                items={accountItems}
                 value={accountId}
                 onValueChange={(v) => setAccountId(v ?? UNASSIGNED_ACCOUNT)}
               >
@@ -172,10 +187,9 @@ export function AddTransactionDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={UNASSIGNED_ACCOUNT}>Unassigned</SelectItem>
-                  {accounts.map((acct) => (
-                    <SelectItem key={acct.id} value={acct.id}>
-                      {acct.name}
+                  {accountItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
                     </SelectItem>
                   ))}
                 </SelectContent>

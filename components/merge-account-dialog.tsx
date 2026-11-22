@@ -69,6 +69,19 @@ export function MergeAccountDialog({
   const selectedTarget =
     eligibleTargets.find((a) => a.id === targetId) ?? null;
 
+  const targetItems = useMemo(
+    () =>
+      eligibleTargets.map((target) => ({
+        value: target.id,
+        label: `${target.name} (${ACCOUNT_TYPE_LABELS[target.type]}${
+          target.computed_balance_minor !== null
+            ? ` · ${formatMinorCurrency(target.computed_balance_minor, target.currency)}`
+            : ' · balance unknown'
+        })`,
+      })),
+    [eligibleTargets],
+  );
+
   const mergeMutation = useMutation({
     mutationFn: mergeAccountsApi,
     onSuccess: () => {
@@ -124,23 +137,20 @@ export function MergeAccountDialog({
                 <Field>
                   <FieldLabel>Destination account</FieldLabel>
                   <Select
-                    value={targetId}
+                    items={targetItems}
+                    value={targetId || null}
                     onValueChange={(v) => setTargetId(v ?? '')}
                   >
                     <SelectTrigger
                       className="w-full"
                       aria-label="Destination account"
                     >
-                      <SelectValue />
+                      <SelectValue placeholder="Select destination account..." />
                     </SelectTrigger>
                     <SelectContent>
-                      {eligibleTargets.map((target) => (
-                        <SelectItem key={target.id} value={target.id}>
-                          {target.name} ({ACCOUNT_TYPE_LABELS[target.type]}
-                          {target.computed_balance_minor !== null
-                            ? ` · ${formatMinorCurrency(target.computed_balance_minor, target.currency)}`
-                            : ' · balance unknown'}
-                          )
+                      {targetItems.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
                         </SelectItem>
                       ))}
                     </SelectContent>

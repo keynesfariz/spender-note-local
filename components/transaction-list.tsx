@@ -1,6 +1,7 @@
 'use client';
 
 import { CheckCircle2Icon } from 'lucide-react';
+import { useMemo } from 'react';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
@@ -32,6 +33,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { AccountSummary, TransactionListItem } from '@/lib/api';
 import { DEFAULT_CATEGORIES } from '@/lib/categories';
 import { formatMinorCurrency, formatUtcInTimezone } from '@/lib/format';
+
+const CATEGORY_FILTER_ITEMS = [
+  { value: 'all', label: 'All categories' },
+  ...DEFAULT_CATEGORIES.map((cat) => ({ value: cat, label: cat })),
+];
 
 function sourceBadgeLabel(tx: TransactionListItem): string {
   if (tx.sourceCount > 1) return `${tx.sourceCount} emails`;
@@ -179,6 +185,15 @@ export function TransactionList({
       ? eligibility.combineReason
       : eligibility.duplicateReason;
 
+  const accountFilterItems = useMemo(
+    () => [
+      { value: 'all', label: 'All accounts' },
+      { value: 'unassigned', label: 'Unassigned' },
+      ...accounts.map((acct) => ({ value: acct.id, label: acct.name })),
+    ],
+    [accounts],
+  );
+
   return (
     <Card>
       <CardHeader className="space-y-3">
@@ -192,6 +207,7 @@ export function TransactionList({
           />
 
           <Select
+            items={CATEGORY_FILTER_ITEMS}
             value={category}
             onValueChange={(value) => onCategoryChange(value ?? 'all')}
           >
@@ -199,16 +215,16 @@ export function TransactionList({
               <SelectValue placeholder="All categories" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All categories</SelectItem>
-              {DEFAULT_CATEGORIES.map((cat) => (
-                <SelectItem key={cat} value={cat}>
-                  {cat}
+              {CATEGORY_FILTER_ITEMS.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
 
           <Select
+            items={accountFilterItems}
             value={accountId}
             onValueChange={(value) => onAccountIdChange(value ?? 'all')}
           >
@@ -216,11 +232,9 @@ export function TransactionList({
               <SelectValue placeholder="All accounts" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All accounts</SelectItem>
-              <SelectItem value="unassigned">Unassigned</SelectItem>
-              {accounts.map((acct) => (
-                <SelectItem key={acct.id} value={acct.id}>
-                  {acct.name}
+              {accountFilterItems.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
                 </SelectItem>
               ))}
             </SelectContent>

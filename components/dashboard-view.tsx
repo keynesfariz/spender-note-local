@@ -60,7 +60,10 @@ export function DashboardView() {
 
   const activeMonth = selectedMonth ?? summaryQuery.data?.month ?? '';
   const activeParts = parseYearMonth(activeMonth);
-  const yearOptions = buildYearOptions(activeParts.year);
+  const yearItems = buildYearOptions(activeParts.year).map((yr) => ({
+    value: yr,
+    label: yr,
+  }));
   const isConfigured = Boolean(summaryQuery.data?.configured);
 
   return (
@@ -87,7 +90,8 @@ export function DashboardView() {
           </Button>
 
           <Select
-            value={activeParts.month || ''}
+            items={MONTH_OPTIONS}
+            value={activeParts.month || null}
             disabled={!isConfigured}
             onValueChange={(nextMonth) => {
               if (nextMonth && activeParts.year) {
@@ -108,7 +112,8 @@ export function DashboardView() {
           </Select>
 
           <Select
-            value={activeParts.year || ''}
+            items={yearItems}
+            value={activeParts.year || null}
             disabled={!isConfigured}
             onValueChange={(nextYear) => {
               if (nextYear && activeParts.month) {
@@ -120,9 +125,9 @@ export function DashboardView() {
               <SelectValue placeholder="Year" />
             </SelectTrigger>
             <SelectContent>
-              {yearOptions.map((yr) => (
-                <SelectItem key={yr} value={yr}>
-                  {yr}
+              {yearItems.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
                 </SelectItem>
               ))}
             </SelectContent>

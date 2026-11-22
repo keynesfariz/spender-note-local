@@ -51,6 +51,24 @@ const IDENTIFIER_PLACEHOLDERS: Record<AccountIdentifierKind, string> = {
   alias: 'e.g. GoPay Coins',
 };
 
+const ACCOUNT_TYPE_OPTIONS: ReadonlyArray<{
+  value: AccountType;
+  label: string;
+}> = [
+  { value: 'credit_card', label: 'Credit Card' },
+  { value: 'debit_card', label: 'Debit Card' },
+  { value: 'digital_wallet', label: 'Digital Wallet' },
+];
+
+const IDENTIFIER_KIND_OPTIONS: ReadonlyArray<{
+  value: AccountIdentifierKind;
+  label: string;
+}> = [
+  { value: 'card_last4', label: 'Card last 4' },
+  { value: 'bank_account', label: 'Bank account' },
+  { value: 'alias', label: 'Alias / Wallet' },
+];
+
 export function AccountFormDialog({
   open,
   onOpenChange,
@@ -234,6 +252,7 @@ export function AccountFormDialog({
           <Field>
             <FieldLabel>Account type</FieldLabel>
             <Select
+              items={ACCOUNT_TYPE_OPTIONS}
               value={type}
               disabled={Boolean(account?.type_locked)}
               onValueChange={(v) => {
@@ -244,9 +263,11 @@ export function AccountFormDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="credit_card">Credit Card</SelectItem>
-                <SelectItem value="debit_card">Debit Card</SelectItem>
-                <SelectItem value="digital_wallet">Digital Wallet</SelectItem>
+                {ACCOUNT_TYPE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             {account?.type_locked && (
@@ -326,6 +347,7 @@ export function AccountFormDialog({
                   className="flex-1"
                 />
                 <Select
+                  items={IDENTIFIER_KIND_OPTIONS}
                   value={row.kind}
                   onValueChange={(v) => {
                     if (v) {
@@ -343,9 +365,11 @@ export function AccountFormDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="card_last4">Card last 4</SelectItem>
-                    <SelectItem value="bank_account">Bank account</SelectItem>
-                    <SelectItem value="alias">Alias / Wallet</SelectItem>
+                    {IDENTIFIER_KIND_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <Button

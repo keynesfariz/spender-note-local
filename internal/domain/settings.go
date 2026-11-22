@@ -68,7 +68,7 @@ func GetAppSettings(gdb *gorm.DB) (*AppSettingsView, error) {
 		CurrencyLocked:  IsCurrencyLocked(gdb),
 		ModelsDir:       modelsDir,
 		AvailableModels: ListLocalGgufModels(modelsDir),
-		CountryCatalog:  CountryCatalog,
+		CountryCatalog:  ListCountryCatalog(),
 	}, nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -100,6 +101,10 @@ func loadValidatedSettings(gdb *gorm.DB, requireCountryAndGmail bool) (*validate
 	if requireCountryAndGmail {
 		if s.CountryCode == nil || *s.CountryCode == "" || s.Timezone == nil || *s.Timezone == "" || s.Currency == nil || *s.Currency == "" {
 			return nil, errors.New("Configure your country, timezone, and currency in Settings before syncing.")
+		}
+		if domain.FindCountryByCode(*s.CountryCode) == nil {
+			code := strings.ToUpper(strings.TrimSpace(*s.CountryCode))
+			return nil, fmt.Errorf("Saved country %q is not available in countries/. Select an available country in Settings or add countries/%s.json before syncing.", code, code)
 		}
 		var g db.GmailOAuth
 		_ = gdb.First(&g, 1).Error
@@ -424,18 +429,19 @@ func updateSenderSyncState(gdb *gorm.DB, sender db.Sender, maxInternalDateMs *in
 }
 
 type llmExtractRequest struct {
-	ModelPath     string                            `json:"modelPath"`
-	ContextSize   int                               `json:"contextSize"`
-	TimeoutMs     int                               `json:"timeoutMs"`
-	EmailID       string                            `json:"emailId"`
-	FromAddress   string                            `json:"fromAddress"`
-	Subject       string                            `json:"subject"`
-	CleanedText   string                            `json:"cleanedText"`
-	ReceivedAtUtc string                            `json:"receivedAtUtc"`
-	UserCountry   *string                           `json:"userCountry"`
-	UserTimezone  string                            `json:"userTimezone"`
-	UserCurrency  string                            `json:"userCurrency"`
-	Accounts      []domain.ExtractionAccountContext `json:"accounts"`
+	ModelPath          string                            `json:"modelPath"`
+	ContextSize        int                               `json:"contextSize"`
+	TimeoutMs          int                               `json:"timeoutMs"`
+	EmailID            string                            `json:"emailId"`
+	FromAddress        string                            `json:"fromAddress"`
+	Subject            string                            `json:"subject"`
+	CleanedText        string                            `json:"cleanedText"`
+	ReceivedAtUtc      string                            `json:"receivedAtUtc"`
+	UserCountry        *string                           `json:"userCountry"`
+	CountryPromptRules []string                          `json:"countryPromptRules,omitempty"`
+	UserTimezone       string                            `json:"userTimezone"`
+	UserCurrency       string                            `json:"userCurrency"`
+	Accounts           []domain.ExtractionAccountContext `json:"accounts"`
 }
 
 type llmExtractResponse struct {
@@ -538,7 +544,7 @@ func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *va
 		}
 		email := rows[0]
 
-		if IsBillingStatementEmail(email.Subject, email.CleanedText) {
+		if IsBillingStatementEmail(email.Subject, email.CleanedText, cfg.CountryCode) {
 			txErr := gdb.Transaction(func(tx *gorm.DB) error {
 				if err := tx.Exec(`
 					INSERT OR REPLACE INTO email_extractions (
@@ -566,19 +572,27 @@ func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *va
 			continue
 		}
 
+		var countryPromptRules []string
+		if cfg.CountryCode != nil && strings.TrimSpace(*cfg.CountryCode) != "" {
+			if pack := domain.FindCountryPackByCode(*cfg.CountryCode); pack != nil && len(pack.LlmPromptRules) > 0 {
+				countryPromptRules = pack.LlmPromptRules
+			}
+		}
+
 		extracted, errKind, err := callNodeLlamaExtract(ctx, llmBaseURL, llmExtractRequest{
-			ModelPath:     cfg.LlmModelPath,
-			ContextSize:   cfg.LlmContextSize,
-			TimeoutMs:     cfg.LlmTimeoutMs,
-			EmailID:       email.ID,
-			FromAddress:   email.FromAddress,
-			Subject:       email.Subject,
-			CleanedText:   email.CleanedText,
-			ReceivedAtUtc: email.ReceivedAtUtc,
-			UserCountry:   cfg.CountryCode,
-			UserTimezone:  cfg.Timezone,
-			UserCurrency:  cfg.Currency,
-			Accounts:      accountContexts,
+			ModelPath:          cfg.LlmModelPath,
+			ContextSize:        cfg.LlmContextSize,
+			TimeoutMs:          cfg.LlmTimeoutMs,
+			EmailID:            email.ID,
+			FromAddress:        email.FromAddress,
+			Subject:            email.Subject,
+			CleanedText:        email.CleanedText,
+			ReceivedAtUtc:      email.ReceivedAtUtc,
+			UserCountry:        cfg.CountryCode,
+			CountryPromptRules: countryPromptRules,
+			UserTimezone:       cfg.Timezone,
+			UserCurrency:       cfg.Currency,
+			Accounts:           accountContexts,
 		})
 		if ctx.Err() != nil {
 			break

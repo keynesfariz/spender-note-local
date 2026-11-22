@@ -115,7 +115,8 @@ export function SettingsView({
   const [gmailError, setGmailError] = useState<string | null>(null)
   const [queueMessage, setQueueMessage] = useState<string | null>(null)
 
-  const countryCode = countryDraft ?? settings.data?.country_code ?? ""
+  const rawCountryCode = countryDraft ?? settings.data?.country_code ?? ""
+  const countryCode = rawCountryCode.trim().toUpperCase()
   const timezone = timezoneDraft ?? settings.data?.timezone ?? ""
   const modelPath = modelPathDraft ?? settings.data?.llm_model_path ?? ""
   const contextSize =
@@ -126,24 +127,52 @@ export function SettingsView({
   const selectedCountry = (settings.data?.countryCatalog ?? []).find(
     (c) => c.code === countryCode
   )
+  const savedCountryCode = (settings.data?.country_code ?? "")
+    .trim()
+    .toUpperCase()
+  const hasUnsupportedSavedCountry =
+    savedCountryCode !== "" &&
+    !(settings.data?.countryCatalog ?? []).some(
+      (c) => c.code === savedCountryCode
+    )
+  const canRepairLockedCountry =
+    Boolean(settings.data?.currencyLocked) &&
+    !selectedCountry &&
+    (settings.data?.countryCatalog ?? []).some(
+      (c) => c.currency === settings.data?.currency
+    )
 
   const countryItems = useMemo(
     () =>
-      (settings.data?.countryCatalog ?? []).map((c) => ({
-        value: c.code,
-        label: `${c.name} (${c.currency})`,
-      })),
-    [settings.data?.countryCatalog]
+      (settings.data?.countryCatalog ?? [])
+        .filter((c) =>
+          canRepairLockedCountry ? c.currency === settings.data?.currency : true
+        )
+        .map((c) => ({
+          value: c.code,
+          label: `${c.name} (${c.currency})`,
+        })),
+    [
+      settings.data?.countryCatalog,
+      settings.data?.currency,
+      canRepairLockedCountry,
+    ]
   )
 
-  const timezoneItems = useMemo(
-    () =>
-      (selectedCountry?.timezones ?? []).map((tz) => ({
-        value: tz,
-        label: tz,
-      })),
-    [selectedCountry?.timezones]
-  )
+  const timezoneItems = useMemo(() => {
+    const base = (selectedCountry?.timezones ?? []).map((tz) => ({
+      value: tz,
+      label: tz,
+    }))
+    if (
+      selectedCountry &&
+      timezone &&
+      !base.some((item) => item.value === timezone)
+    ) {
+      base.push({ value: timezone, label: timezone })
+    }
+    return base
+  }, [selectedCountry, timezone])
 
   const defaultAccountItems = useMemo(
     () => [
@@ -379,6 +408,15 @@ export function SettingsView({
           )}
         </CardHeader>
         <CardContent className="space-y-4">
+          {hasUnsupportedSavedCountry && (
+            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+              Saved country <strong>{savedCountryCode}</strong> is not present
+              in <code>countries/</code>.{" "}
+              {settings.data?.currencyLocked
+                ? `Add countries/${savedCountryCode}.json to keep using ${settings.data.currency}.`
+                : `Select an available country below or add countries/${savedCountryCode}.json.`}
+            </p>
+          )}
           <form
             onSubmit={handleLocaleSubmit}
             className="grid gap-4 sm:grid-cols-2"
@@ -387,8 +425,11 @@ export function SettingsView({
               <FieldLabel>Country</FieldLabel>
               <Select
                 items={countryItems}
-                value={countryCode || null}
-                disabled={settings.data?.currencyLocked}
+                value={selectedCountry ? countryCode : null}
+                disabled={
+                  Boolean(settings.data?.currencyLocked) &&
+                  !canRepairLockedCountry
+                }
                 onValueChange={(nextCode) => {
                   const code = nextCode ?? ""
                   setCountryDraft(code)
@@ -415,7 +456,8 @@ export function SettingsView({
               <FieldLabel>Timezone</FieldLabel>
               <Select
                 items={timezoneItems}
-                value={timezone || null}
+                value={selectedCountry ? timezone || null : null}
+                disabled={!selectedCountry}
                 onValueChange={(val) => setTimezoneDraft(val ?? "")}
               >
                 <SelectTrigger className="w-full" aria-label="Timezone">
@@ -434,13 +476,15 @@ export function SettingsView({
             <div className="flex flex-wrap items-center justify-between gap-4 sm:col-span-2">
               <p className="text-xs text-muted-foreground">
                 {settings.data?.currencyLocked
-                  ? `Currency (${settings.data.currency}) is locked because accounts or transactions exist. Timezone remains editable.`
+                  ? selectedCountry
+                    ? `Currency (${settings.data.currency}) is locked because accounts or transactions exist. Timezone remains editable.`
+                    : `Currency (${settings.data.currency}) is locked because accounts or transactions exist. Select a matching country or add its country file.`
                   : "Currency is derived from your country and locks once accounts or transactions exist."}
               </p>
               <Button
                 type="submit"
                 size="sm"
-                disabled={!countryCode || localeMutation.isPending}
+                disabled={!selectedCountry || localeMutation.isPending}
               >
                 {localeMutation.isPending ? "Saving..." : "Save locale"}
               </Button>

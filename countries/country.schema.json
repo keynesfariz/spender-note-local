@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://portspendernote.local/schemas/country.schema.json",
+  "title": "PortSpenderNote Country Configuration",
+  "description": "Single declarative configuration file defining locale metadata, LLM extraction rules, and local billing-statement filter phrases for one country.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "code",
+    "name",
+    "currency",
+    "defaultTimezone",
+    "timezones",
+    "llmPromptRules",
+    "billingStatementFilter"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional JSON Schema reference for editor validation and autocomplete."
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}$",
+      "description": "Two-letter uppercase ISO 3166-1 alpha-2 country code. Must match the filename stem (e.g. ID.json -> \"ID\")."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable country display name shown in Settings."
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$",
+      "description": "Three-letter uppercase ISO 4217 default currency code (e.g. \"IDR\", \"JPY\", \"EUR\")."
+    },
+    "defaultTimezone": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Default IANA timezone identifier. Must appear in the timezones array."
+    },
+    "timezones": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Selectable IANA timezone identifiers for this country."
+    },
+    "llmPromptRules": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Country-specific rules appended to the LLM extraction system prompt after universal date, time, and timezone rules (e.g. local currency separator conventions, local timezone abbreviations, common local wallets)."
+    },
+    "billingStatementFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subjectPhrases",
+        "bodyPrimaryCues",
+        "bodySecondaryCues"
+      ],
+      "description": "Local-language phrases layered on top of universal English phrases to detect and skip monthly credit card or bank billing statements before LLM extraction.",
+      "properties": {
+        "subjectPhrases": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Lowercase subject substrings that unmistakably identify a billing statement email."
+        },
+        "bodyPrimaryCues": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Lowercase body substrings identifying a statement total or summary; matched only when paired with a bodySecondaryCue."
+        },
+        "bodySecondaryCues": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Lowercase body substrings identifying a minimum payment or payment due date; matched only when paired with a bodyPrimaryCue."
+        }
+      }
+    }
+  }
+}

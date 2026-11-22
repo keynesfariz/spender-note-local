@@ -1,0 +1,33 @@
+{
+  "$schema": "./country.schema.json",
+  "code": "ID",
+  "name": "Indonesia",
+  "currency": "IDR",
+  "defaultTimezone": "Asia/Jakarta",
+  "timezones": [
+    "Asia/Jakarta",
+    "Asia/Makassar",
+    "Asia/Jayapura"
+  ],
+  "llmPromptRules": [
+    "- For Indonesian Rupiah (IDR / Rp), dots or commas followed by 3 digits (e.g. \"Rp36.500\" or \"IDR 24,500.00\") are thousand separators, so return the full integer \"36500\" or \"24500\", never \"36.50\" or \"24.50\".",
+    "- Indonesian timezone abbreviations map to fixed offsets: \"WIB\" -> \"+07:00\", \"WITA\" -> \"+08:00\", \"WIT\" -> \"+09:00\".",
+    "- Common local payment methods and wallets include \"GoPay\", \"OVO Cash\", \"ShopeePay\", \"DANA\", and \"QRIS\"."
+  ],
+  "billingStatementFilter": {
+    "subjectPhrases": [
+      "tagihan kartu kredit",
+      "lembar tagihan",
+      "ringkasan tagihan"
+    ],
+    "bodyPrimaryCues": [
+      "total tagihan",
+      "ringkasan tagihan",
+      "rincian tagihan"
+    ],
+    "bodySecondaryCues": [
+      "pembayaran minimum",
+      "tanggal jatuh tempo"
+    ]
+  }
+}

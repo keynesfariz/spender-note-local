@@ -2,6 +2,12 @@ package syncrunner
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"gorm.io/gorm"
@@ -141,55 +147,195 @@ func TestUpdateSenderSyncState_NoEmailsAtAllLeavesCursorNullAndSetsSyncTimestamp
 }
 
 func TestIsBillingStatementEmail_DetectsStatementsWithoutFalsePositives(t *testing.T) {
+	idCountry := "ID"
+	usCountry := "US"
+
 	positives := []struct {
-		name    string
-		subject string
-		body    string
+		name        string
+		countryCode *string
+		subject     string
+		body        string
 	}{
 		{
-			name:    "Jenius credit card billing statement",
-			subject: "Billing Statement of Jenius Credit Card Platinum d-Card",
-			body:    "The following is the summary of your Jenius Credit Card Platinum d-Card billing statement:\nTotal Billing (IDR): 9,139,549.26\nMinimum Payment (IDR): 456,977.00\nDue Date: 08 Dec 2026",
+			name:        "Jenius credit card billing statement (universal English)",
+			countryCode: nil,
+			subject:     "Billing Statement of Jenius Credit Card Platinum d-Card",
+			body:        "The following is the summary of your Jenius Credit Card Platinum d-Card billing statement:\nTotal Billing (IDR): 9,139,549.26\nMinimum Payment (IDR): 456,977.00\nDue Date: 08 Dec 2026",
 		},
 		{
-			name:    "Indonesian e-Statement subject",
-			subject: "e-Statement Kartu Kredit BCA November 2026",
-			body:    "Terlampir lembar tagihan kartu kredit Anda.",
+			name:        "Indonesian e-Statement subject",
+			countryCode: &idCountry,
+			subject:     "e-Statement Kartu Kredit BCA November 2026",
+			body:        "Terlampir lembar tagihan kartu kredit Anda.",
 		},
 		{
-			name:    "Generic subject with statement body cues",
-			subject: "Your November Summary",
-			body:    "Total Tagihan: Rp 5.200.000\nPembayaran Minimum: Rp 520.000\nTanggal Jatuh Tempo: 10 Des 2026",
+			name:        "Indonesian subject phrase only with ID active",
+			countryCode: &idCountry,
+			subject:     "Tagihan Kartu Kredit BCA November 2026",
+			body:        "Silakan cek lampiran.",
+		},
+		{
+			name:        "Generic subject with Indonesian statement body cues (ID active)",
+			countryCode: &idCountry,
+			subject:     "Your November Summary",
+			body:        "Total Tagihan: Rp 5.200.000\nPembayaran Minimum: Rp 520.000\nTanggal Jatuh Tempo: 10 Des 2026",
 		},
 	}
 
 	for _, tc := range positives {
-		if !IsBillingStatementEmail(tc.subject, tc.body) {
+		if !IsBillingStatementEmail(tc.subject, tc.body, tc.countryCode) {
 			t.Errorf("%s: expected IsBillingStatementEmail=true, got false", tc.name)
 		}
 	}
 
 	negatives := []struct {
-		name    string
-		subject string
-		body    string
+		name        string
+		countryCode *string
+		subject     string
+		body        string
 	}{
 		{
-			name:    "Legitimate Indonesian card charge alert",
-			subject: "Notifikasi Transaksi Kartu Kredit",
-			body:    "Transaksi Kartu Kredit berhasil di Tokopedia sebesar Rp 150.000 pada 22 Nov 2026.",
+			name:        "Legitimate Indonesian card charge alert",
+			countryCode: &idCountry,
+			subject:     "Notifikasi Transaksi Kartu Kredit",
+			body:        "Transaksi Kartu Kredit berhasil di Tokopedia sebesar Rp 150.000 pada 22 Nov 2026.",
 		},
 		{
-			name:    "Merchant receipt mentioning billing address and payment due",
-			subject: "Your order receipt #12345",
-			body:    "Thank you for your purchase. Billing address: Jakarta. Payment due upon receipt. Total: IDR 250,000.",
+			name:        "Merchant receipt mentioning billing address and payment due",
+			countryCode: &idCountry,
+			subject:     "Your order receipt #12345",
+			body:        "Thank you for your purchase. Billing address: Jakarta. Payment due upon receipt. Total: IDR 250,000.",
+		},
+		{
+			name:        "Indonesian-only cues do not trigger when non-ID country is active",
+			countryCode: &usCountry,
+			subject:     "Your November Summary",
+			body:        "Total Tagihan: Rp 5.200.000\nPembayaran Minimum: Rp 520.000\nTanggal Jatuh Tempo: 10 Des 2026",
+		},
+		{
+			name:        "Indonesian-only subject does not trigger when country is nil",
+			countryCode: nil,
+			subject:     "Tagihan Kartu Kredit BCA November 2026",
+			body:        "Silakan cek lampiran.",
 		},
 	}
 
 	for _, tc := range negatives {
-		if IsBillingStatementEmail(tc.subject, tc.body) {
+		if IsBillingStatementEmail(tc.subject, tc.body, tc.countryCode) {
 			t.Errorf("%s: expected IsBillingStatementEmail=false, got true", tc.name)
 		}
+	}
+}
+
+func TestLoadValidatedSettings_RejectsUnsupportedSavedCountryOnFullSync(t *testing.T) {
+	modelsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(modelsDir, "test.gguf"), []byte("gguf"), 0o644); err != nil {
+		t.Fatalf("write temp gguf: %v", err)
+	}
+	t.Setenv("LLM_MODELS_DIR", modelsDir)
+
+	gdb := openTestDB(t)
+	if err := gdb.Exec(`
+		UPDATE app_settings
+		SET country_code = 'US', timezone = 'America/New_York', currency = 'USD', llm_model_path = 'test.gguf'
+		WHERE id = 1`,
+	).Error; err != nil {
+		t.Fatalf("seed app_settings: %v", err)
+	}
+
+	if _, err := loadValidatedSettings(gdb, true); err == nil || !strings.Contains(err.Error(), `Saved country "US"`) {
+		t.Fatalf("expected unsupported country error on full sync, got: %v", err)
+	}
+
+	// Retry mode (requireCountryAndGmail=false) must still succeed for unrecognized or NULL country_code.
+	cfg, err := loadValidatedSettings(gdb, false)
+	if err != nil {
+		t.Fatalf("expected retry validation to allow unsupported saved country, got: %v", err)
+	}
+	if cfg.CountryCode == nil || *cfg.CountryCode != "US" {
+		t.Fatalf("expected cfg.CountryCode=\"US\", got %v", cfg.CountryCode)
+	}
+
+	if err := gdb.Exec(`UPDATE app_settings SET country_code = NULL WHERE id = 1`).Error; err != nil {
+		t.Fatalf("clear country_code: %v", err)
+	}
+	cfgNil, err := loadValidatedSettings(gdb, false)
+	if err != nil {
+		t.Fatalf("expected retry validation to allow NULL country_code, got: %v", err)
+	}
+	if cfgNil.CountryCode != nil {
+		t.Fatalf("expected nil cfg.CountryCode, got %v", *cfgNil.CountryCode)
+	}
+}
+
+func TestRunExtractionPhase_ForwardsCountryPromptRulesByActiveCountry(t *testing.T) {
+	idCountry := "ID"
+	usCountry := "US"
+
+	cases := []struct {
+		name           string
+		countryCode    *string
+		wantRulesCount int
+	}{
+		{name: "Indonesia forwards 3 rules from ID.json", countryCode: &idCountry, wantRulesCount: 3},
+		{name: "Unrecognized country forwards no country rules", countryCode: &usCountry, wantRulesCount: 0},
+		{name: "Nil country forwards no country rules", countryCode: nil, wantRulesCount: 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var received llmExtractRequest
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+					t.Errorf("decode llm request: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"emailKind":"non_transaction","rawJson":"{}"}`))
+			}))
+			defer srv.Close()
+
+			gdb := openTestDB(t)
+			sender := seedSender(t, gdb, "sender-1", "alerts@example.com", nil)
+			email := db.RawEmail{
+				ID:             "email-1",
+				GmailMessageID: "gmail-1",
+				SenderID:       &sender.ID,
+				FromAddress:    "alerts@example.com",
+				Subject:        "Receipt from Coffee Shop",
+				CleanedText:    "You paid Rp 35.000 at Coffee Shop.",
+				InternalDateMs: 1795278003000,
+				ReceivedAtUtc:  "2026-11-21T16:20:03Z",
+				Status:         "pending",
+			}
+			if err := gdb.Create(&email).Error; err != nil {
+				t.Fatalf("create email: %v", err)
+			}
+			run := db.SyncRun{
+				ID:           "run-1",
+				Status:       "running",
+				Phase:        "extracting",
+				LlmProvider:  "gguf",
+				LlmModel:     "test.gguf",
+				StartedAtUtc: "2026-11-22T00:00:00Z",
+			}
+			if err := gdb.Create(&run).Error; err != nil {
+				t.Fatalf("create run: %v", err)
+			}
+
+			cfg := &validatedConfig{
+				CountryCode:  tc.countryCode,
+				Timezone:     "Asia/Jakarta",
+				Currency:     "IDR",
+				LlmProvider:  "gguf",
+				LlmModelPath: "test.gguf",
+				LlmTimeoutMs: 5000,
+			}
+			runExtractionPhase(context.Background(), gdb, run.ID, cfg, srv.URL)
+
+			if len(received.CountryPromptRules) != tc.wantRulesCount {
+				t.Fatalf("expected %d countryPromptRules, got %d: %+v", tc.wantRulesCount, len(received.CountryPromptRules), received.CountryPromptRules)
+			}
+		})
 	}
 }
 

@@ -2,6 +2,7 @@ import "server-only"
 
 export interface CountryPromptContext {
   userCountry?: string | null
+  countryPromptRules?: readonly string[]
   userTimezone: string
   referenceUtc?: string
 }
@@ -42,19 +43,7 @@ export function resolveTimezoneOffsetString(
   }
 }
 
-const COUNTRY_RULE_BUILDERS: Record<
-  string,
-  (ctx: CountryPromptContext) => string[]
-> = {
-  ID: () => [
-    '- For Indonesian Rupiah (IDR / Rp), dots or commas followed by 3 digits (e.g. "Rp36.500" or "IDR 24,500.00") are thousand separators, so return the full integer "36500" or "24500", never "36.50" or "24.50".',
-    '- Indonesian timezone abbreviations map to fixed offsets: "WIB" -> "+07:00", "WITA" -> "+08:00", "WIT" -> "+09:00".',
-    '- Common local payment methods and wallets include "GoPay", "OVO Cash", "ShopeePay", "DANA", and "QRIS".',
-  ],
-}
-
 export function getCountryPromptRules(ctx: CountryPromptContext): string[] {
-  const countryCode = ctx.userCountry?.trim().toUpperCase() || ""
   const resolvedOffset = resolveTimezoneOffsetString(
     ctx.userTimezone,
     ctx.referenceUtc
@@ -68,9 +57,13 @@ export function getCountryPromptRules(ctx: CountryPromptContext): string[] {
     `- Derive timezone_offset from any explicit timezone or abbreviation shown in the email first (e.g. "UTC" -> "Z", "PST" -> "-08:00"). If the email omits a timezone, use the user's configured timezone ${offsetHint} combined with the email's timestamp.`,
   ]
 
-  const countryBuilder = COUNTRY_RULE_BUILDERS[countryCode]
-  if (countryBuilder) {
-    rules.push(...countryBuilder(ctx))
+  if (ctx.countryPromptRules) {
+    for (const rule of ctx.countryPromptRules) {
+      const trimmed = rule.trim()
+      if (trimmed) {
+        rules.push(trimmed)
+      }
+    }
   }
 
   return rules

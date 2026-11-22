@@ -41,6 +41,7 @@ export interface ExtractTransactionInput {
   cleanedText: string
   receivedAtUtc: string
   userCountry?: string | null
+  countryPromptRules?: readonly string[]
   userTimezone: string
   userCurrency?: string | null
   categories?: readonly string[]
@@ -323,6 +324,7 @@ export function buildExtractionPrompt(
   const accounts = input.accounts ?? []
   const countryAndTimezoneRules = getCountryPromptRules({
     userCountry: input.userCountry,
+    countryPromptRules: input.countryPromptRules,
     userTimezone: input.userTimezone,
     referenceUtc: input.receivedAtUtc,
   })

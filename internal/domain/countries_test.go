@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -189,7 +190,7 @@ func TestSettingsLocale_UsesDiscoveredCountryCatalogOnly(t *testing.T) {
 		t.Fatalf("open in-memory db: %v", err)
 	}
 
-	settings, err := GetAppSettings(gdb)
+	settings, err := GetAppSettings(context.Background(), gdb, "")
 	if err != nil {
 		t.Fatalf("GetAppSettings: %v", err)
 	}

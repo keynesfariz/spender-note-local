@@ -352,3 +352,14 @@ func FindCountryPackByCode(code string) *CountryPack {
 	defaultCountryRegistryMu.RUnlock()
 	return reg.FindPackByCode(code)
 }
+
+func isStrictlyInside(parentReal, childReal string) bool {
+	rel, err := filepath.Rel(parentReal, childReal)
+	if err != nil {
+		return false
+	}
+	if rel == "" || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return false
+	}
+	return true
+}

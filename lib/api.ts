@@ -72,23 +72,19 @@ export interface CountryLocaleInfo {
   timezones: string[]
 }
 
-export interface LocalGgufModelInfo {
-  relativePath: string
-  sizeBytes: number
-}
-
 export interface AppSettingsView {
   country_code: string | null
   timezone: string | null
   currency: string | null
-  llm_provider: "gguf"
-  llm_model_path: string | null
-  llm_context_size: number
+  llm_provider: "openai_compatible"
+  llm_base_url: string
+  llm_model: string | null
   llm_timeout_ms: number
   sync_batch_limit: number
   currencyLocked: boolean
-  modelsDir: string
-  availableModels: LocalGgufModelInfo[]
+  availableModels: string[]
+  serverReachable: boolean
+  serverError: string | null
   countryCatalog: CountryLocaleInfo[]
 }
 
@@ -191,7 +187,7 @@ export interface SyncRunRow {
     | "failed"
     | "cancelled"
     | "interrupted"
-  phase: "preflight" | "fetching" | "extracting" | "done"
+  phase: "preflight" | "fetching" | "syncing" | "extracting" | "done"
   llm_provider: string
   llm_model: string
   fetched_count: number
@@ -333,9 +329,16 @@ export const updateLocaleSettingsApi = (input: {
     body: JSON.stringify({ section: "locale", ...input }),
   })
 
+export const probeLlmModelsApi = (baseUrl: string) => {
+  const qs = baseUrl.trim()
+    ? `?llm_base_url=${encodeURIComponent(baseUrl.trim())}`
+    : ""
+  return apiFetch<AppSettingsView>(`/api/settings${qs}`)
+}
+
 export const updateLlmSettingsApi = (input: {
-  llm_model_path: string | null
-  llm_context_size?: number
+  llm_base_url: string
+  llm_model: string | null
   llm_timeout_ms?: number
 }) =>
   apiFetch("/api/settings", {
@@ -349,13 +352,15 @@ export const updateSyncSettingsApi = (input: { sync_batch_limit: number }) =>
     body: JSON.stringify({ section: "sync", ...input }),
   })
 
-export const testLlmModelApi = () =>
-  apiFetch<{ ok: true; modelPath: string; contextSize: number }>(
-    "/api/settings",
-    {
-      method: "POST",
-    }
-  )
+export const testLlmModelApi = (input?: {
+  llm_base_url?: string
+  llm_model?: string
+  llm_timeout_ms?: number
+}) =>
+  apiFetch<{ ok: true; baseUrl: string; model: string }>("/api/settings", {
+    method: "POST",
+    body: input ? JSON.stringify(input) : undefined,
+  })
 
 export const createSenderApi = (input: {
   email: string

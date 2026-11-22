@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
-	"strings"
 )
 
 func WriteJSON(w http.ResponseWriter, status int, data any) {
@@ -25,22 +23,4 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 		return errors.New("Invalid JSON request body.")
 	}
 	return nil
-}
-
-func InternalBaseURL(r *http.Request) string {
-	if configured := strings.TrimSpace(os.Getenv("INTERNAL_APP_URL")); configured != "" {
-		return strings.TrimRight(configured, "/")
-	}
-	host := ""
-	if r != nil {
-		host = strings.TrimSpace(r.Host)
-	}
-	if host == "" {
-		port := strings.TrimSpace(os.Getenv("PORT"))
-		if port == "" {
-			port = "3000"
-		}
-		host = "127.0.0.1:" + port
-	}
-	return "http://" + host
 }

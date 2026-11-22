@@ -1,15 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"portspendernote/internal/db"
 	"portspendernote/internal/domain"
 	"portspendernote/internal/httpx"
+	"portspendernote/internal/llm"
 	"portspendernote/internal/syncrunner"
 )
 
@@ -19,7 +20,8 @@ func GET(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	settings, err := domain.GetAppSettings(gdb)
+	probeBaseURL := strings.TrimSpace(r.URL.Query().Get("llm_base_url"))
+	settings, err := domain.GetAppSettings(r.Context(), gdb, probeBaseURL)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -39,8 +41,8 @@ func PATCH(w http.ResponseWriter, r *http.Request) {
 		CountryCode    string  `json:"country_code"`
 		Timezone       *string `json:"timezone"`
 		Currency       *string `json:"currency"`
-		LlmModelPath   *string `json:"llm_model_path"`
-		LlmContextSize *int    `json:"llm_context_size"`
+		LlmBaseURL     *string `json:"llm_base_url"`
+		LlmModel       *string `json:"llm_model"`
 		LlmTimeoutMs   *int    `json:"llm_timeout_ms"`
 		SyncBatchLimit int     `json:"sync_batch_limit"`
 	}
@@ -62,23 +64,14 @@ func PATCH(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.WriteJSON(w, http.StatusOK, res)
 	case "llm":
-		res, resolvedSafePath, err := domain.UpdateLlmSettings(gdb, domain.UpdateLlmInput{
-			LlmModelPath:   body.LlmModelPath,
-			LlmContextSize: body.LlmContextSize,
-			LlmTimeoutMs:   body.LlmTimeoutMs,
+		res, err := domain.UpdateLlmSettings(gdb, domain.UpdateLlmInput{
+			LlmBaseURL:   body.LlmBaseURL,
+			LlmModel:     body.LlmModel,
+			LlmTimeoutMs: body.LlmTimeoutMs,
 		})
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, err.Error())
 			return
-		}
-		// Best-effort notify node-llama-cpp warm cache to evict if mismatched
-		evictPayload, _ := json.Marshal(map[string]any{
-			"modelPath":   resolvedSafePath,
-			"contextSize": res["llm_context_size"],
-		})
-		client := &http.Client{Timeout: 3 * time.Second}
-		if resp, err := client.Post(httpx.InternalBaseURL(r)+"/api/llm/evict", "application/json", bytes.NewReader(evictPayload)); err == nil {
-			_ = resp.Body.Close()
 		}
 		httpx.WriteJSON(w, http.StatusOK, res)
 	case "sync":
@@ -101,29 +94,68 @@ func POST(w http.ResponseWriter, r *http.Request) {
 	}
 	status, err := syncrunner.GetSyncStatus(gdb)
 	if err == nil && status.IsRunning {
-		httpx.WriteError(w, http.StatusConflict, "Cannot test model load while a background sync is running.")
-		return
-	}
-	var row db.AppSetting
-	if err := gdb.First(&row, 1).Error; err != nil || row.LlmModelPath == nil || *row.LlmModelPath == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "No GGUF model path configured.")
+		httpx.WriteError(w, http.StatusConflict, "Cannot test LLM connection while a background sync is running.")
 		return
 	}
 
-	payload, _ := json.Marshal(map[string]any{
-		"modelPath":   *row.LlmModelPath,
-		"contextSize": row.LlmContextSize,
-		"timeoutMs":   row.LlmTimeoutMs,
-	})
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Post(httpx.InternalBaseURL(r)+"/api/llm/check", "application/json", bytes.NewReader(payload))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadGateway, "Failed to reach LLM check endpoint: "+err.Error())
+	var row db.AppSetting
+	if err := gdb.First(&row, 1).Error; err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Application settings are missing.")
 		return
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(raw)
+
+	var body struct {
+		LlmBaseURL   *string `json:"llm_base_url"`
+		LlmModel     *string `json:"llm_model"`
+		LlmTimeoutMs *int    `json:"llm_timeout_ms"`
+	}
+	if r.Body != nil {
+		raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+		if len(strings.TrimSpace(string(raw))) > 0 {
+			if err := json.Unmarshal(raw, &body); err != nil {
+				httpx.WriteError(w, http.StatusBadRequest, "Invalid JSON request body.")
+				return
+			}
+		}
+	}
+
+	baseURL := row.LlmBaseURL
+	if body.LlmBaseURL != nil {
+		baseURL = *body.LlmBaseURL
+	}
+	model := ""
+	if row.LlmModel != nil {
+		model = *row.LlmModel
+	}
+	if body.LlmModel != nil {
+		model = *body.LlmModel
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "Select or enter a model ID before testing the connection.")
+		return
+	}
+
+	timeoutMs := row.LlmTimeoutMs
+	if body.LlmTimeoutMs != nil && *body.LlmTimeoutMs >= 1000 && *body.LlmTimeoutMs <= 600000 {
+		timeoutMs = *body.LlmTimeoutMs
+	}
+	if timeoutMs <= 0 {
+		timeoutMs = 60000
+	}
+
+	client, err := llm.NewClient(baseURL, time.Duration(timeoutMs)*time.Millisecond)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := client.CheckHealth(r.Context(), model); err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"baseUrl": client.BaseURL,
+		"model":   model,
+	})
 }

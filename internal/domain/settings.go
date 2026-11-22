@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,23 +13,25 @@ import (
 	"gorm.io/gorm"
 
 	"portspendernote/internal/db"
+	"portspendernote/internal/llm"
 )
 
 var strictEmailRe = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 
 type AppSettingsView struct {
-	CountryCode     *string              `json:"country_code"`
-	Timezone        *string              `json:"timezone"`
-	Currency        *string              `json:"currency"`
-	LlmProvider     string               `json:"llm_provider"`
-	LlmModelPath    *string              `json:"llm_model_path"`
-	LlmContextSize  int                  `json:"llm_context_size"`
-	LlmTimeoutMs    int                  `json:"llm_timeout_ms"`
-	SyncBatchLimit  int                  `json:"sync_batch_limit"`
-	CurrencyLocked  bool                 `json:"currencyLocked"`
-	ModelsDir       string               `json:"modelsDir"`
-	AvailableModels []LocalGgufModelInfo `json:"availableModels"`
-	CountryCatalog  []CountryLocaleInfo  `json:"countryCatalog"`
+	CountryCode     *string             `json:"country_code"`
+	Timezone        *string             `json:"timezone"`
+	Currency        *string             `json:"currency"`
+	LlmProvider     string              `json:"llm_provider"`
+	LlmBaseURL      string              `json:"llm_base_url"`
+	LlmModel        *string             `json:"llm_model"`
+	LlmTimeoutMs    int                 `json:"llm_timeout_ms"`
+	SyncBatchLimit  int                 `json:"sync_batch_limit"`
+	CurrencyLocked  bool                `json:"currencyLocked"`
+	AvailableModels []string            `json:"availableModels"`
+	ServerReachable bool                `json:"serverReachable"`
+	ServerError     *string             `json:"serverError"`
+	CountryCatalog  []CountryLocaleInfo `json:"countryCatalog"`
 }
 
 type GmailStatusView struct {
@@ -50,24 +53,56 @@ func IsCurrencyLocked(gdb *gorm.DB) bool {
 	return txCnt > 0
 }
 
-func GetAppSettings(gdb *gorm.DB) (*AppSettingsView, error) {
+func GetAppSettings(ctx context.Context, gdb *gorm.DB, probeBaseURLOverride string) (*AppSettingsView, error) {
 	var row db.AppSetting
 	if err := gdb.First(&row, 1).Error; err != nil {
 		return nil, errors.New("Application settings row is missing")
 	}
-	modelsDir := GetModelsDir()
+
+	savedBaseURL := strings.TrimSpace(row.LlmBaseURL)
+	if savedBaseURL == "" {
+		savedBaseURL = db.DefaultLlmBaseURL
+	}
+
+	probeTarget := savedBaseURL
+	if strings.TrimSpace(probeBaseURLOverride) != "" {
+		probeTarget = strings.TrimSpace(probeBaseURLOverride)
+	}
+
+	availableModels := []string{}
+	serverReachable := false
+	var serverError *string
+
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	client, err := llm.NewClient(probeTarget, 2*time.Second)
+	if err != nil {
+		msg := err.Error()
+		serverError = &msg
+	} else {
+		models, listErr := client.ListModels(probeCtx)
+		if listErr != nil {
+			msg := listErr.Error()
+			serverError = &msg
+		} else {
+			availableModels = models
+			serverReachable = true
+		}
+	}
+
 	return &AppSettingsView{
 		CountryCode:     row.CountryCode,
 		Timezone:        row.Timezone,
 		Currency:        row.Currency,
 		LlmProvider:     row.LlmProvider,
-		LlmModelPath:    row.LlmModelPath,
-		LlmContextSize:  row.LlmContextSize,
+		LlmBaseURL:      savedBaseURL,
+		LlmModel:        row.LlmModel,
 		LlmTimeoutMs:    row.LlmTimeoutMs,
 		SyncBatchLimit:  row.SyncBatchLimit,
 		CurrencyLocked:  IsCurrencyLocked(gdb),
-		ModelsDir:       modelsDir,
-		AvailableModels: ListLocalGgufModels(modelsDir),
+		AvailableModels: availableModels,
+		ServerReachable: serverReachable,
+		ServerError:     serverError,
 		CountryCatalog:  ListCountryCatalog(),
 	}, nil
 }
@@ -127,32 +162,27 @@ func UpdateLocaleSettings(gdb *gorm.DB, input UpdateLocaleInput) (map[string]str
 }
 
 type UpdateLlmInput struct {
-	LlmModelPath   *string `json:"llm_model_path"`
-	LlmContextSize *int    `json:"llm_context_size"`
-	LlmTimeoutMs   *int    `json:"llm_timeout_ms"`
+	LlmBaseURL   *string `json:"llm_base_url"`
+	LlmModel     *string `json:"llm_model"`
+	LlmTimeoutMs *int    `json:"llm_timeout_ms"`
 }
 
-func UpdateLlmSettings(gdb *gorm.DB, input UpdateLlmInput) (map[string]any, *string, error) {
-	modelsDir := GetModelsDir()
-	var normalizedPath *string
-	var resolvedSafePath *string
+func UpdateLlmSettings(gdb *gorm.DB, input UpdateLlmInput) (map[string]any, error) {
+	rawBaseURL := ""
+	if input.LlmBaseURL != nil {
+		rawBaseURL = *input.LlmBaseURL
+	}
+	normalizedBaseURL, err := llm.NormalizeBaseURL(rawBaseURL)
+	if err != nil {
+		return nil, err
+	}
 
-	if input.LlmModelPath != nil && strings.TrimSpace(*input.LlmModelPath) != "" {
-		trimmed := strings.TrimSpace(*input.LlmModelPath)
-		safe, err := ResolveSafeGgufPath(modelsDir, trimmed)
-		if err != nil {
-			return nil, nil, err
+	var normalizedModel *string
+	if input.LlmModel != nil {
+		trimmed := strings.TrimSpace(*input.LlmModel)
+		if trimmed != "" {
+			normalizedModel = &trimmed
 		}
-		normalizedPath = &trimmed
-		resolvedSafePath = &safe
-	}
-
-	contextSize := 8192
-	if input.LlmContextSize != nil {
-		contextSize = *input.LlmContextSize
-	}
-	if contextSize < 512 || contextSize > 131072 {
-		return nil, nil, errors.New("Context size must be an integer between 512 and 131072.")
 	}
 
 	timeoutMs := 60000
@@ -160,24 +190,24 @@ func UpdateLlmSettings(gdb *gorm.DB, input UpdateLlmInput) (map[string]any, *str
 		timeoutMs = *input.LlmTimeoutMs
 	}
 	if timeoutMs < 1000 || timeoutMs > 600000 {
-		return nil, nil, errors.New("Timeout must be an integer between 1000 and 600000 ms.")
+		return nil, errors.New("Timeout must be an integer between 1000 and 600000 ms.")
 	}
 
 	if err := gdb.Model(&db.AppSetting{}).Where("id = 1").Updates(map[string]any{
-		"llm_provider":     "gguf",
-		"llm_model_path":   normalizedPath,
-		"llm_context_size": contextSize,
-		"llm_timeout_ms":   timeoutMs,
+		"llm_provider":   "openai_compatible",
+		"llm_base_url":   normalizedBaseURL,
+		"llm_model":      normalizedModel,
+		"llm_timeout_ms": timeoutMs,
 	}).Error; err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	return map[string]any{
-		"llm_provider":     "gguf",
-		"llm_model_path":   normalizedPath,
-		"llm_context_size": contextSize,
-		"llm_timeout_ms":   timeoutMs,
-	}, resolvedSafePath, nil
+		"llm_provider":   "openai_compatible",
+		"llm_base_url":   normalizedBaseURL,
+		"llm_model":      normalizedModel,
+		"llm_timeout_ms": timeoutMs,
+	}, nil
 }
 
 func UpdateSyncSettings(gdb *gorm.DB, syncBatchLimit int) (map[string]int, error) {

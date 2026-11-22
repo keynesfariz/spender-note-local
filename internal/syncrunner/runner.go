@@ -1,13 +1,9 @@
 package syncrunner
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +14,7 @@ import (
 	"portspendernote/internal/db"
 	"portspendernote/internal/domain"
 	"portspendernote/internal/gmail"
+	"portspendernote/internal/llm"
 )
 
 type SyncStatusView struct {
@@ -30,11 +27,15 @@ type SyncStatusView struct {
 type activeHandle struct {
 	runID  string
 	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 var (
 	activeMu sync.Mutex
 	active   *activeHandle
+
+	fetchSenderMessagesFn = gmail.FetchSenderMessages
+	getValidAccessTokenFn = gmail.GetValidAccessToken
 )
 
 func getActive() *activeHandle {
@@ -86,8 +87,8 @@ type validatedConfig struct {
 	Timezone       string
 	Currency       string
 	LlmProvider    string
-	LlmModelPath   string
-	LlmContextSize int
+	LlmBaseURL     string
+	LlmModel       string
 	LlmTimeoutMs   int
 	SyncBatchLimit int
 }
@@ -123,11 +124,12 @@ func loadValidatedSettings(gdb *gorm.DB, requireCountryAndGmail bool) (*validate
 		return nil, errors.New("Configure your country, timezone, and currency in Settings first.")
 	}
 
-	if s.LlmModelPath == nil || *s.LlmModelPath == "" {
-		return nil, errors.New("Select a local GGUF model in Settings before syncing.")
-	}
-	if _, err := domain.ResolveSafeGgufPath(domain.GetModelsDir(), *s.LlmModelPath); err != nil {
+	baseURL, err := llm.NormalizeBaseURL(s.LlmBaseURL)
+	if err != nil {
 		return nil, err
+	}
+	if s.LlmModel == nil || strings.TrimSpace(*s.LlmModel) == "" {
+		return nil, errors.New("Select a model from your local LLM server in Settings before syncing.")
 	}
 
 	return &validatedConfig{
@@ -135,14 +137,14 @@ func loadValidatedSettings(gdb *gorm.DB, requireCountryAndGmail bool) (*validate
 		Timezone:       *s.Timezone,
 		Currency:       *s.Currency,
 		LlmProvider:    s.LlmProvider,
-		LlmModelPath:   *s.LlmModelPath,
-		LlmContextSize: s.LlmContextSize,
+		LlmBaseURL:     baseURL,
+		LlmModel:       strings.TrimSpace(*s.LlmModel),
 		LlmTimeoutMs:   s.LlmTimeoutMs,
 		SyncBatchLimit: s.SyncBatchLimit,
 	}, nil
 }
 
-func TriggerSync(gdb *gorm.DB, llmBaseURL string) (string, error) {
+func TriggerSync(gdb *gorm.DB) (string, error) {
 	if err := assertNotSyncing(gdb); err != nil {
 		return "", err
 	}
@@ -158,14 +160,15 @@ func TriggerSync(gdb *gorm.DB, llmBaseURL string) (string, error) {
 		Status:       "running",
 		Phase:        "preflight",
 		LlmProvider:  cfg.LlmProvider,
-		LlmModel:     cfg.LlmModelPath,
+		LlmModel:     cfg.LlmModel,
 		StartedAtUtc: nowUtc,
 	}).Error; err != nil {
 		return "", err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	setActive(&activeHandle{runID: runID, cancel: cancel})
+	done := make(chan struct{})
+	setActive(&activeHandle{runID: runID, cancel: cancel, done: done})
 
 	go func() {
 		defer func() {
@@ -174,14 +177,15 @@ func TriggerSync(gdb *gorm.DB, llmBaseURL string) (string, error) {
 				active = nil
 			}
 			activeMu.Unlock()
+			close(done)
 		}()
-		runFullSyncJob(ctx, gdb, runID, cfg, llmBaseURL)
+		runFullSyncJob(ctx, gdb, runID, cfg)
 	}()
 
 	return runID, nil
 }
 
-func RetryPendingAndFailedExtractions(gdb *gorm.DB, llmBaseURL string) (string, error) {
+func RetryPendingAndFailedExtractions(gdb *gorm.DB) (string, error) {
 	if err := assertNotSyncing(gdb); err != nil {
 		return "", err
 	}
@@ -193,16 +197,18 @@ func RetryPendingAndFailedExtractions(gdb *gorm.DB, llmBaseURL string) (string, 
 	runID := uuid.NewString()
 	nowUtc := domain.NowUtcIsoSeconds()
 	err = gdb.Transaction(func(tx *gorm.DB) error {
-		tx.Model(&db.RawEmail{}).Where("status = 'failed'").Updates(map[string]any{
+		if err := tx.Model(&db.RawEmail{}).Where("status = 'failed'").Updates(map[string]any{
 			"status":        "pending",
 			"error_message": nil,
-		})
+		}).Error; err != nil {
+			return err
+		}
 		return tx.Create(&db.SyncRun{
 			ID:           runID,
 			Status:       "running",
-			Phase:        "extracting",
+			Phase:        "preflight",
 			LlmProvider:  cfg.LlmProvider,
-			LlmModel:     cfg.LlmModelPath,
+			LlmModel:     cfg.LlmModel,
 			StartedAtUtc: nowUtc,
 		}).Error
 	})
@@ -211,7 +217,8 @@ func RetryPendingAndFailedExtractions(gdb *gorm.DB, llmBaseURL string) (string, 
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	setActive(&activeHandle{runID: runID, cancel: cancel})
+	done := make(chan struct{})
+	setActive(&activeHandle{runID: runID, cancel: cancel, done: done})
 
 	go func() {
 		defer func() {
@@ -220,8 +227,9 @@ func RetryPendingAndFailedExtractions(gdb *gorm.DB, llmBaseURL string) (string, 
 				active = nil
 			}
 			activeMu.Unlock()
+			close(done)
 		}()
-		runExtractionPhase(ctx, gdb, runID, cfg, llmBaseURL)
+		runRetryJob(ctx, gdb, runID, cfg)
 	}()
 
 	return runID, nil
@@ -231,13 +239,18 @@ func CancelSync(gdb *gorm.DB) bool {
 	h := getActive()
 	if h != nil {
 		h.cancel()
+		select {
+		case <-h.done:
+		case <-time.After(10 * time.Second):
+		}
+		return true
 	}
 	nowUtc := domain.NowUtcIsoSeconds()
 	res := gdb.Exec(`
 		UPDATE sync_runs
 		SET status = 'cancelled', phase = 'done', finished_at_utc = COALESCE(finished_at_utc, ?)
 		WHERE status = 'running'`, nowUtc)
-	return h != nil || res.RowsAffected > 0
+	return res.RowsAffected > 0
 }
 
 func DismissPendingQueue(gdb *gorm.DB) (int64, error) {
@@ -248,9 +261,113 @@ func DismissPendingQueue(gdb *gorm.DB) (int64, error) {
 	return res.RowsAffected, res.Error
 }
 
-func runFullSyncJob(ctx context.Context, gdb *gorm.DB, runID string, cfg *validatedConfig, llmBaseURL string) {
-	gdb.Model(&db.SyncRun{}).Where("id = ?", runID).Update("phase", "fetching")
+func toLlmAccountContexts(src []domain.ExtractionAccountContext) []llm.AccountContext {
+	out := make([]llm.AccountContext, 0, len(src))
+	for _, a := range src {
+		out = append(out, llm.AccountContext{
+			ID:          a.ID,
+			Name:        a.Name,
+			Type:        a.Type,
+			Identifiers: append([]string(nil), a.Identifiers...),
+		})
+	}
+	return out
+}
 
+func runRetryJob(runCtx context.Context, gdb *gorm.DB, runID string, cfg *validatedConfig) {
+	llmClient, err := llm.NewClient(cfg.LlmBaseURL, time.Duration(cfg.LlmTimeoutMs)*time.Millisecond)
+	if err != nil {
+		finalizeWithError(gdb, runID, runCtx, err)
+		return
+	}
+	if err := llmClient.Preflight(runCtx, cfg.LlmModel); err != nil {
+		finalizeWithError(gdb, runID, runCtx, err)
+		return
+	}
+	if runCtx.Err() != nil {
+		finalizeCancelled(gdb, runID)
+		return
+	}
+
+	gdb.Exec(`UPDATE sync_runs SET phase = 'extracting' WHERE id = ? AND status = 'running'`, runID)
+
+	closedDone := make(chan struct{})
+	close(closedDone)
+	runtimeErr := runExtractionWorker(runCtx, gdb, runID, cfg, llmClient, nil, closedDone, nil)
+	if runCtx.Err() != nil {
+		finalizeCancelled(gdb, runID)
+		return
+	}
+	if runtimeErr != nil {
+		finalizeWithError(gdb, runID, runCtx, runtimeErr)
+		return
+	}
+	finalizeCompleted(gdb, runID)
+}
+
+func runFullSyncJob(runCtx context.Context, gdb *gorm.DB, runID string, cfg *validatedConfig) {
+	llmClient, err := llm.NewClient(cfg.LlmBaseURL, time.Duration(cfg.LlmTimeoutMs)*time.Millisecond)
+	if err != nil {
+		finalizeWithError(gdb, runID, runCtx, err)
+		return
+	}
+	if err := llmClient.Preflight(runCtx, cfg.LlmModel); err != nil {
+		finalizeWithError(gdb, runID, runCtx, err)
+		return
+	}
+	if runCtx.Err() != nil {
+		finalizeCancelled(gdb, runID)
+		return
+	}
+
+	gdb.Exec(`UPDATE sync_runs SET phase = 'syncing' WHERE id = ? AND status = 'running'`, runID)
+
+	fetchCtx, cancelFetch := context.WithCancel(runCtx)
+	defer cancelFetch()
+
+	notifyCh := make(chan struct{}, 1)
+	fetchDoneCh := make(chan struct{})
+
+	var (
+		wg                sync.WaitGroup
+		fetchErr          error
+		extractRuntimeErr error
+	)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(fetchDoneCh)
+		fetchErr = runFetchWorker(fetchCtx, gdb, runID, cfg, notifyCh)
+		if fetchCtx.Err() == nil && fetchErr == nil {
+			gdb.Exec(`UPDATE sync_runs SET phase = 'extracting' WHERE id = ? AND status = 'running' AND phase = 'syncing'`, runID)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		extractRuntimeErr = runExtractionWorker(runCtx, gdb, runID, cfg, llmClient, notifyCh, fetchDoneCh, cancelFetch)
+	}()
+
+	wg.Wait()
+
+	if runCtx.Err() != nil {
+		finalizeCancelled(gdb, runID)
+		return
+	}
+	if extractRuntimeErr != nil {
+		finalizeWithError(gdb, runID, runCtx, extractRuntimeErr)
+		return
+	}
+	if fetchErr != nil {
+		finalizeWithError(gdb, runID, runCtx, fetchErr)
+		return
+	}
+	finalizeCompleted(gdb, runID)
+}
+
+func runFetchWorker(ctx context.Context, gdb *gorm.DB, runID string, cfg *validatedConfig, notifyCh chan<- struct{}) error {
 	var senders []db.Sender
 	gdb.Where("enabled = 1").Order("email ASC").Find(&senders)
 
@@ -264,17 +381,6 @@ func runFullSyncJob(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 	const cursorOverlapMs int64 = 60_000
 	remainingBudget := max(1, cfg.SyncBatchLimit)
 	hasMoreEmails := false
-
-	failRun := func(err error) {
-		if ctx.Err() != nil {
-			finalizeCancelled(gdb, runID)
-			return
-		}
-		gdb.Exec(`
-			UPDATE sync_runs
-			SET status = 'failed', phase = 'done', error_message = ?, finished_at_utc = ?
-			WHERE id = ? AND status = 'running'`, err.Error(), domain.NowUtcIsoSeconds(), runID)
-	}
 
 	for _, sender := range senders {
 		if ctx.Err() != nil {
@@ -302,6 +408,9 @@ func runFullSyncJob(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 		persistMessage := func(msg gmail.FetchedMessage) {
 			persistMu.Lock()
 			defer persistMu.Unlock()
+			if ctx.Err() != nil {
+				return
+			}
 			if _, ok := persistedIDs[msg.GmailMessageID]; ok {
 				return
 			}
@@ -311,6 +420,7 @@ func runFullSyncJob(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 				v := msg.InternalDateMs
 				maxInternalDateMs = &v
 			}
+			insertedNew := false
 			_ = gdb.Transaction(func(tx *gorm.DB) error {
 				res := tx.Exec(`
 					INSERT OR IGNORE INTO raw_emails (
@@ -320,23 +430,39 @@ func runFullSyncJob(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 					uuid.NewString(), msg.GmailMessageID, sender.ID, msg.FromAddress,
 					msg.Subject, msg.CleanedText, msg.InternalDateMs, msg.ReceivedAtUtc,
 				)
+				if res.Error != nil {
+					return res.Error
+				}
 				if res.RowsAffected > 0 {
+					insertedNew = true
 					senderFetchedCount++
-					tx.Exec(`UPDATE sync_runs SET fetched_count = fetched_count + 1, cleaned_count = cleaned_count + 1 WHERE id = ?`, runID)
+					if err := tx.Exec(`UPDATE sync_runs SET fetched_count = fetched_count + 1, cleaned_count = cleaned_count + 1 WHERE id = ?`, runID).Error; err != nil {
+						return err
+					}
 				} else {
-					tx.Exec(`UPDATE sync_runs SET skipped_count = skipped_count + 1 WHERE id = ?`, runID)
+					if err := tx.Exec(`UPDATE sync_runs SET skipped_count = skipped_count + 1 WHERE id = ?`, runID).Error; err != nil {
+						return err
+					}
 				}
 				return nil
 			})
+			if insertedNew && notifyCh != nil {
+				select {
+				case notifyCh <- struct{}{}:
+				default:
+				}
+			}
 		}
 
-		accessToken, err := gmail.GetValidAccessToken(ctx, gdb, false)
+		accessToken, err := getValidAccessTokenFn(ctx, gdb, false)
 		if err != nil {
-			failRun(err)
-			return
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
 		}
 
-		result, err := gmail.FetchSenderMessages(ctx, gmail.FetchSenderMessagesParams{
+		result, err := fetchSenderMessagesFn(ctx, gmail.FetchSenderMessagesParams{
 			AccessToken:     accessToken,
 			SenderEmail:     sender.Email,
 			AfterEpochSec:   afterEpochSec,
@@ -347,12 +473,14 @@ func runFullSyncJob(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 		if err != nil {
 			var unauth gmail.UnauthorizedError
 			if errors.As(err, &unauth) {
-				accessToken, err = gmail.GetValidAccessToken(ctx, gdb, true)
+				accessToken, err = getValidAccessTokenFn(ctx, gdb, true)
 				if err != nil {
-					failRun(err)
-					return
+					if ctx.Err() != nil {
+						return nil
+					}
+					return err
 				}
-				result, err = gmail.FetchSenderMessages(ctx, gmail.FetchSenderMessagesParams{
+				result, err = fetchSenderMessagesFn(ctx, gmail.FetchSenderMessagesParams{
 					AccessToken:     accessToken,
 					SenderEmail:     sender.Email,
 					AfterEpochSec:   afterEpochSec,
@@ -361,17 +489,20 @@ func runFullSyncJob(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 					OnMessage:       persistMessage,
 				})
 				if err != nil {
+					if ctx.Err() != nil {
+						return nil
+					}
 					if errors.As(err, &unauth) {
 						gdb.Model(&db.GmailOAuth{}).Where("id = 1").Update("status", "expired")
-						failRun(&gmail.AuthExpiredError{Message: "Gmail authorization expired or was revoked. Reconnect Gmail in Settings."})
-						return
+						return &gmail.AuthExpiredError{Message: "Gmail authorization expired or was revoked. Reconnect Gmail in Settings."}
 					}
-					failRun(err)
-					return
+					return err
 				}
 			} else {
-				failRun(err)
-				return
+				if ctx.Err() != nil {
+					return nil
+				}
+				return err
 			}
 		}
 
@@ -390,15 +521,10 @@ func runFullSyncJob(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 		updateSenderSyncState(gdb, sender, maxInternalDateMs, result.HasMore)
 	}
 
-	if hasMoreEmails {
-		gdb.Model(&db.SyncRun{}).Where("id = ?", runID).Update("has_more_emails", 1)
+	if hasMoreEmails && ctx.Err() == nil {
+		gdb.Model(&db.SyncRun{}).Where("id = ? AND status = 'running'", runID).Update("has_more_emails", 1)
 	}
-	if ctx.Err() != nil {
-		finalizeCancelled(gdb, runID)
-		return
-	}
-
-	runExtractionPhase(ctx, gdb, runID, cfg, llmBaseURL)
+	return nil
 }
 
 func updateSenderSyncState(gdb *gorm.DB, sender db.Sender, maxInternalDateMs *int64, hasMore bool) {
@@ -428,121 +554,71 @@ func updateSenderSyncState(gdb *gorm.DB, sender db.Sender, maxInternalDateMs *in
 	gdb.Model(&db.Sender{}).Where("id = ?", sender.ID).Updates(updates)
 }
 
-type llmExtractRequest struct {
-	ModelPath          string                            `json:"modelPath"`
-	ContextSize        int                               `json:"contextSize"`
-	TimeoutMs          int                               `json:"timeoutMs"`
-	EmailID            string                            `json:"emailId"`
-	FromAddress        string                            `json:"fromAddress"`
-	Subject            string                            `json:"subject"`
-	CleanedText        string                            `json:"cleanedText"`
-	ReceivedAtUtc      string                            `json:"receivedAtUtc"`
-	UserCountry        *string                           `json:"userCountry"`
-	CountryPromptRules []string                          `json:"countryPromptRules,omitempty"`
-	UserTimezone       string                            `json:"userTimezone"`
-	UserCurrency       string                            `json:"userCurrency"`
-	Accounts           []domain.ExtractionAccountContext `json:"accounts"`
+type pendingEmailRow struct {
+	ID            string  `gorm:"column:id"`
+	SenderID      *string `gorm:"column:sender_id"`
+	FromAddress   string  `gorm:"column:from_address"`
+	Subject       string  `gorm:"column:subject"`
+	CleanedText   string  `gorm:"column:cleaned_text"`
+	ReceivedAtUtc string  `gorm:"column:received_at_utc"`
+	RoleHint      *string `gorm:"column:role_hint"`
 }
 
-type llmExtractResponse struct {
-	EmailKind        string  `json:"emailKind"`
-	AmountMinor      int64   `json:"amountMinor"`
-	Currency         string  `json:"currency"`
-	OccurredAtUtc    string  `json:"occurredAtUtc"`
-	MerchantRaw      string  `json:"merchantRaw"`
-	Category         string  `json:"category"`
-	CardLast4        *string `json:"cardLast4"`
-	PaymentMethodRaw *string `json:"paymentMethodRaw"`
-	BankAccountHint  *string `json:"bankAccountHint"`
-	MatchedAccountID *string `json:"matchedAccountId"`
-	AccountTypeGuess *string `json:"accountTypeGuess"`
-	ReferenceCode    *string `json:"referenceCode"`
-	RawJson          string  `json:"rawJson"`
-	Error            string  `json:"error,omitempty"`
-	ErrorKind        string  `json:"errorKind,omitempty"`
+func nextPendingEmail(gdb *gorm.DB) (*pendingEmailRow, bool) {
+	var rows []pendingEmailRow
+	gdb.Raw(`
+		SELECT re.id, re.sender_id, re.from_address, re.subject, re.cleaned_text, re.received_at_utc, s.role_hint
+		FROM raw_emails re
+		LEFT JOIN senders s ON s.id = re.sender_id
+		WHERE re.status = 'pending'
+		ORDER BY re.internal_date_ms ASC, re.rowid ASC
+		LIMIT 1`).Scan(&rows)
+	if len(rows) == 0 {
+		return nil, false
+	}
+	return &rows[0], true
 }
 
-func callNodeLlamaExtract(ctx context.Context, baseURL string, payload llmExtractRequest) (*llmExtractResponse, string, error) {
-	bodyBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, "runtime", err
-	}
-	timeout := time.Duration(payload.TimeoutMs+15_000) * time.Millisecond
-	reqCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+func runExtractionWorker(
+	runCtx context.Context,
+	gdb *gorm.DB,
+	runID string,
+	cfg *validatedConfig,
+	llmClient *llm.Client,
+	notifyCh <-chan struct{},
+	fetchDoneCh <-chan struct{},
+	cancelFetch context.CancelFunc,
+) error {
+	accountContexts := toLlmAccountContexts(domain.ListExtractionAccountContexts(gdb))
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, baseURL+"/api/llm/extract", bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, "runtime", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, "runtime", fmt.Errorf("LLM service request failed: %w", err)
-	}
-	defer res.Body.Close()
-
-	respBytes, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, "runtime", err
-	}
-
-	var parsed llmExtractResponse
-	if err := json.Unmarshal(respBytes, &parsed); err != nil {
-		return nil, "runtime", fmt.Errorf("Invalid LLM response (HTTP %d)", res.StatusCode)
-	}
-	if res.StatusCode < 200 || res.StatusCode >= 300 || parsed.Error != "" {
-		kind := parsed.ErrorKind
-		if kind == "" {
-			kind = "runtime"
+	var countryPromptRules []string
+	if cfg.CountryCode != nil && strings.TrimSpace(*cfg.CountryCode) != "" {
+		if pack := domain.FindCountryPackByCode(*cfg.CountryCode); pack != nil && len(pack.LlmPromptRules) > 0 {
+			countryPromptRules = pack.LlmPromptRules
 		}
-		msg := parsed.Error
-		if msg == "" {
-			msg = fmt.Sprintf("LLM extraction failed (HTTP %d)", res.StatusCode)
-		}
-		return nil, kind, errors.New(msg)
-	}
-	return &parsed, "", nil
-}
-
-func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *validatedConfig, llmBaseURL string) {
-	gdb.Model(&db.SyncRun{}).Where("id = ?", runID).Update("phase", "extracting")
-
-	var pendingIDs []string
-	gdb.Model(&db.RawEmail{}).Where("status = 'pending'").Order("internal_date_ms ASC, rowid ASC").Pluck("id", &pendingIDs)
-	if len(pendingIDs) == 0 {
-		finalizeCompleted(gdb, runID)
-		return
 	}
 
-	accountContexts := domain.ListExtractionAccountContexts(gdb)
-	var runtimeErr error
-
-	for _, pendingID := range pendingIDs {
-		if ctx.Err() != nil {
-			break
+	fetchDone := false
+	for {
+		if runCtx.Err() != nil {
+			return nil
 		}
 
-		type pendingRow struct {
-			ID            string  `gorm:"column:id"`
-			SenderID      *string `gorm:"column:sender_id"`
-			FromAddress   string  `gorm:"column:from_address"`
-			Subject       string  `gorm:"column:subject"`
-			CleanedText   string  `gorm:"column:cleaned_text"`
-			ReceivedAtUtc string  `gorm:"column:received_at_utc"`
-			RoleHint      *string `gorm:"column:role_hint"`
-		}
-		var rows []pendingRow
-		gdb.Raw(`
-			SELECT re.id, re.sender_id, re.from_address, re.subject, re.cleaned_text, re.received_at_utc, s.role_hint
-			FROM raw_emails re
-			LEFT JOIN senders s ON s.id = re.sender_id
-			WHERE re.id = ?`, pendingID).Scan(&rows)
-		if len(rows) == 0 {
+		email, found := nextPendingEmail(gdb)
+		if !found {
+			if fetchDone {
+				return nil
+			}
+			select {
+			case <-runCtx.Done():
+				return nil
+			case <-notifyCh:
+			case <-fetchDoneCh:
+				fetchDone = true
+				fetchDoneCh = nil
+			}
 			continue
 		}
-		email := rows[0]
 
 		if IsBillingStatementEmail(email.Subject, email.CleanedText, cfg.CountryCode) {
 			txErr := gdb.Transaction(func(tx *gorm.DB) error {
@@ -563,26 +639,13 @@ func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *va
 				return tx.Exec(`UPDATE sync_runs SET skipped_count = skipped_count + 1 WHERE id = ?`, runID).Error
 			})
 			if txErr != nil {
-				gdb.Model(&db.RawEmail{}).Where("id = ?", email.ID).Updates(map[string]any{
-					"status":        "failed",
-					"error_message": txErr.Error(),
-				})
-				gdb.Exec(`UPDATE sync_runs SET failed_count = failed_count + 1 WHERE id = ?`, runID)
+				markEmailFailed(gdb, runID, email.ID, txErr.Error())
 			}
 			continue
 		}
 
-		var countryPromptRules []string
-		if cfg.CountryCode != nil && strings.TrimSpace(*cfg.CountryCode) != "" {
-			if pack := domain.FindCountryPackByCode(*cfg.CountryCode); pack != nil && len(pack.LlmPromptRules) > 0 {
-				countryPromptRules = pack.LlmPromptRules
-			}
-		}
-
-		extracted, errKind, err := callNodeLlamaExtract(ctx, llmBaseURL, llmExtractRequest{
-			ModelPath:          cfg.LlmModelPath,
-			ContextSize:        cfg.LlmContextSize,
-			TimeoutMs:          cfg.LlmTimeoutMs,
+		userCurrency := cfg.Currency
+		extracted, err := llmClient.ExtractTransaction(runCtx, cfg.LlmModel, llm.ExtractInput{
 			EmailID:            email.ID,
 			FromAddress:        email.FromAddress,
 			Subject:            email.Subject,
@@ -591,39 +654,41 @@ func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *va
 			UserCountry:        cfg.CountryCode,
 			CountryPromptRules: countryPromptRules,
 			UserTimezone:       cfg.Timezone,
-			UserCurrency:       cfg.Currency,
+			UserCurrency:       &userCurrency,
 			Accounts:           accountContexts,
 		})
-		if ctx.Err() != nil {
-			break
+		if runCtx.Err() != nil {
+			return nil
 		}
 		if err != nil {
-			if errKind == "runtime" {
-				runtimeErr = err
-				break
+			if llm.IsRuntimeError(err) {
+				if cancelFetch != nil {
+					cancelFetch()
+				}
+				return err
 			}
-			gdb.Model(&db.RawEmail{}).Where("id = ?", email.ID).Updates(map[string]any{
-				"status":        "failed",
-				"error_message": err.Error(),
-			})
-			gdb.Exec(`UPDATE sync_runs SET failed_count = failed_count + 1 WHERE id = ?`, runID)
+			markEmailFailed(gdb, runID, email.ID, err.Error())
 			continue
 		}
 
+		var createdProvisional *domain.AccountSummary
 		txErr := gdb.Transaction(func(tx *gorm.DB) error {
 			if extracted.EmailKind == "non_transaction" {
-				tx.Exec(`
+				if err := tx.Exec(`
 					INSERT OR REPLACE INTO email_extractions (
 						id, email_id, email_kind, extraction_model, raw_llm_json
 					) VALUES (?, ?, 'non_transaction', ?, ?)`,
-					uuid.NewString(), email.ID, cfg.LlmModelPath, extracted.RawJson,
-				)
-				tx.Model(&db.RawEmail{}).Where("id = ?", email.ID).Updates(map[string]any{
+					uuid.NewString(), email.ID, cfg.LlmModel, extracted.RawJSON,
+				).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&db.RawEmail{}).Where("id = ?", email.ID).Updates(map[string]any{
 					"status":        "non_transaction",
 					"error_message": nil,
-				})
-				tx.Exec(`UPDATE sync_runs SET skipped_count = skipped_count + 1 WHERE id = ?`, runID)
-				return nil
+				}).Error; err != nil {
+					return err
+				}
+				return tx.Exec(`UPDATE sync_runs SET skipped_count = skipped_count + 1 WHERE id = ?`, runID).Error
 			}
 
 			effectiveRole := extracted.EmailKind
@@ -631,7 +696,7 @@ func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *va
 				effectiveRole = *email.RoleHint
 			}
 
-			tx.Exec(`
+			if err := tx.Exec(`
 				INSERT OR REPLACE INTO email_extractions (
 					id, email_id, email_kind, amount_minor, currency, occurred_at_utc,
 					merchant_raw, merchant_norm, category, card_last4,
@@ -641,8 +706,10 @@ func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *va
 				uuid.NewString(), email.ID, effectiveRole, extracted.AmountMinor, extracted.Currency,
 				extracted.OccurredAtUtc, extracted.MerchantRaw, domain.NormalizeMerchant(extracted.MerchantRaw),
 				extracted.Category, extracted.CardLast4, extracted.PaymentMethodRaw, extracted.BankAccountHint,
-				extracted.MatchedAccountID, extracted.ReferenceCode, cfg.LlmModelPath, extracted.RawJson,
-			)
+				extracted.MatchedAccountID, extracted.ReferenceCode, cfg.LlmModel, extracted.RawJSON,
+			).Error; err != nil {
+				return err
+			}
 
 			accountID := domain.MatchAccountForExtraction(tx, domain.MatchAccountParams{
 				SenderID:        email.SenderID,
@@ -667,16 +734,7 @@ func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *va
 					id := prov.ID
 					accountID = &id
 					provisionalCreated = 1
-					idents := make([]string, 0, len(prov.Identifiers))
-					for _, ident := range prov.Identifiers {
-						idents = append(idents, ident.Value)
-					}
-					accountContexts = append(accountContexts, domain.ExtractionAccountContext{
-						ID:          prov.ID,
-						Name:        prov.Name,
-						Type:        prov.Type,
-						Identifiers: idents,
-					})
+					createdProvisional = prov
 				}
 			}
 
@@ -695,42 +753,58 @@ func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *va
 				return err
 			}
 
-			tx.Model(&db.RawEmail{}).Where("id = ?", email.ID).Updates(map[string]any{
+			if err := tx.Model(&db.RawEmail{}).Where("id = ?", email.ID).Updates(map[string]any{
 				"status":        "extracted",
 				"error_message": nil,
-			})
+			}).Error; err != nil {
+				return err
+			}
 
-			tx.Exec(`
+			return tx.Exec(`
 				UPDATE sync_runs
 				SET imported_count = imported_count + 1,
 				    provisional_accounts_created = provisional_accounts_created + ?
-				WHERE id = ?`, provisionalCreated, runID)
-			return nil
+				WHERE id = ?`, provisionalCreated, runID).Error
 		})
 		if txErr != nil {
-			gdb.Model(&db.RawEmail{}).Where("id = ?", email.ID).Updates(map[string]any{
-				"status":        "failed",
-				"error_message": txErr.Error(),
+			markEmailFailed(gdb, runID, email.ID, txErr.Error())
+			continue
+		}
+		if createdProvisional != nil {
+			idents := make([]string, 0, len(createdProvisional.Identifiers))
+			for _, ident := range createdProvisional.Identifiers {
+				idents = append(idents, ident.Value)
+			}
+			accountContexts = append(accountContexts, llm.AccountContext{
+				ID:          createdProvisional.ID,
+				Name:        createdProvisional.Name,
+				Type:        createdProvisional.Type,
+				Identifiers: idents,
 			})
-			gdb.Exec(`UPDATE sync_runs SET failed_count = failed_count + 1 WHERE id = ?`, runID)
 		}
 	}
+}
 
+func markEmailFailed(gdb *gorm.DB, runID, emailID, errMsg string) {
+	gdb.Model(&db.RawEmail{}).Where("id = ?", emailID).Updates(map[string]any{
+		"status":        "failed",
+		"error_message": errMsg,
+	})
+	gdb.Exec(`UPDATE sync_runs SET failed_count = failed_count + 1 WHERE id = ?`, runID)
+}
+
+func finalizeWithError(gdb *gorm.DB, runID string, ctx context.Context, err error) {
 	if ctx.Err() != nil {
 		finalizeCancelled(gdb, runID)
 		return
 	}
-	if runtimeErr != nil {
-		gdb.Exec(`
-			UPDATE sync_runs
-			SET status = CASE WHEN imported_count > 0 OR merged_count > 0 THEN 'partial_error' ELSE 'failed' END,
-			    phase = 'done',
-			    error_message = ?,
-			    finished_at_utc = ?
-			WHERE id = ? AND status = 'running'`, runtimeErr.Error(), domain.NowUtcIsoSeconds(), runID)
-		return
-	}
-	finalizeCompleted(gdb, runID)
+	gdb.Exec(`
+		UPDATE sync_runs
+		SET status = CASE WHEN imported_count > 0 OR merged_count > 0 THEN 'partial_error' ELSE 'failed' END,
+		    phase = 'done',
+		    error_message = ?,
+		    finished_at_utc = ?
+		WHERE id = ? AND status = 'running'`, err.Error(), domain.NowUtcIsoSeconds(), runID)
 }
 
 func finalizeCancelled(gdb *gorm.DB, runID string) {

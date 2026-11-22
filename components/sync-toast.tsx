@@ -27,6 +27,8 @@ function formatPhase(phase: string): string {
       return "Preparing sync..."
     case "fetching":
       return "Fetching Gmail messages..."
+    case "syncing":
+      return "Fetching & extracting..."
     case "extracting":
       return "Extracting with local LLM..."
     case "done":
@@ -230,7 +232,9 @@ export function SyncToast() {
                       disabled={retryMutation.isPending}
                       onClick={() => retryMutation.mutate()}
                     >
-                      Retry failed
+                      {(statusQuery.data?.failedEmailCount ?? 0) > 0
+                        ? "Retry pending & failed"
+                        : "Retry pending"}
                     </Button>
                     <Link
                       href="/settings"

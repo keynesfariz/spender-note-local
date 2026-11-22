@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -46,20 +47,22 @@ func NormalizeMerchant(raw string) string {
 	return strings.TrimSpace(multiSpaceRe.ReplaceAllString(s, " "))
 }
 
-func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc string) {
+func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc string) error {
 	if nowUtc == "" {
 		nowUtc = NowUtcIsoSeconds()
 	}
 	var t db.Transaction
 	if err := tx.Select("id, source_type, manual_override").Where("id = ?", transactionID).First(&t).Error; err != nil {
-		return
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
 	}
 	if t.SourceType == "manual" {
-		return
+		return nil
 	}
 	if t.ManualOverride == 1 {
-		tx.Model(&db.Transaction{}).Where("id = ?", transactionID).Update("updated_at_utc", nowUtc)
-		return
+		return tx.Model(&db.Transaction{}).Where("id = ?", transactionID).Update("updated_at_utc", nowUtc).Error
 	}
 
 	type sourceExt struct {
@@ -77,7 +80,7 @@ func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc s
 		SenderID         *string `gorm:"column:sender_id"`
 	}
 	var sources []sourceExt
-	tx.Raw(`
+	if err := tx.Raw(`
 		SELECT
 			ts.email_id, ts.role,
 			ee.amount_minor, ee.currency, ee.occurred_at_utc,
@@ -88,9 +91,11 @@ func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc s
 		JOIN raw_emails re ON re.id = ts.email_id
 		LEFT JOIN email_extractions ee ON ee.email_id = ts.email_id
 		WHERE ts.transaction_id = ?
-		ORDER BY re.internal_date_ms ASC, ts.email_id ASC`, transactionID).Scan(&sources)
+		ORDER BY re.internal_date_ms ASC, ts.email_id ASC`, transactionID).Scan(&sources).Error; err != nil {
+		return err
+	}
 	if len(sources) == 0 {
-		return
+		return nil
 	}
 
 	var cardCharge, receipt *sourceExt
@@ -150,7 +155,7 @@ func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc s
 	}
 
 	if primary.AmountMinor != nil && primary.Currency != nil && primary.OccurredAtUtc != nil {
-		tx.Exec(`
+		if err := tx.Exec(`
 			UPDATE transactions
 			SET account_id = COALESCE(?, account_id),
 				amount_minor = ?,
@@ -162,8 +167,11 @@ func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc s
 			WHERE id = ?`,
 			accountID, *primary.AmountMinor, *primary.Currency, *primary.OccurredAtUtc,
 			merchant, category, nowUtc, transactionID,
-		)
+		).Error; err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func SaveExtractedTransaction(gdb *gorm.DB, input ExtractedTransactionInput) (string, error) {
@@ -181,7 +189,7 @@ func SaveExtractedTransaction(gdb *gorm.DB, input ExtractedTransactionInput) (st
 
 	var txID string
 	err := gdb.Transaction(func(tx *gorm.DB) error {
-		tx.Exec(`
+		if err := tx.Exec(`
 			INSERT OR IGNORE INTO email_extractions (
 				id, email_id, email_kind, amount_minor, currency, occurred_at_utc,
 				merchant_raw, merchant_norm, category, card_last4, reference_code,
@@ -189,7 +197,9 @@ func SaveExtractedTransaction(gdb *gorm.DB, input ExtractedTransactionInput) (st
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sync', '{}')`,
 			uuid.NewString(), input.EmailID, input.EmailKind, input.AmountMinor, input.Currency,
 			input.OccurredAtUtc, input.MerchantRaw, merchantNorm, input.Category, input.CardLast4, input.ReferenceCode,
-		)
+		).Error; err != nil {
+			return err
+		}
 
 		resolvedAccount := input.ResolvedAccountID
 		if resolvedAccount == nil {
@@ -243,7 +253,9 @@ func SplitTransactionSource(gdb *gorm.DB, transactionID, emailID string) (string
 	var newTxID string
 	err := gdb.Transaction(func(tx *gorm.DB) error {
 		var sources []db.TransactionSource
-		tx.Where("transaction_id = ?", transactionID).Find(&sources)
+		if err := tx.Where("transaction_id = ?", transactionID).Find(&sources).Error; err != nil {
+			return err
+		}
 		if len(sources) < 2 {
 			return fmt.Errorf("Transaction %s must have at least 2 sources to split", transactionID)
 		}
@@ -273,13 +285,15 @@ func SplitTransactionSource(gdb *gorm.DB, transactionID, emailID string) (string
 			SenderID         *string `gorm:"column:sender_id"`
 		}
 		var ext extInfo
-		tx.Raw(`
+		if err := tx.Raw(`
 			SELECT ee.amount_minor, ee.currency, ee.occurred_at_utc, ee.merchant_raw,
 			       ee.category, ee.card_last4, ee.bank_account_hint, ee.payment_method_raw,
 			       ee.llm_account_id, re.sender_id
 			FROM raw_emails re
 			LEFT JOIN email_extractions ee ON ee.email_id = re.id
-			WHERE re.id = ?`, emailID).Scan(&ext)
+			WHERE re.id = ?`, emailID).Scan(&ext).Error; err != nil {
+			return err
+		}
 
 		newTxID = uuid.NewString()
 		acctID := MatchAccountForExtraction(tx, MatchAccountParams{
@@ -328,21 +342,29 @@ func SplitTransactionSource(gdb *gorm.DB, transactionID, emailID string) (string
 			return err
 		}
 
-		tx.Model(&db.TransactionSource{}).Where("id = ?", detached.ID).Updates(map[string]any{
+		if err := tx.Model(&db.TransactionSource{}).Where("id = ?", detached.ID).Updates(map[string]any{
 			"transaction_id": newTxID,
 			"match_state":    "single",
 			"match_score":    1.0,
-		})
-
-		if len(remaining) == 1 {
-			tx.Model(&db.TransactionSource{}).Where("id = ?", remaining[0].ID).Updates(map[string]any{
-				"match_state": "single",
-				"match_score": 1.0,
-			})
+		}).Error; err != nil {
+			return err
 		}
 
-		RecomputeTransactionFromSources(tx, transactionID, nowUtc)
-		RecomputeTransactionFromSources(tx, newTxID, nowUtc)
+		if len(remaining) == 1 {
+			if err := tx.Model(&db.TransactionSource{}).Where("id = ?", remaining[0].ID).Updates(map[string]any{
+				"match_state": "single",
+				"match_score": 1.0,
+			}).Error; err != nil {
+				return err
+			}
+		}
+
+		if err := RecomputeTransactionFromSources(tx, transactionID, nowUtc); err != nil {
+			return err
+		}
+		if err := RecomputeTransactionFromSources(tx, newTxID, nowUtc); err != nil {
+			return err
+		}
 		return nil
 	})
 	return newTxID, err

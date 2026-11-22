@@ -349,12 +349,36 @@ func TestFutureDatedTransactions_ExcludedFromBalanceAndCounted(t *testing.T) {
 	seedAccountTx(t, gdb, "tx-prov-past", prov.ID, 100000, "IDR", "2026-11-20T10:00:00Z")
 	seedAccountTx(t, gdb, "tx-prov-future", prov.ID, 999999, "IDR", "2026-12-08T10:00:00Z")
 
-	bal := computeAccountBalanceAsOf(gdb, prov, "IDR", ToUtcIsoSeconds(now), ToUtcIsoSeconds(now))
+	bal, err := computeAccountBalanceAsOf(gdb, prov, "IDR", ToUtcIsoSeconds(now), ToUtcIsoSeconds(now))
+	if err != nil {
+		t.Fatalf("computeAccountBalanceAsOf: %v", err)
+	}
 	if bal.NetFlowMinor != 100000 {
 		t.Fatalf("expected provisional net_flow_minor=100000 (excluding future tx), got %d", bal.NetFlowMinor)
 	}
 	if bal.FutureTransactionCount != 1 {
 		t.Fatalf("expected provisional future_transaction_count=1, got %d", bal.FutureTransactionCount)
+	}
+}
+
+func TestDomainDBErrorPropagation(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		t.Fatalf("get sql.DB: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close sql.DB: %v", err)
+	}
+
+	if _, err := computeAccountBalanceAsOf(gdb, db.Account{ID: "acct-1", Currency: "USD"}, "USD", "2026-11-20T00:00:00Z", "2026-11-20T00:00:00Z"); err == nil {
+		t.Fatalf("expected error from computeAccountBalanceAsOf on closed DB")
+	}
+	if err := RecomputeTransactionFromSources(gdb, "tx-1", "2026-11-20T00:00:00Z"); err == nil {
+		t.Fatalf("expected error from RecomputeTransactionFromSources on closed DB")
+	}
+	if _, err := GetMonthlySpendingSummary(gdb, "2026-11"); err == nil {
+		t.Fatalf("expected error from GetMonthlySpendingSummary on closed DB")
 	}
 }
 

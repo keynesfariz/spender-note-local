@@ -44,12 +44,16 @@ type GmailStatusView struct {
 
 func IsCurrencyLocked(gdb *gorm.DB) bool {
 	var acctCnt int64
-	gdb.Model(&db.Account{}).Count(&acctCnt)
+	if err := gdb.Model(&db.Account{}).Count(&acctCnt).Error; err != nil {
+		return false
+	}
 	if acctCnt > 0 {
 		return true
 	}
 	var txCnt int64
-	gdb.Model(&db.Transaction{}).Count(&txCnt)
+	if err := gdb.Model(&db.Transaction{}).Count(&txCnt).Error; err != nil {
+		return false
+	}
 	return txCnt > 0
 }
 
@@ -255,7 +259,9 @@ func CreateSender(gdb *gorm.DB, input CreateSenderInput) (*db.Sender, error) {
 	}
 
 	var settings db.AppSetting
-	_ = gdb.First(&settings, 1).Error
+	if err := gdb.First(&settings, 1).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
 	tz := "UTC"
 	if settings.Timezone != nil && *settings.Timezone != "" {
 		tz = *settings.Timezone
@@ -285,7 +291,9 @@ func CreateSender(gdb *gorm.DB, input CreateSenderInput) (*db.Sender, error) {
 	}
 
 	var dupCount int64
-	gdb.Model(&db.Sender{}).Where("email = ?", email).Count(&dupCount)
+	if err := gdb.Model(&db.Sender{}).Where("email = ?", email).Count(&dupCount).Error; err != nil {
+		return nil, err
+	}
 	if dupCount > 0 {
 		return nil, fmt.Errorf("Sender %s is already configured.", email)
 	}
@@ -335,7 +343,9 @@ func UpdateSender(gdb *gorm.DB, id string, patch UpdateSenderInput) (*db.Sender,
 		}
 		if email != current.Email {
 			var dupCnt int64
-			tx.Model(&db.Sender{}).Where("email = ? AND id != ?", email, id).Count(&dupCnt)
+			if err := tx.Model(&db.Sender{}).Where("email = ? AND id != ?", email, id).Count(&dupCnt).Error; err != nil {
+				return err
+			}
 			if dupCnt > 0 {
 				return fmt.Errorf("Sender %s is already configured.", email)
 			}

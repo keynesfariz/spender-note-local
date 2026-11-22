@@ -9,7 +9,9 @@
     "start": "bun --bun next start",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "generate:types": "go run ./cmd/gen-ts-types",
+    "check:types": "go run ./cmd/gen-ts-types --check"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

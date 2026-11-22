@@ -21,14 +21,12 @@ Ordered by priority.
 ### P0: Correctness and Reliability
 
 1. [x] **Fix:** wrong amounts displayed and valid amounts raising "invalid amount" errors
-2. [x] **Feat:** email fetching with configurable `sync_batch_limit` (default `50`), Gmail 403/429 rate-limit retry, and incremental progress saving *(deferred out of P0: running email fetching concurrently with LLM parsing)*
+2. [x] **Feat:** email fetching with configurable `sync_batch_limit` (default `50`), Gmail 403/429 rate-limit retry, incremental progress saving, and pipelined concurrent email fetching + local LLM extraction
 3. [x] **Fix:** `senders.last_sync_at_utc` and `senders.last_internal_date_ms` staying `NULL` under batch limits, and high-water mark cursor calculation across multi-batch backfills
 
 ### P1: Data Model Decisions
 
-4. [ ] **Design:** transaction merging setting:
-   - Option 1: current merging mechanism
-   - Option 2: merge only on equal amounts within a set time window (also the fallback when no accounts exist)
+4. [x] **Design:** manual transaction merging (duplicate merge & combine transactions on `/transactions`)
 5. [ ] **Design:** merge suggestions and behavior — show the email address in the transaction list when a transaction has exactly one
 6. [x] **Design:** auto-create provisional accounts (`status = 'provisional'`, `initial_balance_minor = NULL`) during extraction (`CreateProvisionalAccountForExtraction`), with confirm and merge flows (`MergeAccounts` / `MergeAccountDialog`) that move transactions, identifiers, senders, and reconciliations to the destination account
 7. [ ] **Design:** mark two transactions (from email or manual) as a transfer (`from → to`)
@@ -38,9 +36,9 @@ Ordered by priority.
 
 9. [ ] **Feat:** Category and Tag CRUD
 10. [ ] **Feat:** scheduled transactions (e.g., payday on the 24th) without creating duplicates
-11. [ ] **UI:** tabbed Settings (to organize cycle, merging, and category options)
+11. [x] **UI:** tabbed Settings (General, Gmail & Senders, Local LLM)
 
 ### P3: Refactors & Improvements
 
 12. [ ] **Sync:** fair/round-robin per-sender batching so one high-volume sender does not consume the entire `sync_batch_limit`
-13. [ ] **Refactor:** SQL and general cleanup
+13. [x] **Refactor:** SQL and general cleanup (decomposed domain/API/Settings modules, full DB error propagation, automated Go → TS contract generation)

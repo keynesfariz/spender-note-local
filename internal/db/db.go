@@ -125,9 +125,7 @@ func runMigrations(sqlDB *sql.DB) error {
 }
 
 func OpenDatabase(dbPath string, recoverStaleRuns bool) (*gorm.DB, error) {
-	if !isMemoryDB(dbPath) {
-		enforceOwnerPermissions(dbPath)
-	}
+	enforceOwnerPermissions(dbPath)
 
 	var gdb *gorm.DB
 	err := withMigrationLock(dbPath, func() error {
@@ -180,9 +178,7 @@ func OpenDatabase(dbPath string, recoverStaleRuns bool) (*gorm.DB, error) {
 				WHERE status = 'running'`, nowUtc).Error
 		}
 
-		if !isMemoryDB(dbPath) {
-			enforceOwnerPermissions(dbPath)
-		}
+		enforceOwnerPermissions(dbPath)
 
 		gdb = opened
 		return nil
@@ -193,26 +189,23 @@ func OpenDatabase(dbPath string, recoverStaleRuns bool) (*gorm.DB, error) {
 	return gdb, nil
 }
 
-func GetDB() (*gorm.DB, error) {
+func openSingletonDB(recoverStaleRuns bool) (*gorm.DB, error) {
 	singletonOnce.Do(func() {
 		dbPath := strings.TrimSpace(os.Getenv("DATABASE_PATH"))
 		if dbPath == "" {
 			dbPath = "data/spender.db"
 		}
-		singletonDB, singletonErr = OpenDatabase(dbPath, false)
+		singletonDB, singletonErr = OpenDatabase(dbPath, recoverStaleRuns)
 	})
 	return singletonDB, singletonErr
+}
+
+func GetDB() (*gorm.DB, error) {
+	return openSingletonDB(false)
 }
 
 // GetDBWithRecovery is called by the sync route process on boot to recover any
 // stale running sync_runs left over from a previous server restart.
 func GetDBWithRecovery() (*gorm.DB, error) {
-	singletonOnce.Do(func() {
-		dbPath := strings.TrimSpace(os.Getenv("DATABASE_PATH"))
-		if dbPath == "" {
-			dbPath = "data/spender.db"
-		}
-		singletonDB, singletonErr = OpenDatabase(dbPath, true)
-	})
-	return singletonDB, singletonErr
+	return openSingletonDB(true)
 }

@@ -145,6 +145,18 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 	merchMap := map[string]*SpendingGroupRow{}
 	acctMap := map[string]*SpendingGroupRow{}
 
+	addGroup := func(m map[string]*SpendingGroupRow, key, label string, amount int64, keepMinLabel bool) {
+		if g, ok := m[key]; ok {
+			g.TotalMinor += amount
+			g.Count++
+			if keepMinLabel && label < g.Label {
+				g.Label = label
+			}
+			return
+		}
+		m[key] = &SpendingGroupRow{Key: key, Label: label, TotalMinor: amount, Count: 1}
+	}
+
 	for _, r := range monthRows {
 		if r.Currency != currency {
 			foreignCount++
@@ -153,23 +165,8 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 		localTotal += r.AmountMinor
 		localCount++
 
-		if g, ok := catMap[r.Category]; ok {
-			g.TotalMinor += r.AmountMinor
-			g.Count++
-		} else {
-			catMap[r.Category] = &SpendingGroupRow{Key: r.Category, Label: r.Category, TotalMinor: r.AmountMinor, Count: 1}
-		}
-
-		mKey := strings.ToLower(strings.TrimSpace(r.Merchant))
-		if g, ok := merchMap[mKey]; ok {
-			g.TotalMinor += r.AmountMinor
-			g.Count++
-			if r.Merchant < g.Label {
-				g.Label = r.Merchant
-			}
-		} else {
-			merchMap[mKey] = &SpendingGroupRow{Key: mKey, Label: r.Merchant, TotalMinor: r.AmountMinor, Count: 1}
-		}
+		addGroup(catMap, r.Category, r.Category, r.AmountMinor, false)
+		addGroup(merchMap, strings.ToLower(strings.TrimSpace(r.Merchant)), r.Merchant, r.AmountMinor, true)
 
 		aKey := "unassigned"
 		if r.AccountID != nil && *r.AccountID != "" {
@@ -179,12 +176,7 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 		if r.AccountName != nil && *r.AccountName != "" {
 			aLabel = *r.AccountName
 		}
-		if g, ok := acctMap[aKey]; ok {
-			g.TotalMinor += r.AmountMinor
-			g.Count++
-		} else {
-			acctMap[aKey] = &SpendingGroupRow{Key: aKey, Label: aLabel, TotalMinor: r.AmountMinor, Count: 1}
-		}
+		addGroup(acctMap, aKey, aLabel, r.AmountMinor, false)
 	}
 
 	sortGroups := func(m map[string]*SpendingGroupRow, limit int) []SpendingGroupRow {

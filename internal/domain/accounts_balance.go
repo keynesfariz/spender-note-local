@@ -44,6 +44,23 @@ func resolveAppCurrencyAndTimezone(gdb *gorm.DB, targetCurrency string, targetTi
 	return currency, tz, nil
 }
 
+func computeNetFlowAndBalance(accountType string, anchorBalance *int64, localTotal int64) (int64, *int64) {
+	var netFlow int64
+	if localTotal != 0 {
+		if accountType == "credit_card" {
+			netFlow = localTotal
+		} else {
+			netFlow = -localTotal
+		}
+	}
+	var computed *int64
+	if anchorBalance != nil {
+		v := *anchorBalance + netFlow
+		computed = &v
+	}
+	return netFlow, computed
+}
+
 func computeAccountBalanceAsOf(gdb *gorm.DB, account db.Account, targetCurrency string, asOfUtc string, nowUtc string) (accountBalanceInfo, error) {
 	settingsCurrency, _, err := resolveAppCurrencyAndTimezone(gdb, targetCurrency, "UTC")
 	if err != nil {
@@ -125,20 +142,7 @@ func computeAccountBalanceAsOf(gdb *gorm.DB, account db.Account, targetCurrency 
 		return accountBalanceInfo{}, err
 	}
 
-	var netFlow int64
-	if agg.LocalTotal != 0 {
-		if account.Type == "credit_card" {
-			netFlow = agg.LocalTotal
-		} else {
-			netFlow = -agg.LocalTotal
-		}
-	}
-
-	var computed *int64
-	if anchorBalance != nil {
-		v := *anchorBalance + netFlow
-		computed = &v
-	}
+	netFlow, computed := computeNetFlowAndBalance(account.Type, anchorBalance, agg.LocalTotal)
 
 	return accountBalanceInfo{
 		ComputedBalanceMinor:   computed,
@@ -407,19 +411,7 @@ func buildAccountSummariesAt(
 			idents = []db.AccountIdentifier{}
 		}
 
-		var netFlow int64
-		if st.localTotal != 0 {
-			if st.account.Type == "credit_card" {
-				netFlow = st.localTotal
-			} else {
-				netFlow = -st.localTotal
-			}
-		}
-		var computed *int64
-		if st.anchorBalance != nil {
-			v := *st.anchorBalance + netFlow
-			computed = &v
-		}
+		netFlow, computed := computeNetFlowAndBalance(st.account.Type, st.anchorBalance, st.localTotal)
 
 		var billingCycle *CreditCardBillingCycleSummary
 		if st.cycleBounds != nil && st.account.StatementDay != nil {

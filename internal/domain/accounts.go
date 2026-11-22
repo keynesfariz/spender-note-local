@@ -105,6 +105,20 @@ func validateLast4(last4 *string) (*string, error) {
 	return &norm, nil
 }
 
+func validateStatementDay(accountType string, statementDay *int) (*int, error) {
+	if statementDay == nil {
+		return nil, nil
+	}
+	if accountType != "credit_card" {
+		return nil, errors.New("Statement day is only supported for credit card accounts.")
+	}
+	if *statementDay < 1 || *statementDay > 31 {
+		return nil, errors.New("Statement day must be between 1 and 31.")
+	}
+	v := *statementDay
+	return &v, nil
+}
+
 func listIdentifiersForAccount(gdb *gorm.DB, accountID string) []db.AccountIdentifier {
 	rows := []db.AccountIdentifier{}
 	gdb.Where("account_id = ?", accountID).Order("created_at_utc ASC, rowid ASC").Find(&rows)
@@ -326,6 +340,7 @@ type CreateAccountInput struct {
 	InitialBalanceMinor   int64                    `json:"initial_balance_minor"`
 	InitialBalanceAsOfUtc *string                  `json:"initial_balance_as_of_utc"`
 	Last4                 *string                  `json:"last4"`
+	StatementDay          *int                     `json:"statement_day"`
 	Identifiers           []AccountIdentifierInput `json:"identifiers"`
 	HasIdentifiers        bool                     `json:"-"`
 }
@@ -355,6 +370,10 @@ func CreateAccount(gdb *gorm.DB, input CreateAccountInput) (*AccountSummary, err
 	if err != nil {
 		return nil, err
 	}
+	statementDay, err := validateStatementDay(input.Type, input.StatementDay)
+	if err != nil {
+		return nil, err
+	}
 
 	id := uuid.NewString()
 	createdAt := NowUtcIsoSeconds()
@@ -370,6 +389,7 @@ func CreateAccount(gdb *gorm.DB, input CreateAccountInput) (*AccountSummary, err
 			InitialBalanceMinor:   &initBal,
 			InitialBalanceAsOfUtc: asOfUtc,
 			Last4:                 fallbackLast4,
+			StatementDay:          statementDay,
 			Status:                "confirmed",
 			CreatedAtUtc:          createdAt,
 		}
@@ -410,6 +430,8 @@ type UpdateAccountInput struct {
 	InitialBalanceAsOfUtc *string                  `json:"initial_balance_as_of_utc"`
 	HasLast4              bool                     `json:"-"`
 	Last4                 *string                  `json:"last4"`
+	HasStatementDay       bool                     `json:"-"`
+	StatementDay          *int                     `json:"statement_day"`
 	HasIdentifiers        bool                     `json:"-"`
 	Identifiers           []AccountIdentifierInput `json:"identifiers"`
 }
@@ -490,12 +512,24 @@ func UpdateAccount(gdb *gorm.DB, id string, patch UpdateAccountInput) (*AccountS
 			}
 		}
 
+		statementDay := current.StatementDay
+		if patch.HasStatementDay {
+			statementDay = patch.StatementDay
+		} else if nextType != "credit_card" {
+			statementDay = nil
+		}
+		statementDay, err := validateStatementDay(nextType, statementDay)
+		if err != nil {
+			return err
+		}
+
 		if err := tx.Model(&db.Account{}).Where("id = ?", id).Updates(map[string]any{
 			"name":                      name,
 			"type":                      nextType,
 			"initial_balance_minor":     initBal,
 			"initial_balance_as_of_utc": asOfUtc,
 			"last4":                     last4,
+			"statement_day":             statementDay,
 			"status":                    "confirmed",
 		}).Error; err != nil {
 			return err

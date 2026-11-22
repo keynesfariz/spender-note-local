@@ -42,6 +42,7 @@ type Account struct {
 	InitialBalanceMinor    *int64  `gorm:"column:initial_balance_minor" json:"initial_balance_minor"`
 	InitialBalanceAsOfUtc  string  `gorm:"column:initial_balance_as_of_utc;not null" json:"initial_balance_as_of_utc"`
 	Last4                  *string `gorm:"column:last4" json:"last4"`
+	StatementDay           *int    `gorm:"column:statement_day" json:"statement_day"`
 	Status                 string  `gorm:"column:status;not null;default:confirmed" json:"status"`
 	CreatedAtUtc           string  `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
 }

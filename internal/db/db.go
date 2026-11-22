@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   initial_balance_minor INTEGER,
   initial_balance_as_of_utc TEXT NOT NULL CHECK (length(initial_balance_as_of_utc) = 20 AND initial_balance_as_of_utc LIKE '%Z'),
   last4 TEXT CHECK (last4 IS NULL OR (length(last4) = 4 AND last4 GLOB '[0-9][0-9][0-9][0-9]')),
+  statement_day INTEGER CHECK (statement_day IS NULL OR (statement_day >= 1 AND statement_day <= 31)),
   status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('provisional', 'confirmed')),
   created_at_utc TEXT NOT NULL CHECK (length(created_at_utc) = 20 AND created_at_utc LIKE '%Z')
 ) STRICT;
@@ -290,6 +291,23 @@ func migrateSchema(gdb *gorm.DB) error {
 	if !hasReviewed {
 		if err := gdb.Exec(`ALTER TABLE transactions ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 1 CHECK (reviewed IN (0, 1))`).Error; err != nil {
 			return fmt.Errorf("add transactions.reviewed column: %w", err)
+		}
+	}
+
+	var acctCols []tableCol
+	if err := gdb.Raw(`PRAGMA table_info(accounts)`).Scan(&acctCols).Error; err != nil {
+		return fmt.Errorf("inspect accounts columns: %w", err)
+	}
+	hasStatementDay := false
+	for _, col := range acctCols {
+		if col.Name == "statement_day" {
+			hasStatementDay = true
+			break
+		}
+	}
+	if !hasStatementDay {
+		if err := gdb.Exec(`ALTER TABLE accounts ADD COLUMN statement_day INTEGER CHECK (statement_day IS NULL OR (statement_day >= 1 AND statement_day <= 31))`).Error; err != nil {
+			return fmt.Errorf("add accounts.statement_day column: %w", err)
 		}
 	}
 

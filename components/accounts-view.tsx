@@ -1,13 +1,13 @@
-'use client';
+"use client"
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import Link from 'next/link';
-import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import Link from "next/link"
+import { useState } from "react"
 
-import { AccountFormDialog } from '@/components/account-form-dialog';
-import { MergeAccountDialog } from '@/components/merge-account-dialog';
-import { ReconcileAccountDialog } from '@/components/reconcile-account-dialog';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { AccountFormDialog } from "@/components/account-form-dialog"
+import { MergeAccountDialog } from "@/components/merge-account-dialog"
+import { ReconcileAccountDialog } from "@/components/reconcile-account-dialog"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,23 +18,23 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
-import { Button, buttonVariants } from '@/components/ui/button';
+} from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
+import { Button, buttonVariants } from "@/components/ui/button"
 import {
   Card,
   CardContent,
   CardFooter,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
+} from "@/components/ui/card"
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from '@/components/ui/collapsible';
-import { Separator } from '@/components/ui/separator';
-import { Skeleton } from '@/components/ui/skeleton';
+} from "@/components/ui/collapsible"
+import { Separator } from "@/components/ui/separator"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   accountReconciliationsQuery,
   accountsQuery,
@@ -43,27 +43,27 @@ import {
   settingsQuery,
   type AccountSummary,
   type AccountType,
-} from '@/lib/api';
+} from "@/lib/api"
 import {
   formatMinorCurrency,
   formatSignedMinor,
   formatUtcInTimezone,
-} from '@/lib/format';
+} from "@/lib/format"
 
 const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
-  credit_card: 'Credit Card',
-  debit_card: 'Debit Card',
-  digital_wallet: 'Digital Wallet',
-};
+  credit_card: "Credit Card",
+  debit_card: "Debit Card",
+  digital_wallet: "Digital Wallet",
+}
 
 function AccountReconciliationHistory({
   accountId,
   timezone,
 }: {
-  accountId: string;
-  timezone?: string | null;
+  accountId: string
+  timezone?: string | null
 }) {
-  const history = useQuery(accountReconciliationsQuery(accountId));
+  const history = useQuery(accountReconciliationsQuery(accountId))
 
   return (
     <div className="space-y-2 pt-3">
@@ -88,19 +88,21 @@ function AccountReconciliationHistory({
             >
               <div>
                 <p className="font-medium">
-                  Actual:{' '}
-                  {formatMinorCurrency(rec.actual_balance_minor, rec.currency)}{' '}
+                  Actual:{" "}
+                  {formatMinorCurrency(rec.actual_balance_minor, rec.currency)}{" "}
                   <span className="text-muted-foreground">
-                    (computed{' '}
+                    (computed{" "}
                     {formatMinorCurrency(
                       rec.computed_balance_minor,
-                      rec.currency,
+                      rec.currency
                     )}
-                    , adj{' '}
+                    , adj{" "}
                     {formatSignedMinor(rec.adjustment_minor, rec.currency)})
                   </span>
                 </p>
-                {rec.note && <p className="text-muted-foreground">{rec.note}</p>}
+                {rec.note && (
+                  <p className="text-muted-foreground">{rec.note}</p>
+                )}
               </div>
               <span className="text-muted-foreground">
                 {formatUtcInTimezone(rec.recorded_at_utc, timezone)}
@@ -110,55 +112,61 @@ function AccountReconciliationHistory({
         </ul>
       )}
     </div>
-  );
+  )
 }
 
 export function AccountsView() {
-  const queryClient = useQueryClient();
-  const accounts = useQuery(accountsQuery());
-  const settings = useQuery(settingsQuery());
+  const queryClient = useQueryClient()
+  const accounts = useQuery(accountsQuery())
+  const settings = useQuery(settingsQuery())
 
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingAccount, setEditingAccount] = useState<AccountSummary | null>(null);
+  const [formOpen, setFormOpen] = useState(false)
+  const [editingAccount, setEditingAccount] = useState<AccountSummary | null>(
+    null
+  )
   const [reconcilingAccount, setReconcilingAccount] =
-    useState<AccountSummary | null>(null);
-  const [mergingAccount, setMergingAccount] = useState<AccountSummary | null>(null);
-  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+    useState<AccountSummary | null>(null)
+  const [mergingAccount, setMergingAccount] = useState<AccountSummary | null>(
+    null
+  )
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(
+    null
+  )
+  const [actionError, setActionError] = useState<string | null>(null)
 
-  const hasCurrency = Boolean(settings.data?.currency);
+  const hasCurrency = Boolean(settings.data?.currency)
   const provisionalCount = (accounts.data ?? []).filter(
-    (a) => a.status === 'provisional',
-  ).length;
+    (a) => a.status === "provisional"
+  ).length
 
   const confirmMutation = useMutation({
     mutationFn: confirmAccountApi,
     onSuccess: () => {
-      setActionError(null);
-      void queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      setActionError(null)
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] })
     },
     onError: (err) => {
       setActionError(
-        err instanceof Error ? err.message : 'Could not confirm account.',
-      );
+        err instanceof Error ? err.message : "Could not confirm account."
+      )
     },
-  });
+  })
 
   const deleteMutation = useMutation({
     mutationFn: deleteAccountApi,
     onSuccess: () => {
-      setActionError(null);
-      void queryClient.invalidateQueries({ queryKey: ['accounts'] });
-      void queryClient.invalidateQueries({ queryKey: ['senders'] });
-      void queryClient.invalidateQueries({ queryKey: ['spending'] });
-      void queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      setActionError(null)
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] })
+      void queryClient.invalidateQueries({ queryKey: ["senders"] })
+      void queryClient.invalidateQueries({ queryKey: ["spending"] })
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] })
     },
     onError: (err) => {
       setActionError(
-        err instanceof Error ? err.message : 'Could not delete account.',
-      );
+        err instanceof Error ? err.message : "Could not delete account."
+      )
     },
-  });
+  })
 
   return (
     <div className="space-y-6">
@@ -175,8 +183,8 @@ export function AccountsView() {
           type="button"
           disabled={!hasCurrency}
           onClick={() => {
-            setEditingAccount(null);
-            setFormOpen(true);
+            setEditingAccount(null)
+            setFormOpen(true)
           }}
         >
           Add account
@@ -190,7 +198,7 @@ export function AccountsView() {
               Configure your country and currency in Settings before adding
               accounts.
             </span>
-            <Link href="/settings" className={buttonVariants({ size: 'sm' })}>
+            <Link href="/settings" className={buttonVariants({ size: "sm" })}>
               Go to Settings
             </Link>
           </AlertDescription>
@@ -200,8 +208,8 @@ export function AccountsView() {
       {provisionalCount > 0 && (
         <Alert>
           <AlertTitle>
-            {provisionalCount} provisional{' '}
-            {provisionalCount === 1 ? 'account was' : 'accounts were'}{' '}
+            {provisionalCount} provisional{" "}
+            {provisionalCount === 1 ? "account was" : "accounts were"}{" "}
             auto-created from synced emails.
           </AlertTitle>
           <AlertDescription>
@@ -249,13 +257,17 @@ export function AccountsView() {
                       <Badge variant="secondary">
                         {ACCOUNT_TYPE_LABELS[account.type]}
                       </Badge>
-                      {account.status === 'provisional' && (
+                      {account.status === "provisional" && (
                         <Badge variant="outline">Provisional</Badge>
                       )}
                       {(account.identifiers ?? []).length > 0
                         ? account.identifiers.map((ident) => (
-                            <Badge key={ident.id} variant="outline" className="font-mono">
-                              {ident.kind === 'card_last4'
+                            <Badge
+                              key={ident.id}
+                              variant="outline"
+                              className="font-mono"
+                            >
+                              {ident.kind === "card_last4"
                                 ? `•••• ${ident.value}`
                                 : ident.value}
                             </Badge>
@@ -267,10 +279,10 @@ export function AccountsView() {
                           )}
                       {account.uncounted_foreign_count > 0 && (
                         <Badge variant="outline">
-                          {account.uncounted_foreign_count} foreign{' '}
+                          {account.uncounted_foreign_count} foreign{" "}
                           {account.uncounted_foreign_count === 1
-                            ? 'transaction'
-                            : 'transactions'}{' '}
+                            ? "transaction"
+                            : "transactions"}{" "}
                           excluded
                         </Badge>
                       )}
@@ -278,20 +290,20 @@ export function AccountsView() {
 
                     {account.latest_reconciliation && (
                       <p className="text-xs text-muted-foreground">
-                        Last reconciled{' '}
+                        Last reconciled{" "}
                         {formatUtcInTimezone(
                           account.latest_reconciliation.recorded_at_utc,
-                          settings.data?.timezone,
-                        )}{' '}
-                        — Actual{' '}
+                          settings.data?.timezone
+                        )}{" "}
+                        — Actual{" "}
                         {formatMinorCurrency(
                           account.latest_reconciliation.actual_balance_minor,
-                          account.latest_reconciliation.currency,
-                        )}{' '}
-                        (adj{' '}
+                          account.latest_reconciliation.currency
+                        )}{" "}
+                        (adj{" "}
                         {formatSignedMinor(
                           account.latest_reconciliation.adjustment_minor,
-                          account.latest_reconciliation.currency,
+                          account.latest_reconciliation.currency
                         )}
                         )
                         {account.latest_reconciliation.note &&
@@ -304,14 +316,14 @@ export function AccountsView() {
                     {account.computed_balance_minor !== null ? (
                       <>
                         <p className="text-xs text-muted-foreground">
-                          {account.type === 'credit_card'
-                            ? 'Balance owed'
-                            : 'Available balance'}
+                          {account.type === "credit_card"
+                            ? "Balance owed"
+                            : "Available balance"}
                         </p>
                         <p className="text-xl font-semibold tabular-nums">
                           {formatMinorCurrency(
                             account.computed_balance_minor,
-                            account.currency,
+                            account.currency
                           )}
                         </p>
                       </>
@@ -323,7 +335,7 @@ export function AccountsView() {
                         <p className="text-xl font-semibold tabular-nums">
                           {formatSignedMinor(
                             account.net_flow_minor,
-                            account.currency,
+                            account.currency
                           )}
                         </p>
                         <Button
@@ -340,7 +352,7 @@ export function AccountsView() {
                 </CardHeader>
 
                 <CardFooter className="flex flex-wrap items-center gap-2">
-                  {account.status === 'provisional' && (
+                  {account.status === "provisional" && (
                     <Button
                       type="button"
                       size="sm"
@@ -355,8 +367,8 @@ export function AccountsView() {
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      setEditingAccount(account);
-                      setFormOpen(true);
+                      setEditingAccount(account)
+                      setFormOpen(true)
                     }}
                   >
                     Edit
@@ -368,8 +380,8 @@ export function AccountsView() {
                     onClick={() => setReconcilingAccount(account)}
                   >
                     {account.computed_balance_minor === null
-                      ? 'Set balance'
-                      : 'Reconcile'}
+                      ? "Set balance"
+                      : "Reconcile"}
                   </Button>
                   <Button
                     type="button"
@@ -380,16 +392,24 @@ export function AccountsView() {
                     Merge into...
                   </Button>
                   <CollapsibleTrigger
-                    render={<Button type="button" variant="outline" size="sm" />}
+                    render={
+                      <Button type="button" variant="outline" size="sm" />
+                    }
                   >
-                    {expandedHistoryId === account.id ? 'Hide history' : 'History'}
+                    {expandedHistoryId === account.id
+                      ? "Hide history"
+                      : "History"}
                   </CollapsibleTrigger>
 
                   <div className="ml-auto">
                     <AlertDialog>
                       <AlertDialogTrigger
                         render={
-                          <Button type="button" variant="destructive" size="sm" />
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                          />
                         }
                       >
                         Delete
@@ -413,8 +433,8 @@ export function AccountsView() {
                             onClick={() => deleteMutation.mutate(account.id)}
                           >
                             {deleteMutation.isPending
-                              ? 'Deleting...'
-                              : 'Delete account permanently'}
+                              ? "Deleting..."
+                              : "Delete account permanently"}
                           </AlertDialogAction>
                         </AlertDialogFooter>
                       </AlertDialogContent>
@@ -441,18 +461,18 @@ export function AccountsView() {
       <AccountFormDialog
         open={formOpen}
         onOpenChange={(open) => {
-          setFormOpen(open);
-          if (!open) setEditingAccount(null);
+          setFormOpen(open)
+          if (!open) setEditingAccount(null)
         }}
         account={editingAccount}
-        currency={settings.data?.currency ?? 'USD'}
+        currency={settings.data?.currency ?? "USD"}
         timezone={settings.data?.timezone}
       />
 
       <ReconcileAccountDialog
         open={reconcilingAccount !== null}
         onOpenChange={(open) => {
-          if (!open) setReconcilingAccount(null);
+          if (!open) setReconcilingAccount(null)
         }}
         account={reconcilingAccount}
       />
@@ -460,11 +480,11 @@ export function AccountsView() {
       <MergeAccountDialog
         open={mergingAccount !== null}
         onOpenChange={(open) => {
-          if (!open) setMergingAccount(null);
+          if (!open) setMergingAccount(null)
         }}
         sourceAccount={mergingAccount}
         allAccounts={accounts.data ?? []}
       />
     </div>
-  );
+  )
 }

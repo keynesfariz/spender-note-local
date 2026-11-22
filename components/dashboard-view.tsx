@@ -1,70 +1,70 @@
-'use client';
+"use client"
 
-import { useQuery } from '@tanstack/react-query';
-import Link from 'next/link';
-import { useState } from 'react';
+import { useQuery } from "@tanstack/react-query"
+import Link from "next/link"
+import { useState } from "react"
 
-import { BreakdownPanels } from '@/components/breakdown-panels';
-import { MonthlySummary } from '@/components/monthly-summary';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { BreakdownPanels } from "@/components/breakdown-panels"
+import { MonthlySummary } from "@/components/monthly-summary"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Button, buttonVariants } from "@/components/ui/button"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
-import { monthlySummaryQuery } from '@/lib/api';
-import { shiftYearMonth } from '@/lib/format';
+} from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
+import { monthlySummaryQuery } from "@/lib/api"
+import { shiftYearMonth } from "@/lib/format"
 
 const MONTH_OPTIONS = [
-  { value: '01', label: 'January' },
-  { value: '02', label: 'February' },
-  { value: '03', label: 'March' },
-  { value: '04', label: 'April' },
-  { value: '05', label: 'May' },
-  { value: '06', label: 'June' },
-  { value: '07', label: 'July' },
-  { value: '08', label: 'August' },
-  { value: '09', label: 'September' },
-  { value: '10', label: 'October' },
-  { value: '11', label: 'November' },
-  { value: '12', label: 'December' },
-];
+  { value: "01", label: "January" },
+  { value: "02", label: "February" },
+  { value: "03", label: "March" },
+  { value: "04", label: "April" },
+  { value: "05", label: "May" },
+  { value: "06", label: "June" },
+  { value: "07", label: "July" },
+  { value: "08", label: "August" },
+  { value: "09", label: "September" },
+  { value: "10", label: "October" },
+  { value: "11", label: "November" },
+  { value: "12", label: "December" },
+]
 
 function parseYearMonth(yearMonth: string): { year: string; month: string } {
-  const match = /^(\d{4})-(\d{2})$/.exec(yearMonth.trim());
-  if (!match) return { year: '', month: '' };
-  return { year: match[1], month: match[2] };
+  const match = /^(\d{4})-(\d{2})$/.exec(yearMonth.trim())
+  if (!match) return { year: "", month: "" }
+  return { year: match[1], month: match[2] }
 }
 
 function buildYearOptions(activeYear: string): string[] {
   const center = /^\d{4}$/.test(activeYear)
     ? Number(activeYear)
-    : new Date().getUTCFullYear();
-  const years: string[] = [];
+    : new Date().getUTCFullYear()
+  const years: string[] = []
   for (let y = center - 3; y <= center + 1; y += 1) {
-    years.push(String(y));
+    years.push(String(y))
   }
-  return years;
+  return years
 }
 
 export function DashboardView() {
   const [selectedMonth, setSelectedMonth] = useState<string | undefined>(
-    undefined,
-  );
+    undefined
+  )
 
-  const summaryQuery = useQuery(monthlySummaryQuery(selectedMonth));
+  const summaryQuery = useQuery(monthlySummaryQuery(selectedMonth))
 
-  const activeMonth = selectedMonth ?? summaryQuery.data?.month ?? '';
-  const activeParts = parseYearMonth(activeMonth);
+  const activeMonth = selectedMonth ?? summaryQuery.data?.month ?? ""
+  const activeParts = parseYearMonth(activeMonth)
   const yearItems = buildYearOptions(activeParts.year).map((yr) => ({
     value: yr,
     label: yr,
-  }));
-  const isConfigured = Boolean(summaryQuery.data?.configured);
+  }))
+  const isConfigured = Boolean(summaryQuery.data?.configured)
 
   return (
     <div className="space-y-6">
@@ -95,7 +95,7 @@ export function DashboardView() {
             disabled={!isConfigured}
             onValueChange={(nextMonth) => {
               if (nextMonth && activeParts.year) {
-                setSelectedMonth(`${activeParts.year}-${nextMonth}`);
+                setSelectedMonth(`${activeParts.year}-${nextMonth}`)
               }
             }}
           >
@@ -117,7 +117,7 @@ export function DashboardView() {
             disabled={!isConfigured}
             onValueChange={(nextYear) => {
               if (nextYear && activeParts.month) {
-                setSelectedMonth(`${nextYear}-${activeParts.month}`);
+                setSelectedMonth(`${nextYear}-${activeParts.month}`)
               }
             }}
           >
@@ -145,7 +145,7 @@ export function DashboardView() {
 
           <Link
             href="/transactions"
-            className={buttonVariants({ variant: 'outline', size: 'sm' })}
+            className={buttonVariants({ variant: "outline", size: "sm" })}
           >
             View transactions
           </Link>
@@ -174,12 +174,12 @@ export function DashboardView() {
               Configure your country and currency in Settings to start tracking
               monthly spending.
             </span>
-            <Link href="/settings" className={buttonVariants({ size: 'sm' })}>
+            <Link href="/settings" className={buttonVariants({ size: "sm" })}>
               Go to Settings
             </Link>
           </AlertDescription>
         </Alert>
       )}
     </div>
-  );
+  )
 }

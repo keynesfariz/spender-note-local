@@ -1,12 +1,12 @@
-'use client';
+"use client"
 
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 
-import { DatePicker } from '@/components/date-picker';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { DatePicker } from "@/components/date-picker"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogClose,
@@ -15,40 +15,40 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Field, FieldLabel } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
+} from "@/components/ui/dialog"
+import { Field, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from "@/components/ui/select"
 import {
   combineTransactionsApi,
   duplicateMergeTransactionsApi,
   type AccountSummary,
   type TransactionListItem,
-} from '@/lib/api';
-import { DEFAULT_CATEGORIES } from '@/lib/categories';
+} from "@/lib/api"
+import { DEFAULT_CATEGORIES } from "@/lib/categories"
 import {
   dateTimeInputToUtcIso,
   formatMinorCurrency,
   formatUtcInTimezone,
   utcToDateInputValue,
   utcToTimeInputValue,
-} from '@/lib/format';
-import { cn } from '@/lib/utils';
+} from "@/lib/format"
+import { cn } from "@/lib/utils"
 
-const UNASSIGNED_ACCOUNT = '__unassigned__';
+const UNASSIGNED_ACCOUNT = "__unassigned__"
 
 const CATEGORY_OPTIONS = DEFAULT_CATEGORIES.map((cat) => ({
   value: cat,
   label: cat,
-}));
+}))
 
-export type ManualMergeMode = 'duplicate' | 'combine';
+export type ManualMergeMode = "duplicate" | "combine"
 
 export function ManualMergeDialog({
   mode,
@@ -58,46 +58,46 @@ export function ManualMergeDialog({
   onClose,
   onSuccess,
 }: {
-  mode: ManualMergeMode | null;
-  transactions: TransactionListItem[];
-  accounts: AccountSummary[];
-  timezone: string | null | undefined;
-  onClose: () => void;
-  onSuccess: () => void;
+  mode: ManualMergeMode | null
+  transactions: TransactionListItem[]
+  accounts: AccountSummary[]
+  timezone: string | null | undefined
+  onClose: () => void
+  onSuccess: () => void
 }) {
-  const queryClient = useQueryClient();
+  const queryClient = useQueryClient()
 
-  const [keepId, setKeepId] = useState<string>('');
-  const [merchant, setMerchant] = useState('');
-  const [category, setCategory] = useState('Other');
-  const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT);
-  const [date, setDate] = useState('');
-  const [initialDate, setInitialDate] = useState('');
-  const [initialTime, setInitialTime] = useState('00:00');
-  const [note, setNote] = useState('');
-  const [formError, setFormError] = useState<string | null>(null);
+  const [keepId, setKeepId] = useState<string>("")
+  const [merchant, setMerchant] = useState("")
+  const [category, setCategory] = useState("Other")
+  const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT)
+  const [date, setDate] = useState("")
+  const [initialDate, setInitialDate] = useState("")
+  const [initialTime, setInitialTime] = useState("00:00")
+  const [note, setNote] = useState("")
+  const [formError, setFormError] = useState<string | null>(null)
 
   const sortedByOccurred = useMemo(
     () =>
       [...transactions].sort((a, b) =>
-        b.occurred_at_utc.localeCompare(a.occurred_at_utc),
+        b.occurred_at_utc.localeCompare(a.occurred_at_utc)
       ),
-    [transactions],
-  );
+    [transactions]
+  )
 
   const summedAmount = useMemo(
     () => transactions.reduce((sum, tx) => sum + tx.amount_minor, 0),
-    [transactions],
-  );
-  const sharedCurrency = transactions[0]?.currency ?? 'USD';
+    [transactions]
+  )
+  const sharedCurrency = transactions[0]?.currency ?? "USD"
 
-  const primaryAccountId = sortedByOccurred[0]?.account_id ?? null;
-  const primaryAccountName = sortedByOccurred[0]?.account_name ?? null;
+  const primaryAccountId = sortedByOccurred[0]?.account_id ?? null
+  const primaryAccountName = sortedByOccurred[0]?.account_name ?? null
   const accountItems = useMemo(() => {
     const base = [
-      { value: UNASSIGNED_ACCOUNT, label: 'Unassigned' },
+      { value: UNASSIGNED_ACCOUNT, label: "Unassigned" },
       ...accounts.map((acct) => ({ value: acct.id, label: acct.name })),
-    ];
+    ]
     if (
       accountId !== UNASSIGNED_ACCOUNT &&
       !accounts.some((acct) => acct.id === accountId)
@@ -105,120 +105,126 @@ export function ManualMergeDialog({
       const fallbackLabel =
         primaryAccountId === accountId && primaryAccountName
           ? primaryAccountName
-          : 'Unknown account';
-      base.push({ value: accountId, label: fallbackLabel });
+          : "Unknown account"
+      base.push({ value: accountId, label: fallbackLabel })
     }
-    return base;
-  }, [accounts, accountId, primaryAccountId, primaryAccountName]);
+    return base
+  }, [accounts, accountId, primaryAccountId, primaryAccountName])
 
-  const lastInitKeyRef = useRef<string | null>(null);
+  const lastInitKeyRef = useRef<string | null>(null)
   const selectionKey =
     mode && transactions.length >= 2
-      ? `${mode}:${transactions.map((tx) => tx.id).sort().join(',')}`
-      : null;
+      ? `${mode}:${transactions
+          .map((tx) => tx.id)
+          .sort()
+          .join(",")}`
+      : null
 
   useEffect(() => {
     if (!selectionKey) {
-      lastInitKeyRef.current = null;
-      return;
+      lastInitKeyRef.current = null
+      return
     }
-    if (lastInitKeyRef.current === selectionKey) return;
-    lastInitKeyRef.current = selectionKey;
+    if (lastInitKeyRef.current === selectionKey) return
+    lastInitKeyRef.current = selectionKey
 
-    setFormError(null);
-    setKeepId('');
+    setFormError(null)
+    setKeepId("")
 
-    const primary = sortedByOccurred[0];
+    const primary = sortedByOccurred[0]
     if (primary) {
-      const d = utcToDateInputValue(primary.occurred_at_utc, timezone);
-      const t = utcToTimeInputValue(primary.occurred_at_utc, timezone) || '00:00';
-      setMerchant(primary.merchant);
-      setCategory(primary.category);
-      setAccountId(primary.account_id ?? UNASSIGNED_ACCOUNT);
-      setDate(d);
-      setInitialDate(d);
-      setInitialTime(t);
+      const d = utcToDateInputValue(primary.occurred_at_utc, timezone)
+      const t =
+        utcToTimeInputValue(primary.occurred_at_utc, timezone) || "00:00"
+      setMerchant(primary.merchant)
+      setCategory(primary.category)
+      setAccountId(primary.account_id ?? UNASSIGNED_ACCOUNT)
+      setDate(d)
+      setInitialDate(d)
+      setInitialTime(t)
       const combinedNotes = sortedByOccurred
         .map((tx) => tx.note?.trim())
         .filter((n): n is string => Boolean(n))
-        .join(' / ');
-      setNote(combinedNotes);
+        .join(" / ")
+      setNote(combinedNotes)
     }
-  }, [selectionKey, sortedByOccurred, timezone]);
+  }, [selectionKey, sortedByOccurred, timezone])
 
   const invalidateAll = () => {
-    void queryClient.invalidateQueries({ queryKey: ['transactions'] });
-    void queryClient.invalidateQueries({ queryKey: ['spending'] });
-    void queryClient.invalidateQueries({ queryKey: ['accounts'] });
-  };
+    void queryClient.invalidateQueries({ queryKey: ["transactions"] })
+    void queryClient.invalidateQueries({ queryKey: ["spending"] })
+    void queryClient.invalidateQueries({ queryKey: ["accounts"] })
+  }
 
   const duplicateMutation = useMutation({
     mutationFn: duplicateMergeTransactionsApi,
     onSuccess: () => {
-      invalidateAll();
-      onSuccess();
-      onClose();
+      invalidateAll()
+      onSuccess()
+      onClose()
     },
     onError: (err) => {
       setFormError(
-        err instanceof Error ? err.message : 'Failed to merge duplicate transactions.',
-      );
+        err instanceof Error
+          ? err.message
+          : "Failed to merge duplicate transactions."
+      )
     },
-  });
+  })
 
   const combineMutation = useMutation({
     mutationFn: combineTransactionsApi,
     onSuccess: () => {
-      invalidateAll();
-      onSuccess();
-      onClose();
+      invalidateAll()
+      onSuccess()
+      onClose()
     },
     onError: (err) => {
       setFormError(
-        err instanceof Error ? err.message : 'Failed to combine transactions.',
-      );
+        err instanceof Error ? err.message : "Failed to combine transactions."
+      )
     },
-  });
+  })
 
-  const isPending = duplicateMutation.isPending || combineMutation.isPending;
+  const isPending = duplicateMutation.isPending || combineMutation.isPending
 
   const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    setFormError(null);
+    e.preventDefault()
+    setFormError(null)
 
-    if (mode === 'duplicate') {
+    if (mode === "duplicate") {
       if (transactions.length !== 2 || !keepId) {
-        setFormError('Choose which transaction to keep.');
-        return;
+        setFormError("Choose which transaction to keep.")
+        return
       }
-      const dropTx = transactions.find((tx) => tx.id !== keepId);
+      const dropTx = transactions.find((tx) => tx.id !== keepId)
       if (!dropTx) {
-        setFormError('Could not determine the duplicate transaction to remove.');
-        return;
+        setFormError("Could not determine the duplicate transaction to remove.")
+        return
       }
       duplicateMutation.mutate({
         keepTransactionId: keepId,
         dropTransactionId: dropTx.id,
-      });
-      return;
+      })
+      return
     }
 
-    if (mode === 'combine') {
+    if (mode === "combine") {
       if (!merchant.trim()) {
-        setFormError('Merchant name is required.');
-        return;
+        setFormError("Merchant name is required.")
+        return
       }
       if (!date.trim()) {
-        setFormError('Transaction date is required.');
-        return;
+        setFormError("Transaction date is required.")
+        return
       }
-      let occurredAtUtc: string;
+      let occurredAtUtc: string
       try {
-        const timeToUse = date === initialDate ? initialTime : '00:00';
-        occurredAtUtc = dateTimeInputToUtcIso(date, timeToUse, timezone);
+        const timeToUse = date === initialDate ? initialTime : "00:00"
+        occurredAtUtc = dateTimeInputToUtcIso(date, timeToUse, timezone)
       } catch (err) {
-        setFormError(err instanceof Error ? err.message : 'Invalid date.');
-        return;
+        setFormError(err instanceof Error ? err.message : "Invalid date.")
+        return
       }
       combineMutation.mutate({
         transactionIds: transactions.map((tx) => tx.id),
@@ -227,51 +233,54 @@ export function ManualMergeDialog({
         account_id: accountId === UNASSIGNED_ACCOUNT ? null : accountId,
         occurred_at_utc: occurredAtUtc,
         note: note.trim() || null,
-      });
+      })
     }
-  };
+  }
 
   const canSubmit =
-    mode === 'duplicate'
+    mode === "duplicate"
       ? Boolean(keepId) && transactions.length === 2 && !isPending
-      : Boolean(merchant.trim()) && Boolean(date.trim()) && transactions.length >= 2 && !isPending;
+      : Boolean(merchant.trim()) &&
+        Boolean(date.trim()) &&
+        transactions.length >= 2 &&
+        !isPending
 
   return (
     <Dialog
       open={mode !== null}
       onOpenChange={(open) => {
-        if (!open && !isPending) onClose();
+        if (!open && !isPending) onClose()
       }}
     >
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            {mode === 'duplicate' ? 'Duplicate merge' : 'Combine transactions'}
+            {mode === "duplicate" ? "Duplicate merge" : "Combine transactions"}
           </DialogTitle>
           <DialogDescription>
-            {mode === 'duplicate'
-              ? 'Choose which transaction to keep. The other transaction will be deleted, and all linked emails from both will stay attached.'
+            {mode === "duplicate"
+              ? "Choose which transaction to keep. The other transaction will be deleted, and all linked emails from both will stay attached."
               : `Combining ${transactions.length} transactions into one entry with their summed amount and all linked emails preserved.`}
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {mode === 'duplicate' && (
+          {mode === "duplicate" && (
             <div
               role="radiogroup"
               aria-label="Choose transaction to keep"
               className="space-y-2"
             >
               {transactions.map((tx) => {
-                const selected = keepId === tx.id;
+                const selected = keepId === tx.id
                 return (
                   <label
                     key={tx.id}
                     className={cn(
-                      'flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors',
+                      "flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors",
                       selected
-                        ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                        : 'hover:bg-muted/50',
+                        ? "border-primary bg-primary/5 ring-1 ring-primary"
+                        : "hover:bg-muted/50"
                     )}
                   >
                     <input
@@ -284,7 +293,9 @@ export function ManualMergeDialog({
                     />
                     <div className="min-w-0 flex-1 space-y-1">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="truncate font-medium">{tx.merchant}</span>
+                        <span className="truncate font-medium">
+                          {tx.merchant}
+                        </span>
                         <span className="font-medium tabular-nums">
                           {formatMinorCurrency(tx.amount_minor, tx.currency)}
                         </span>
@@ -293,11 +304,11 @@ export function ManualMergeDialog({
                         <Badge variant="secondary">{tx.category}</Badge>
                         <Badge variant="outline">
                           {tx.sourceCount > 0
-                            ? `${tx.sourceCount} ${tx.sourceCount === 1 ? 'email' : 'emails'}`
-                            : 'Manual'}
+                            ? `${tx.sourceCount} ${tx.sourceCount === 1 ? "email" : "emails"}`
+                            : "Manual"}
                         </Badge>
                         <span>
-                          {tx.account_name ?? 'Unassigned'} ·{' '}
+                          {tx.account_name ?? "Unassigned"} ·{" "}
                           {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
                         </span>
                       </div>
@@ -308,12 +319,12 @@ export function ManualMergeDialog({
                       )}
                     </div>
                   </label>
-                );
+                )
               })}
             </div>
           )}
 
-          {mode === 'combine' && (
+          {mode === "combine" && (
             <div className="space-y-4">
               <div className="rounded-lg border bg-muted/40 p-3">
                 <p className="text-xs text-muted-foreground">
@@ -340,7 +351,7 @@ export function ManualMergeDialog({
                   <Select
                     items={CATEGORY_OPTIONS}
                     value={category}
-                    onValueChange={(v) => setCategory(v ?? 'Other')}
+                    onValueChange={(v) => setCategory(v ?? "Other")}
                   >
                     <SelectTrigger className="w-full" aria-label="Category">
                       <SelectValue />
@@ -405,22 +416,24 @@ export function ManualMergeDialog({
 
           <DialogFooter>
             <DialogClose
-              render={<Button type="button" variant="outline" disabled={isPending} />}
+              render={
+                <Button type="button" variant="outline" disabled={isPending} />
+              }
             >
               Cancel
             </DialogClose>
             <Button type="submit" disabled={!canSubmit}>
               {isPending
-                ? mode === 'duplicate'
-                  ? 'Merging...'
-                  : 'Combining...'
-                : mode === 'duplicate'
-                  ? 'Merge duplicate'
-                  : 'Combine transactions'}
+                ? mode === "duplicate"
+                  ? "Merging..."
+                  : "Combining..."
+                : mode === "duplicate"
+                  ? "Merge duplicate"
+                  : "Combine transactions"}
             </Button>
           </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

@@ -1,5 +1,5 @@
-import { TransactionsView } from '@/components/transactions-view';
+import { TransactionsView } from "@/components/transactions-view"
 
 export default function TransactionsPage() {
-  return <TransactionsView />;
+  return <TransactionsView />
 }

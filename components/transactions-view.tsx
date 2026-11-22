@@ -1,210 +1,219 @@
-'use client';
+"use client"
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2Icon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
-import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  CheckCircle2Icon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+} from "lucide-react"
+import Link from "next/link"
+import { useEffect, useMemo, useState } from "react"
 
-import { AddTransactionDialog } from '@/components/add-transaction-dialog';
-import { DateRangePicker } from '@/components/date-picker';
+import { AddTransactionDialog } from "@/components/add-transaction-dialog"
+import { DateRangePicker } from "@/components/date-picker"
 import {
   ManualMergeDialog,
   type ManualMergeMode,
-} from '@/components/manual-merge-dialog';
-import { TransactionInspectorDialog } from '@/components/transaction-inspector-dialog';
-import { TransactionList } from '@/components/transaction-list';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Button, buttonVariants } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
+} from "@/components/manual-merge-dialog"
+import { TransactionInspectorDialog } from "@/components/transaction-inspector-dialog"
+import { TransactionList } from "@/components/transaction-list"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   accountsQuery,
   deleteTransactionsApi,
   markTransactionsReviewedApi,
   settingsQuery,
   transactionsQuery,
-} from '@/lib/api';
-import { getTodayDateString, shiftDateRange } from '@/lib/format';
+} from "@/lib/api"
+import { getTodayDateString, shiftDateRange } from "@/lib/format"
 
-const DEFAULT_PAGE_SIZE = 25;
+const DEFAULT_PAGE_SIZE = 25
 
 export function TransactionsView() {
-  const queryClient = useQueryClient();
-  const settingsDataQuery = useQuery(settingsQuery());
-  const accountsListQuery = useQuery(accountsQuery());
+  const queryClient = useQueryClient()
+  const settingsDataQuery = useQuery(settingsQuery())
+  const accountsListQuery = useQuery(accountsQuery())
 
-  const timezone = settingsDataQuery.data?.timezone;
-  const currency = settingsDataQuery.data?.currency ?? 'USD';
+  const timezone = settingsDataQuery.data?.timezone
+  const currency = settingsDataQuery.data?.currency ?? "USD"
   const isConfigured = Boolean(
-    settingsDataQuery.data?.timezone && settingsDataQuery.data?.currency,
-  );
+    settingsDataQuery.data?.timezone && settingsDataQuery.data?.currency
+  )
 
-  const [dateRange, setDateRange] = useState<{ from: string; to: string } | null>(
-    null,
-  );
-  const [search, setSearch] = useState('');
-  const [category, setCategory] = useState('all');
-  const [accountId, setAccountId] = useState('all');
-  const [unreviewedOnly, setUnreviewedOnly] = useState(false);
-  const [page, setPage] = useState(1);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(
-    null,
-  );
-  const [mergeMode, setMergeMode] = useState<ManualMergeMode | null>(null);
-  const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [dateRange, setDateRange] = useState<{
+    from: string
+    to: string
+  } | null>(null)
+  const [search, setSearch] = useState("")
+  const [category, setCategory] = useState("all")
+  const [accountId, setAccountId] = useState("all")
+  const [unreviewedOnly, setUnreviewedOnly] = useState(false)
+  const [page, setPage] = useState(1)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [selectedTransactionId, setSelectedTransactionId] = useState<
+    string | null
+  >(null)
+  const [mergeMode, setMergeMode] = useState<ManualMergeMode | null>(null)
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [reviewError, setReviewError] = useState<string | null>(null)
 
-  const todayStr = useMemo(() => getTodayDateString(timezone), [timezone]);
-  const activeRange = dateRange ?? { from: todayStr, to: todayStr };
+  const todayStr = useMemo(() => getTodayDateString(timezone), [timezone])
+  const activeRange = dateRange ?? { from: todayStr, to: todayStr }
 
   const txQuery = useQuery({
     ...transactionsQuery({
       startDate: activeRange.from,
       endDate: activeRange.to,
-      category: category === 'all' ? undefined : category,
-      accountId: accountId === 'all' ? undefined : accountId,
+      category: category === "all" ? undefined : category,
+      accountId: accountId === "all" ? undefined : accountId,
       search: search.trim() || undefined,
       unreviewedOnly: unreviewedOnly || undefined,
       page,
       pageSize: DEFAULT_PAGE_SIZE,
     }),
     enabled: isConfigured,
-  });
+  })
 
-  const items = useMemo(() => txQuery.data?.items ?? [], [txQuery.data?.items]);
-  const totalCount = txQuery.data?.totalCount ?? 0;
-  const totalInRangeCount = txQuery.data?.totalInRangeCount ?? 0;
-  const unreviewedInRangeCount = txQuery.data?.unreviewedInRangeCount ?? 0;
-  const totalPages = Math.max(1, Math.ceil(totalCount / DEFAULT_PAGE_SIZE));
+  const items = useMemo(() => txQuery.data?.items ?? [], [txQuery.data?.items])
+  const totalCount = txQuery.data?.totalCount ?? 0
+  const totalInRangeCount = txQuery.data?.totalInRangeCount ?? 0
+  const unreviewedInRangeCount = txQuery.data?.unreviewedInRangeCount ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / DEFAULT_PAGE_SIZE))
 
   // Clamp page if items shrink after filtering, merging, or reviewing.
   useEffect(() => {
     if (txQuery.isSuccess && page > totalPages) {
-      setPage(totalPages);
-      setSelectedIds([]);
+      setPage(totalPages)
+      setSelectedIds([])
     }
-  }, [txQuery.isSuccess, page, totalPages]);
+  }, [txQuery.isSuccess, page, totalPages])
 
   // Prune stale selected IDs if background sync shifts page contents.
   useEffect(() => {
-    const visibleIds = new Set(items.map((tx) => tx.id));
+    const visibleIds = new Set(items.map((tx) => tx.id))
     setSelectedIds((prev) => {
-      const next = prev.filter((id) => visibleIds.has(id));
-      return next.length === prev.length ? prev : next;
-    });
-  }, [items]);
+      const next = prev.filter((id) => visibleIds.has(id))
+      return next.length === prev.length ? prev : next
+    })
+  }, [items])
 
   const markReviewedMutation = useMutation({
     mutationFn: markTransactionsReviewedApi,
     onMutate: () => setReviewError(null),
     onSuccess: () => {
-      setSelectedIds([]);
-      void queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      void queryClient.invalidateQueries({ queryKey: ['spending'] });
+      setSelectedIds([])
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] })
+      void queryClient.invalidateQueries({ queryKey: ["spending"] })
     },
     onError: (err) => {
       setReviewError(
-        err instanceof Error ? err.message : 'Failed to mark transactions reviewed.',
-      );
+        err instanceof Error
+          ? err.message
+          : "Failed to mark transactions reviewed."
+      )
     },
-  });
+  })
 
   const deleteTransactionsMutation = useMutation({
     mutationFn: deleteTransactionsApi,
     onSuccess: () => {
-      setSelectedIds([]);
-      void queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      void queryClient.invalidateQueries({ queryKey: ['spending'] });
-      void queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      setSelectedIds([])
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] })
+      void queryClient.invalidateQueries({ queryKey: ["spending"] })
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] })
     },
     onSettled: () => {
-      setDeleteDialogOpen(false);
+      setDeleteDialogOpen(false)
     },
-  });
+  })
 
   const updateRange = (next: { from: string; to: string }) => {
-    setDateRange(next);
-    setPage(1);
-    setSelectedIds([]);
-    deleteTransactionsMutation.reset();
-  };
+    setDateRange(next)
+    setPage(1)
+    setSelectedIds([])
+    deleteTransactionsMutation.reset()
+  }
 
   const handleShiftRange = (direction: -1 | 1) => {
-    updateRange(shiftDateRange(activeRange.from, activeRange.to, direction));
-  };
+    updateRange(shiftDateRange(activeRange.from, activeRange.to, direction))
+  }
 
   const handleSearchChange = (value: string) => {
-    setSearch(value);
-    setPage(1);
-    setSelectedIds([]);
-    deleteTransactionsMutation.reset();
-  };
+    setSearch(value)
+    setPage(1)
+    setSelectedIds([])
+    deleteTransactionsMutation.reset()
+  }
 
   const handleCategoryChange = (value: string) => {
-    setCategory(value);
-    setPage(1);
-    setSelectedIds([]);
-    deleteTransactionsMutation.reset();
-  };
+    setCategory(value)
+    setPage(1)
+    setSelectedIds([])
+    deleteTransactionsMutation.reset()
+  }
 
   const handleAccountIdChange = (value: string) => {
-    setAccountId(value);
-    setPage(1);
-    setSelectedIds([]);
-    deleteTransactionsMutation.reset();
-  };
+    setAccountId(value)
+    setPage(1)
+    setSelectedIds([])
+    deleteTransactionsMutation.reset()
+  }
 
   const handleUnreviewedOnlyChange = (value: boolean) => {
-    setUnreviewedOnly(value);
-    setPage(1);
-    setSelectedIds([]);
-    deleteTransactionsMutation.reset();
-  };
+    setUnreviewedOnly(value)
+    setPage(1)
+    setSelectedIds([])
+    deleteTransactionsMutation.reset()
+  }
 
   const handlePageChange = (nextPage: number) => {
-    setPage(nextPage);
-    setSelectedIds([]);
-    deleteTransactionsMutation.reset();
-  };
+    setPage(nextPage)
+    setSelectedIds([])
+    deleteTransactionsMutation.reset()
+  }
 
   const handleToggleRow = (id: string, checked: boolean) => {
-    deleteTransactionsMutation.reset();
+    deleteTransactionsMutation.reset()
     setSelectedIds((prev) => {
       if (checked) {
-        return prev.includes(id) ? prev : [...prev, id];
+        return prev.includes(id) ? prev : [...prev, id]
       }
-      return prev.filter((existing) => existing !== id);
-    });
-  };
+      return prev.filter((existing) => existing !== id)
+    })
+  }
 
   const handleToggleSelectAllPage = (checked: boolean) => {
-    deleteTransactionsMutation.reset();
+    deleteTransactionsMutation.reset()
     if (checked) {
-      setSelectedIds(items.map((tx) => tx.id));
+      setSelectedIds(items.map((tx) => tx.id))
     } else {
-      setSelectedIds([]);
+      setSelectedIds([])
     }
-  };
+  }
 
   const selectedTransactions = useMemo(() => {
-    const selectedSet = new Set(selectedIds);
-    return items.filter((tx) => selectedSet.has(tx.id));
-  }, [items, selectedIds]);
+    const selectedSet = new Set(selectedIds)
+    return items.filter((tx) => selectedSet.has(tx.id))
+  }, [items, selectedIds])
 
   const allInRangeReviewed =
-    !txQuery.isLoading && totalInRangeCount > 0 && unreviewedInRangeCount === 0;
+    !txQuery.isLoading && totalInRangeCount > 0 && unreviewedInRangeCount === 0
   const allOnPageReviewedButMoreUnreviewed =
     !txQuery.isLoading &&
     items.length > 0 &&
     items.every((tx) => tx.reviewed === 1) &&
-    unreviewedInRangeCount > 0;
+    unreviewedInRangeCount > 0
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Transactions</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Transactions
+          </h1>
           <p className="text-sm text-muted-foreground">
             Review daily spending, merge duplicate emails, or combine related
             charges.
@@ -265,7 +274,7 @@ export function TransactionsView() {
               Configure your country and currency in Settings to review and
               manage transactions.
             </span>
-            <Link href="/settings" className={buttonVariants({ size: 'sm' })}>
+            <Link href="/settings" className={buttonVariants({ size: "sm" })}>
               Go to Settings
             </Link>
           </AlertDescription>
@@ -289,8 +298,8 @@ export function TransactionsView() {
                     onClick={() => handleShiftRange(-1)}
                   >
                     {activeRange.from === activeRange.to
-                      ? 'Previous day'
-                      : 'Previous range'}
+                      ? "Previous day"
+                      : "Previous range"}
                   </Button>
                   <Button
                     type="button"
@@ -299,8 +308,8 @@ export function TransactionsView() {
                     onClick={() => handleShiftRange(1)}
                   >
                     {activeRange.from === activeRange.to
-                      ? 'Next day'
-                      : 'Next range'}
+                      ? "Next day"
+                      : "Next range"}
                   </Button>
                 </div>
               </AlertDescription>
@@ -313,8 +322,9 @@ export function TransactionsView() {
               <AlertTitle>This page is all reviewed</AlertTitle>
               <AlertDescription className="mt-1 flex flex-wrap items-center justify-between gap-3">
                 <span>
-                  All transactions on this page are reviewed ({unreviewedInRangeCount}{' '}
-                  unreviewed remaining in this date range).
+                  All transactions on this page are reviewed (
+                  {unreviewedInRangeCount} unreviewed remaining in this date
+                  range).
                 </span>
                 {page < totalPages && (
                   <Button
@@ -339,7 +349,7 @@ export function TransactionsView() {
               txQuery.isError
                 ? txQuery.error instanceof Error
                   ? txQuery.error.message
-                  : 'Failed to load transactions.'
+                  : "Failed to load transactions."
                 : null
             }
             search={search}
@@ -354,23 +364,23 @@ export function TransactionsView() {
             onToggleRow={handleToggleRow}
             onToggleSelectAllPage={handleToggleSelectAllPage}
             onSelectTransaction={setSelectedTransactionId}
-            onOpenDuplicateMerge={() => setMergeMode('duplicate')}
-            onOpenCombine={() => setMergeMode('combine')}
+            onOpenDuplicateMerge={() => setMergeMode("duplicate")}
+            onOpenCombine={() => setMergeMode("combine")}
             onMarkReviewed={(ids) => markReviewedMutation.mutate(ids)}
             isMarkingReviewed={markReviewedMutation.isPending}
             reviewErrorMessage={reviewError}
             onDeleteSelected={(ids) => deleteTransactionsMutation.mutate(ids)}
             deleteDialogOpen={deleteDialogOpen}
             onDeleteDialogOpenChange={(open) => {
-              if (!open && deleteTransactionsMutation.isPending) return;
-              setDeleteDialogOpen(open);
+              if (!open && deleteTransactionsMutation.isPending) return
+              setDeleteDialogOpen(open)
             }}
             isDeleting={deleteTransactionsMutation.isPending}
             deleteErrorMessage={
               deleteTransactionsMutation.isError
                 ? deleteTransactionsMutation.error instanceof Error
                   ? deleteTransactionsMutation.error.message
-                  : 'Failed to delete transactions.'
+                  : "Failed to delete transactions."
                 : null
             }
             page={page}
@@ -406,5 +416,5 @@ export function TransactionsView() {
         timezone={timezone}
       />
     </div>
-  );
+  )
 }

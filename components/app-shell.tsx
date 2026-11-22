@@ -1,44 +1,39 @@
-'use client';
+"use client"
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useState, type ReactNode } from 'react';
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import Link from "next/link"
+import { usePathname } from "next/navigation"
+import { useState, type ReactNode } from "react"
 
-import { SyncToast } from '@/components/sync-toast';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button, buttonVariants } from '@/components/ui/button';
-import {
-  gmailStatusQuery,
-  syncStatusQuery,
-  triggerSyncApi,
-} from '@/lib/api';
+import { SyncToast } from "@/components/sync-toast"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { gmailStatusQuery, syncStatusQuery, triggerSyncApi } from "@/lib/api"
 
 const NAV_ITEMS = [
-  { href: '/', label: 'Spending' },
-  { href: '/transactions', label: 'Transactions' },
-  { href: '/accounts', label: 'Accounts' },
-  { href: '/settings', label: 'Settings' },
-];
+  { href: "/transactions", label: "Transactions" },
+  { href: "/accounts", label: "Accounts" },
+  { href: "/settings", label: "Settings" },
+]
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const pathname = usePathname();
-  const queryClient = useQueryClient();
-  const [syncError, setSyncError] = useState<string | null>(null);
+  const pathname = usePathname()
+  const queryClient = useQueryClient()
+  const [syncError, setSyncError] = useState<string | null>(null)
 
-  const gmailQuery = useQuery(gmailStatusQuery());
-  const syncQuery = useQuery(syncStatusQuery());
+  const gmailQuery = useQuery(gmailStatusQuery())
+  const syncQuery = useQuery(syncStatusQuery())
 
   const syncMutation = useMutation({
     mutationFn: () => triggerSyncApi(),
     onMutate: () => setSyncError(null),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['sync-status'] });
+      void queryClient.invalidateQueries({ queryKey: ["sync-status"] })
     },
     onError: (err) => {
-      setSyncError(err instanceof Error ? err.message : 'Could not start sync.');
+      setSyncError(err instanceof Error ? err.message : "Could not start sync.")
     },
-  });
+  })
 
   return (
     <div className="min-h-screen">
@@ -51,21 +46,21 @@ export function AppShell({ children }: { children: ReactNode }) {
             <nav aria-label="Primary" className="flex items-center gap-1">
               {NAV_ITEMS.map((item) => {
                 const active =
-                  item.href === '/'
-                    ? pathname === '/'
-                    : pathname.startsWith(item.href);
+                  item.href === "/"
+                    ? pathname === "/"
+                    : pathname.startsWith(item.href)
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
                     className={buttonVariants({
-                      variant: active ? 'secondary' : 'ghost',
-                      size: 'sm',
+                      variant: active ? "secondary" : "ghost",
+                      size: "sm",
                     })}
                   >
                     {item.label}
                   </Link>
-                );
+                )
               })}
             </nav>
           </div>
@@ -76,16 +71,16 @@ export function AppShell({ children }: { children: ReactNode }) {
             onClick={() => syncMutation.mutate()}
           >
             {syncQuery.data?.isRunning
-              ? 'Syncing...'
+              ? "Syncing..."
               : syncMutation.isPending
-                ? 'Starting...'
-                : 'Sync now'}
+                ? "Starting..."
+                : "Sync now"}
           </Button>
         </div>
       </header>
 
       <div className="mx-auto max-w-6xl space-y-4 px-6 pt-4">
-        {gmailQuery.data?.status === 'expired' && (
+        {gmailQuery.data?.status === "expired" && (
           <Alert>
             <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
               <span>
@@ -94,7 +89,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </span>
               <a
                 href="/api/gmail/auth"
-                className={buttonVariants({ size: 'sm' })}
+                className={buttonVariants({ size: "sm" })}
               >
                 Reconnect Gmail
               </a>
@@ -126,5 +121,5 @@ export function AppShell({ children }: { children: ReactNode }) {
       <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
       <SyncToast />
     </div>
-  );
+  )
 }

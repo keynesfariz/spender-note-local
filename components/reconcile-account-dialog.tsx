@@ -1,11 +1,11 @@
-'use client';
+"use client"
 
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useMemo, useState, type FormEvent } from "react"
 
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogClose,
@@ -14,91 +14,98 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Field, FieldLabel } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
-import { reconcileAccountApi, type AccountSummary } from '@/lib/api';
+} from "@/components/ui/dialog"
+import { Field, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
+import { reconcileAccountApi, type AccountSummary } from "@/lib/api"
 import {
   formatMinorCurrency,
   formatSignedMinor,
   minorToDecimalInput,
   parseDecimalToMinorClient,
-} from '@/lib/format';
+} from "@/lib/format"
 
 export function ReconcileAccountDialog({
   open,
   onOpenChange,
   account,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  account: AccountSummary | null;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  account: AccountSummary | null
 }) {
-  const queryClient = useQueryClient();
-  const [actualBalance, setActualBalance] = useState('');
-  const [note, setNote] = useState('');
-  const [formError, setFormError] = useState<string | null>(null);
+  const queryClient = useQueryClient()
+  const [actualBalance, setActualBalance] = useState("")
+  const [note, setNote] = useState("")
+  const [formError, setFormError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!open) return;
-    setActualBalance('');
-    setNote('');
-    setFormError(null);
-  }, [open, account]);
+    if (!open) return
+    setActualBalance("")
+    setNote("")
+    setFormError(null)
+  }, [open, account])
 
   const adjustmentPreviewMinor = useMemo(() => {
-    if (!account || !actualBalance.trim() || account.computed_balance_minor === null) {
-      return null;
+    if (
+      !account ||
+      !actualBalance.trim() ||
+      account.computed_balance_minor === null
+    ) {
+      return null
     }
     try {
-      const actualMinor = parseDecimalToMinorClient(actualBalance, account.currency);
-      return actualMinor - account.computed_balance_minor;
+      const actualMinor = parseDecimalToMinorClient(
+        actualBalance,
+        account.currency
+      )
+      return actualMinor - account.computed_balance_minor
     } catch {
-      return null;
+      return null
     }
-  }, [account, actualBalance]);
+  }, [account, actualBalance])
 
   const reconcileMutation = useMutation({
     mutationFn: reconcileAccountApi,
     onSuccess: (_data, variables) => {
-      void queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] })
       void queryClient.invalidateQueries({
-        queryKey: ['accounts', 'reconciliations', variables.account_id],
-      });
-      onOpenChange(false);
+        queryKey: ["accounts", "reconciliations", variables.account_id],
+      })
+      onOpenChange(false)
     },
     onError: (err) => {
       setFormError(
-        err instanceof Error ? err.message : 'Could not reconcile account.',
-      );
+        err instanceof Error ? err.message : "Could not reconcile account."
+      )
     },
-  });
+  })
 
   function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    setFormError(null);
-    if (!account) return;
-    let actualMinor: number;
+    e.preventDefault()
+    setFormError(null)
+    if (!account) return
+    let actualMinor: number
     try {
-      actualMinor = parseDecimalToMinorClient(actualBalance, account.currency);
+      actualMinor = parseDecimalToMinorClient(actualBalance, account.currency)
     } catch (err) {
       setFormError(
-        err instanceof Error ? err.message : 'Enter a valid actual balance.',
-      );
-      return;
+        err instanceof Error ? err.message : "Enter a valid actual balance."
+      )
+      return
     }
     reconcileMutation.mutate({
       account_id: account.id,
       actual_balance_minor: actualMinor,
       note: note.trim() || null,
-    });
+    })
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Reconcile {account?.name ?? 'account'}</DialogTitle>
+          <DialogTitle>Reconcile {account?.name ?? "account"}</DialogTitle>
           <DialogDescription>
             Record the actual balance from your bank or statement to anchor
             future calculations.
@@ -111,15 +118,15 @@ export function ReconcileAccountDialog({
               <CardContent className="py-3">
                 <p className="text-xs text-muted-foreground">
                   {account.computed_balance_minor === null
-                    ? 'Starting balance'
-                    : 'Server-computed balance'}
+                    ? "Starting balance"
+                    : "Server-computed balance"}
                 </p>
                 <p className="font-semibold">
                   {account.computed_balance_minor === null
-                    ? 'Unknown — enter actual balance to set it'
+                    ? "Unknown — enter actual balance to set it"
                     : formatMinorCurrency(
                         account.computed_balance_minor,
-                        account.currency,
+                        account.currency
                       )}
                 </p>
               </CardContent>
@@ -135,7 +142,7 @@ export function ReconcileAccountDialog({
                 onChange={(e) => setActualBalance(e.target.value)}
                 placeholder={minorToDecimalInput(
                   account.computed_balance_minor ?? 0,
-                  account.currency,
+                  account.currency
                 )}
               />
             </Field>
@@ -171,13 +178,13 @@ export function ReconcileAccountDialog({
               </DialogClose>
               <Button type="submit" disabled={reconcileMutation.isPending}>
                 {reconcileMutation.isPending
-                  ? 'Reconciling...'
-                  : 'Save reconciliation'}
+                  ? "Reconciling..."
+                  : "Save reconciliation"}
               </Button>
             </DialogFooter>
           </form>
         )}
       </DialogContent>
     </Dialog>
-  );
+  )
 }

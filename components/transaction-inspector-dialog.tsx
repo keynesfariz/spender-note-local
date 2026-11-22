@@ -1,11 +1,11 @@
-'use client';
+"use client"
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useMemo, useState, type FormEvent } from "react"
 
-import { DatePicker } from '@/components/date-picker';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
+import { DatePicker } from "@/components/date-picker"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,29 +16,29 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
+} from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+} from "@/components/ui/dialog"
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
-import { Skeleton } from '@/components/ui/skeleton';
+} from "@/components/ui/select"
+import { Separator } from "@/components/ui/separator"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   deleteTransactionApi,
   markTransactionsReviewedApi,
@@ -46,8 +46,8 @@ import {
   transactionDetailQuery,
   updateTransactionApi,
   type AccountSummary,
-} from '@/lib/api';
-import { DEFAULT_CATEGORIES } from '@/lib/categories';
+} from "@/lib/api"
+import { DEFAULT_CATEGORIES } from "@/lib/categories"
 import {
   dateTimeInputToUtcIso,
   formatMinorCurrency,
@@ -56,14 +56,14 @@ import {
   parseDecimalToMinorClient,
   utcToDateInputValue,
   utcToTimeInputValue,
-} from '@/lib/format';
+} from "@/lib/format"
 
-const UNASSIGNED_ACCOUNT = '__unassigned__';
+const UNASSIGNED_ACCOUNT = "__unassigned__"
 
 const CATEGORY_OPTIONS = DEFAULT_CATEGORIES.map((cat) => ({
   value: cat,
   label: cat,
-}));
+}))
 
 function InspectorBody({
   transactionId,
@@ -72,107 +72,109 @@ function InspectorBody({
   timezone,
   onClose,
 }: {
-  transactionId: string;
-  accounts: AccountSummary[];
-  localCurrency: string;
-  timezone: string | null | undefined;
-  onClose: () => void;
+  transactionId: string
+  accounts: AccountSummary[]
+  localCurrency: string
+  timezone: string | null | undefined
+  onClose: () => void
 }) {
-  const queryClient = useQueryClient();
-  const detailQuery = useQuery(transactionDetailQuery(transactionId));
+  const queryClient = useQueryClient()
+  const detailQuery = useQuery(transactionDetailQuery(transactionId))
 
-  const [merchant, setMerchant] = useState('');
-  const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState('Other');
-  const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT);
-  const [date, setDate] = useState('');
-  const [time, setTime] = useState('');
-  const [note, setNote] = useState('');
-  const [convertToLocalCurrency, setConvertToLocalCurrency] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [merchant, setMerchant] = useState("")
+  const [amount, setAmount] = useState("")
+  const [category, setCategory] = useState("Other")
+  const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT)
+  const [date, setDate] = useState("")
+  const [time, setTime] = useState("")
+  const [note, setNote] = useState("")
+  const [convertToLocalCurrency, setConvertToLocalCurrency] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
 
   useEffect(() => {
-    const tx = detailQuery.data?.transaction;
-    if (!tx) return;
-    setMerchant(tx.merchant);
-    setAmount(minorToDecimalInput(tx.amount_minor, tx.currency));
-    setCategory(tx.category);
-    setAccountId(tx.account_id ?? UNASSIGNED_ACCOUNT);
-    setDate(utcToDateInputValue(tx.occurred_at_utc, timezone));
-    setTime(utcToTimeInputValue(tx.occurred_at_utc, timezone));
-    setNote(tx.note ?? '');
-    setConvertToLocalCurrency(false);
-  }, [detailQuery.data?.transaction, timezone]);
+    const tx = detailQuery.data?.transaction
+    if (!tx) return
+    setMerchant(tx.merchant)
+    setAmount(minorToDecimalInput(tx.amount_minor, tx.currency))
+    setCategory(tx.category)
+    setAccountId(tx.account_id ?? UNASSIGNED_ACCOUNT)
+    setDate(utcToDateInputValue(tx.occurred_at_utc, timezone))
+    setTime(utcToTimeInputValue(tx.occurred_at_utc, timezone))
+    setNote(tx.note ?? "")
+    setConvertToLocalCurrency(false)
+  }, [detailQuery.data?.transaction, timezone])
 
   const invalidateAll = () => {
-    void queryClient.invalidateQueries({ queryKey: ['spending'] });
-    void queryClient.invalidateQueries({ queryKey: ['transactions'] });
-    void queryClient.invalidateQueries({ queryKey: ['accounts'] });
-  };
+    void queryClient.invalidateQueries({ queryKey: ["spending"] })
+    void queryClient.invalidateQueries({ queryKey: ["transactions"] })
+    void queryClient.invalidateQueries({ queryKey: ["accounts"] })
+  }
 
   const updateMutation = useMutation({
     mutationFn: updateTransactionApi,
     onSuccess: () => {
-      setFormError(null);
-      setStatusMessage('Transaction updated.');
-      invalidateAll();
+      setFormError(null)
+      setStatusMessage("Transaction updated.")
+      invalidateAll()
     },
     onError: (err) => {
       setFormError(
-        err instanceof Error ? err.message : 'Failed to update transaction.',
-      );
+        err instanceof Error ? err.message : "Failed to update transaction."
+      )
     },
-  });
+  })
 
   const deleteMutation = useMutation({
     mutationFn: deleteTransactionApi,
     onSuccess: () => {
-      invalidateAll();
-      onClose();
+      invalidateAll()
+      onClose()
     },
     onError: (err) => {
       setFormError(
-        err instanceof Error ? err.message : 'Failed to delete transaction.',
-      );
+        err instanceof Error ? err.message : "Failed to delete transaction."
+      )
     },
-  });
+  })
 
   const splitMutation = useMutation({
     mutationFn: splitTransactionSourceApi,
     onSuccess: () => {
-      setFormError(null);
-      setStatusMessage('Email split into its own transaction.');
-      invalidateAll();
+      setFormError(null)
+      setStatusMessage("Email split into its own transaction.")
+      invalidateAll()
     },
     onError: (err) => {
       setFormError(
-        err instanceof Error ? err.message : 'Failed to split email source.',
-      );
+        err instanceof Error ? err.message : "Failed to split email source."
+      )
     },
-  });
+  })
 
   const markReviewedMutation = useMutation({
     mutationFn: () => markTransactionsReviewedApi([transactionId]),
     onSuccess: () => {
-      setFormError(null);
-      setStatusMessage('Marked as reviewed.');
-      invalidateAll();
+      setFormError(null)
+      setStatusMessage("Marked as reviewed.")
+      invalidateAll()
     },
     onError: (err) => {
       setFormError(
-        err instanceof Error ? err.message : 'Failed to mark transaction reviewed.',
-      );
+        err instanceof Error
+          ? err.message
+          : "Failed to mark transaction reviewed."
+      )
     },
-  });
+  })
 
-  const detailTx = detailQuery.data?.transaction;
+  const detailTx = detailQuery.data?.transaction
 
   const accountItems = useMemo(() => {
     const base = [
-      { value: UNASSIGNED_ACCOUNT, label: 'Unassigned' },
+      { value: UNASSIGNED_ACCOUNT, label: "Unassigned" },
       ...accounts.map((acct) => ({ value: acct.id, label: acct.name })),
-    ];
+    ]
     if (
       accountId !== UNASSIGNED_ACCOUNT &&
       !accounts.some((acct) => acct.id === accountId)
@@ -180,11 +182,11 @@ function InspectorBody({
       const fallbackLabel =
         detailTx?.account_id === accountId && detailTx.account_name
           ? detailTx.account_name
-          : 'Unknown account';
-      base.push({ value: accountId, label: fallbackLabel });
+          : "Unknown account"
+      base.push({ value: accountId, label: fallbackLabel })
     }
-    return base;
-  }, [accounts, accountId, detailTx?.account_id, detailTx?.account_name]);
+    return base
+  }, [accounts, accountId, detailTx?.account_id, detailTx?.account_name])
 
   if (detailQuery.isPending) {
     return (
@@ -193,46 +195,46 @@ function InspectorBody({
         <Skeleton className="h-9 w-full" />
         <Skeleton className="h-24 w-full" />
       </div>
-    );
+    )
   }
 
-  const detail = detailQuery.data;
+  const detail = detailQuery.data
   if (!detail) {
     return (
       <Alert variant="destructive">
         <AlertDescription>
           {detailQuery.error instanceof Error
             ? detailQuery.error.message
-            : 'Transaction not found.'}
+            : "Transaction not found."}
         </AlertDescription>
       </Alert>
-    );
+    )
   }
 
-  const tx = detail.transaction;
+  const tx = detail.transaction
 
   function handleSave(event: FormEvent) {
-    event.preventDefault();
-    setFormError(null);
-    setStatusMessage(null);
+    event.preventDefault()
+    setFormError(null)
+    setStatusMessage(null)
     try {
       const targetCurrency =
         tx.isForeignCurrency && !convertToLocalCurrency
           ? tx.currency
-          : localCurrency;
-      const initialAmountStr = minorToDecimalInput(tx.amount_minor, tx.currency);
-      const amountChanged = amount.trim() !== initialAmountStr;
+          : localCurrency
+      const initialAmountStr = minorToDecimalInput(tx.amount_minor, tx.currency)
+      const amountChanged = amount.trim() !== initialAmountStr
       const parsedAmountMinor =
         !tx.isForeignCurrency || convertToLocalCurrency || amountChanged
           ? parseDecimalToMinorClient(amount, targetCurrency)
-          : undefined;
+          : undefined
 
-      const initialDateStr = utcToDateInputValue(tx.occurred_at_utc, timezone);
-      const initialTimeStr = utcToTimeInputValue(tx.occurred_at_utc, timezone);
+      const initialDateStr = utcToDateInputValue(tx.occurred_at_utc, timezone)
+      const initialTimeStr = utcToTimeInputValue(tx.occurred_at_utc, timezone)
       const occurredAtUtc =
         date.trim() !== initialDateStr || time.trim() !== initialTimeStr
-          ? dateTimeInputToUtcIso(date, time || '00:00', timezone)
-          : undefined;
+          ? dateTimeInputToUtcIso(date, time || "00:00", timezone)
+          : undefined
 
       updateMutation.mutate({
         id: tx.id,
@@ -245,9 +247,9 @@ function InspectorBody({
         convertToLocalCurrency: tx.isForeignCurrency
           ? convertToLocalCurrency
           : undefined,
-      });
+      })
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Invalid input.');
+      setFormError(err instanceof Error ? err.message : "Invalid input.")
     }
   }
 
@@ -298,7 +300,7 @@ function InspectorBody({
             <Select
               items={CATEGORY_OPTIONS}
               value={category}
-              onValueChange={(v) => setCategory(v ?? 'Other')}
+              onValueChange={(v) => setCategory(v ?? "Other")}
             >
               <SelectTrigger className="w-full" aria-label="Category">
                 <SelectValue />
@@ -421,11 +423,13 @@ function InspectorBody({
                 disabled={markReviewedMutation.isPending}
                 onClick={() => markReviewedMutation.mutate()}
               >
-                {markReviewedMutation.isPending ? 'Marking...' : 'Mark reviewed'}
+                {markReviewedMutation.isPending
+                  ? "Marking..."
+                  : "Mark reviewed"}
               </Button>
             )}
             <Button type="submit" disabled={updateMutation.isPending}>
-              {updateMutation.isPending ? 'Saving...' : 'Save changes'}
+              {updateMutation.isPending ? "Saving..." : "Save changes"}
             </Button>
           </div>
         </div>
@@ -440,9 +444,9 @@ function InspectorBody({
           <Alert>
             <AlertDescription>
               This transaction has a locked amount (edited or combined).
-              Splitting an email creates a separate transaction without
-              reducing this transaction&apos;s amount — adjust the amount
-              manually if needed.
+              Splitting an email creates a separate transaction without reducing
+              this transaction&apos;s amount — adjust the amount manually if
+              needed.
             </AlertDescription>
           </Alert>
         )}
@@ -460,9 +464,12 @@ function InspectorBody({
                       <div className="min-w-0">
                         <p className="font-medium">{source.subject}</p>
                         <p className="text-xs text-muted-foreground">
-                          From {source.from_address} ·{' '}
-                          {formatUtcInTimezone(source.received_at_utc, timezone)} ·
-                          role: {source.role} · state: {source.match_state}
+                          From {source.from_address} ·{" "}
+                          {formatUtcInTimezone(
+                            source.received_at_utc,
+                            timezone
+                          )}{" "}
+                          · role: {source.role} · state: {source.match_state}
                         </p>
                       </div>
                       {detail.sources.length > 1 && (
@@ -493,7 +500,7 @@ function InspectorBody({
         )}
       </div>
     </div>
-  );
+  )
 }
 
 export function TransactionInspectorDialog({
@@ -503,17 +510,17 @@ export function TransactionInspectorDialog({
   timezone,
   onClose,
 }: {
-  transactionId: string | null;
-  accounts: AccountSummary[];
-  localCurrency: string;
-  timezone: string | null | undefined;
-  onClose: () => void;
+  transactionId: string | null
+  accounts: AccountSummary[]
+  localCurrency: string
+  timezone: string | null | undefined
+  onClose: () => void
 }) {
   return (
     <Dialog
       open={transactionId !== null}
       onOpenChange={(open) => {
-        if (!open) onClose();
+        if (!open) onClose()
       }}
     >
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
@@ -535,5 +542,5 @@ export function TransactionInspectorDialog({
         )}
       </DialogContent>
     </Dialog>
-  );
+  )
 }

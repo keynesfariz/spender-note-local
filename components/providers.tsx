@@ -1,8 +1,8 @@
-'use client';
+"use client"
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useState, type ReactNode } from 'react';
-import { ThemeProvider } from '@/components/theme-provider';
+import { ThemeProvider } from "@/components/theme-provider"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { useState, type ReactNode } from "react"
 
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -10,16 +10,16 @@ export function Providers({ children }: { children: ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 10_000,
-            refetchOnWindowFocus: false,
+            staleTime: 5_000,
+            refetchOnWindowFocus: true,
           },
         },
-      }),
-  );
+      })
+  )
 
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>{children}</ThemeProvider>
     </QueryClientProvider>
-  );
+  )
 }

@@ -1,9 +1,9 @@
-'use client';
+"use client"
 
-import { CheckCircle2Icon } from 'lucide-react';
-import { useMemo } from 'react';
+import { CheckCircle2Icon } from "lucide-react"
+import { useMemo } from "react"
 
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,85 +14,85 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+} from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
-import { Skeleton } from '@/components/ui/skeleton';
-import type { AccountSummary, TransactionListItem } from '@/lib/api';
-import { DEFAULT_CATEGORIES } from '@/lib/categories';
-import { formatMinorCurrency, formatUtcInTimezone } from '@/lib/format';
+} from "@/components/ui/select"
+import { Separator } from "@/components/ui/separator"
+import { Skeleton } from "@/components/ui/skeleton"
+import type { AccountSummary, TransactionListItem } from "@/lib/api"
+import { DEFAULT_CATEGORIES } from "@/lib/categories"
+import { formatMinorCurrency, formatUtcInTimezone } from "@/lib/format"
 
 const CATEGORY_FILTER_ITEMS = [
-  { value: 'all', label: 'All categories' },
+  { value: "all", label: "All categories" },
   ...DEFAULT_CATEGORIES.map((cat) => ({ value: cat, label: cat })),
-];
+]
 
 function sourceBadgeLabel(tx: TransactionListItem): string {
-  if (tx.sourceCount > 1) return `${tx.sourceCount} emails`;
-  if (tx.sourceCount === 1) return '1 email';
-  if (tx.source_type === 'manual') return 'Manual';
-  return '0 emails';
+  if (tx.sourceCount > 1) return `${tx.sourceCount} emails`
+  if (tx.sourceCount === 1) return "1 email"
+  if (tx.source_type === "manual") return "Manual"
+  return "0 emails"
 }
 
 function getMergeEligibility(selected: TransactionListItem[]): {
-  canDuplicate: boolean;
-  duplicateReason: string | null;
-  canCombine: boolean;
-  combineReason: string | null;
+  canDuplicate: boolean
+  duplicateReason: string | null
+  canCombine: boolean
+  combineReason: string | null
 } {
   if (selected.length < 2) {
     return {
       canDuplicate: false,
-      duplicateReason: 'Select exactly 2 transactions to duplicate merge.',
+      duplicateReason: "Select exactly 2 transactions to duplicate merge.",
       canCombine: false,
-      combineReason: 'Select at least 2 transactions to combine.',
-    };
+      combineReason: "Select at least 2 transactions to combine.",
+    }
   }
 
-  const baseCurrency = selected[0].currency;
-  const baseAccount = selected[0].account_id;
+  const baseCurrency = selected[0].currency
+  const baseAccount = selected[0].account_id
   const sameCurrencyAndAccount = selected.every(
-    (tx) => tx.currency === baseCurrency && tx.account_id === baseAccount,
-  );
+    (tx) => tx.currency === baseCurrency && tx.account_id === baseAccount
+  )
 
   if (!sameCurrencyAndAccount) {
     return {
       canDuplicate: false,
-      duplicateReason: 'Currency and account must match to merge.',
+      duplicateReason: "Currency and account must match to merge.",
       canCombine: false,
-      combineReason: 'Currency and account must match to combine.',
-    };
+      combineReason: "Currency and account must match to combine.",
+    }
   }
 
   if (selected.length !== 2) {
     return {
       canDuplicate: false,
-      duplicateReason: 'Select exactly 2 transactions to duplicate merge.',
+      duplicateReason: "Select exactly 2 transactions to duplicate merge.",
       canCombine: true,
       combineReason: null,
-    };
+    }
   }
 
-  const sameAmount = selected[0].amount_minor === selected[1].amount_minor;
+  const sameAmount = selected[0].amount_minor === selected[1].amount_minor
   if (!sameAmount) {
     return {
       canDuplicate: false,
-      duplicateReason: 'Amounts must match for duplicate merge.',
+      duplicateReason: "Amounts must match for duplicate merge.",
       canCombine: true,
       combineReason: null,
-    };
+    }
   }
 
   return {
@@ -100,7 +100,7 @@ function getMergeEligibility(selected: TransactionListItem[]): {
     duplicateReason: null,
     canCombine: true,
     combineReason: null,
-  };
+  }
 }
 
 export function TransactionList({
@@ -136,63 +136,64 @@ export function TransactionList({
   totalCount,
   onPageChange,
 }: {
-  transactions: TransactionListItem[];
-  accounts: AccountSummary[];
-  timezone: string | null | undefined;
-  isLoading: boolean;
-  errorMessage: string | null;
-  search: string;
-  onSearchChange: (value: string) => void;
-  category: string;
-  onCategoryChange: (value: string) => void;
-  accountId: string;
-  onAccountIdChange: (value: string) => void;
-  unreviewedOnly: boolean;
-  onUnreviewedOnlyChange: (value: boolean) => void;
-  selectedIds: string[];
-  onToggleRow: (id: string, checked: boolean) => void;
-  onToggleSelectAllPage: (checked: boolean) => void;
-  onSelectTransaction: (id: string) => void;
-  onOpenDuplicateMerge: () => void;
-  onOpenCombine: () => void;
-  onMarkReviewed: (ids: string[]) => void;
-  isMarkingReviewed: boolean;
-  reviewErrorMessage: string | null;
-  onDeleteSelected: (ids: string[]) => void;
-  deleteDialogOpen: boolean;
-  onDeleteDialogOpenChange: (open: boolean) => void;
-  isDeleting: boolean;
-  deleteErrorMessage: string | null;
-  page: number;
-  pageSize: number;
-  totalCount: number;
-  onPageChange: (nextPage: number) => void;
+  transactions: TransactionListItem[]
+  accounts: AccountSummary[]
+  timezone: string | null | undefined
+  isLoading: boolean
+  errorMessage: string | null
+  search: string
+  onSearchChange: (value: string) => void
+  category: string
+  onCategoryChange: (value: string) => void
+  accountId: string
+  onAccountIdChange: (value: string) => void
+  unreviewedOnly: boolean
+  onUnreviewedOnlyChange: (value: boolean) => void
+  selectedIds: string[]
+  onToggleRow: (id: string, checked: boolean) => void
+  onToggleSelectAllPage: (checked: boolean) => void
+  onSelectTransaction: (id: string) => void
+  onOpenDuplicateMerge: () => void
+  onOpenCombine: () => void
+  onMarkReviewed: (ids: string[]) => void
+  isMarkingReviewed: boolean
+  reviewErrorMessage: string | null
+  onDeleteSelected: (ids: string[]) => void
+  deleteDialogOpen: boolean
+  onDeleteDialogOpenChange: (open: boolean) => void
+  isDeleting: boolean
+  deleteErrorMessage: string | null
+  page: number
+  pageSize: number
+  totalCount: number
+  onPageChange: (nextPage: number) => void
 }) {
-  const selectedSet = new Set(selectedIds);
+  const selectedSet = new Set(selectedIds)
   const selectedTransactions = transactions.filter((tx) =>
-    selectedSet.has(tx.id),
-  );
+    selectedSet.has(tx.id)
+  )
   const allOnPageSelected =
-    transactions.length > 0 && selectedTransactions.length === transactions.length;
+    transactions.length > 0 &&
+    selectedTransactions.length === transactions.length
   const someOnPageSelected =
-    selectedTransactions.length > 0 && !allOnPageSelected;
+    selectedTransactions.length > 0 && !allOnPageSelected
 
-  const eligibility = getMergeEligibility(selectedTransactions);
-  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const eligibility = getMergeEligibility(selectedTransactions)
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
   const disabledHint =
     eligibility.duplicateReason && eligibility.combineReason
       ? eligibility.combineReason
-      : eligibility.duplicateReason;
+      : eligibility.duplicateReason
 
   const accountFilterItems = useMemo(
     () => [
-      { value: 'all', label: 'All accounts' },
-      { value: 'unassigned', label: 'Unassigned' },
+      { value: "all", label: "All accounts" },
+      { value: "unassigned", label: "Unassigned" },
       ...accounts.map((acct) => ({ value: acct.id, label: acct.name })),
     ],
-    [accounts],
-  );
+    [accounts]
+  )
 
   return (
     <Card>
@@ -209,7 +210,7 @@ export function TransactionList({
           <Select
             items={CATEGORY_FILTER_ITEMS}
             value={category}
-            onValueChange={(value) => onCategoryChange(value ?? 'all')}
+            onValueChange={(value) => onCategoryChange(value ?? "all")}
           >
             <SelectTrigger className="w-full" aria-label="Filter by category">
               <SelectValue placeholder="All categories" />
@@ -226,7 +227,7 @@ export function TransactionList({
           <Select
             items={accountFilterItems}
             value={accountId}
-            onValueChange={(value) => onAccountIdChange(value ?? 'all')}
+            onValueChange={(value) => onAccountIdChange(value ?? "all")}
           >
             <SelectTrigger className="w-full" aria-label="Filter by account">
               <SelectValue placeholder="All accounts" />
@@ -264,10 +265,13 @@ export function TransactionList({
                 onToggleSelectAllPage(Boolean(checked))
               }
             />
-            <Label htmlFor="select-all-page" className="text-xs font-normal text-muted-foreground">
+            <Label
+              htmlFor="select-all-page"
+              className="text-xs font-normal text-muted-foreground"
+            >
               {selectedTransactions.length > 0
                 ? `${selectedTransactions.length} selected`
-                : 'Select all on page'}
+                : "Select all on page"}
             </Label>
           </div>
 
@@ -282,7 +286,7 @@ export function TransactionList({
                   onMarkReviewed(selectedTransactions.map((tx) => tx.id))
                 }
               >
-                {isMarkingReviewed ? 'Marking...' : 'Mark reviewed'}
+                {isMarkingReviewed ? "Marking..." : "Mark reviewed"}
               </Button>
               <Button
                 type="button"
@@ -290,7 +294,9 @@ export function TransactionList({
                 size="sm"
                 disabled={!eligibility.canDuplicate || isDeleting}
                 aria-describedby={
-                  !eligibility.canDuplicate ? 'merge-eligibility-reason' : undefined
+                  !eligibility.canDuplicate
+                    ? "merge-eligibility-reason"
+                    : undefined
                 }
                 onClick={onOpenDuplicateMerge}
               >
@@ -302,7 +308,9 @@ export function TransactionList({
                 size="sm"
                 disabled={!eligibility.canCombine || isDeleting}
                 aria-describedby={
-                  !eligibility.canCombine ? 'merge-eligibility-reason' : undefined
+                  !eligibility.canCombine
+                    ? "merge-eligibility-reason"
+                    : undefined
                 }
                 onClick={onOpenCombine}
               >
@@ -322,22 +330,22 @@ export function TransactionList({
                     />
                   }
                 >
-                  {isDeleting ? 'Deleting...' : 'Delete'}
+                  {isDeleting ? "Deleting..." : "Delete"}
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
                     <AlertDialogTitle>
-                      Delete {selectedTransactions.length}{' '}
+                      Delete {selectedTransactions.length}{" "}
                       {selectedTransactions.length === 1
-                        ? 'transaction'
-                        : 'transactions'}
+                        ? "transaction"
+                        : "transactions"}
                       ?
                     </AlertDialogTitle>
                     <AlertDialogDescription>
-                      This permanently deletes the selected{' '}
+                      This permanently deletes the selected{" "}
                       {selectedTransactions.length === 1
-                        ? 'transaction'
-                        : 'transactions'}{' '}
+                        ? "transaction"
+                        : "transactions"}{" "}
                       and marks any linked source emails as dismissed.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
@@ -349,10 +357,12 @@ export function TransactionList({
                       variant="destructive"
                       disabled={isDeleting}
                       onClick={() =>
-                        onDeleteSelected(selectedTransactions.map((tx) => tx.id))
+                        onDeleteSelected(
+                          selectedTransactions.map((tx) => tx.id)
+                        )
                       }
                     >
-                      {isDeleting ? 'Deleting...' : 'Delete forever'}
+                      {isDeleting ? "Deleting..." : "Delete forever"}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
@@ -401,9 +411,9 @@ export function TransactionList({
             {transactions.map((tx, idx) => {
               const formattedAmount = formatMinorCurrency(
                 tx.amount_minor,
-                tx.currency,
-              );
-              const isSelected = selectedSet.has(tx.id);
+                tx.currency
+              )
+              const isSelected = selectedSet.has(tx.id)
               return (
                 <li key={tx.id}>
                   {idx > 0 && <Separator className="my-1" />}
@@ -428,7 +438,9 @@ export function TransactionList({
                             {tx.merchant}
                           </span>
                           <Badge variant="secondary">{tx.category}</Badge>
-                          <Badge variant="outline">{sourceBadgeLabel(tx)}</Badge>
+                          <Badge variant="outline">
+                            {sourceBadgeLabel(tx)}
+                          </Badge>
                           {tx.reviewed === 1 ? (
                             <Badge variant="secondary" className="gap-1">
                               <CheckCircle2Icon className="size-3" />
@@ -450,7 +462,7 @@ export function TransactionList({
                           {tx.account_name ??
                             (tx.payment_method_raw
                               ? `Unassigned (${tx.payment_method_raw})`
-                              : 'Unassigned')}{' '}
+                              : "Unassigned")}{" "}
                           · {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
                         </p>
                       </div>
@@ -473,7 +485,7 @@ export function TransactionList({
                     )}
                   </div>
                 </li>
-              );
+              )
             })}
           </ul>
         )}
@@ -483,8 +495,8 @@ export function TransactionList({
         <CardFooter className="flex flex-wrap items-center justify-between gap-3 border-t pt-4 text-xs text-muted-foreground">
           <span>
             Showing {(page - 1) * pageSize + 1}–
-            {Math.min(page * pageSize, totalCount)} of {totalCount}{' '}
-            {totalCount === 1 ? 'transaction' : 'transactions'}
+            {Math.min(page * pageSize, totalCount)} of {totalCount}{" "}
+            {totalCount === 1 ? "transaction" : "transactions"}
           </span>
           <div className="flex items-center gap-2">
             <Button
@@ -512,5 +524,5 @@ export function TransactionList({
         </CardFooter>
       )}
     </Card>
-  );
+  )
 }

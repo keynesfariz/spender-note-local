@@ -1,14 +1,9 @@
-'use client';
+"use client"
 
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
-import type { MonthlySpendingSummary, SpendingGroupRow } from '@/lib/api';
-import { formatMinorCurrency } from '@/lib/format';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Separator } from "@/components/ui/separator"
+import type { MonthlySpendingSummary, SpendingGroupRow } from "@/lib/api"
+import { formatMinorCurrency } from "@/lib/format"
 
 function BreakdownCard({
   title,
@@ -16,10 +11,10 @@ function BreakdownCard({
   rows,
   currency,
 }: {
-  title: string;
-  emptyText: string;
-  rows: SpendingGroupRow[];
-  currency: string;
+  title: string
+  emptyText: string
+  rows: SpendingGroupRow[]
+  currency: string
 }) {
   return (
     <Card>
@@ -38,7 +33,7 @@ function BreakdownCard({
                   <div className="min-w-0">
                     <p className="truncate font-medium">{row.label}</p>
                     <p className="text-xs text-muted-foreground">
-                      {row.count} {row.count === 1 ? 'tx' : 'txs'}
+                      {row.count} {row.count === 1 ? "tx" : "txs"}
                     </p>
                   </div>
                   <span className="shrink-0 font-medium tabular-nums">
@@ -51,18 +46,21 @@ function BreakdownCard({
         )}
       </CardContent>
     </Card>
-  );
+  )
 }
 
 export function BreakdownPanels({
   summary,
 }: {
-  summary: MonthlySpendingSummary;
+  summary: MonthlySpendingSummary
 }) {
-  const currency = summary.currency ?? 'USD';
+  const currency = summary.currency ?? "USD"
 
   return (
-    <section aria-label="Spending breakdowns" className="grid gap-4 md:grid-cols-3">
+    <section
+      aria-label="Spending breakdowns"
+      className="grid gap-4 md:grid-cols-3"
+    >
       <BreakdownCard
         title="By Category"
         emptyText="No local-currency spending by category yet."
@@ -82,5 +80,5 @@ export function BreakdownPanels({
         currency={currency}
       />
     </section>
-  );
+  )
 }

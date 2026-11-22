@@ -1,48 +1,48 @@
-'use client';
+"use client"
 
-import { CalendarIcon, XIcon } from 'lucide-react';
-import { useState } from 'react';
-import type { DateRange } from 'react-day-picker';
+import { CalendarIcon, XIcon } from "lucide-react"
+import { useState } from "react"
+import type { DateRange } from "react-day-picker"
 
-import { Button } from '@/components/ui/button';
-import { Calendar } from '@/components/ui/calendar';
+import { Button } from "@/components/ui/button"
+import { Calendar } from "@/components/ui/calendar"
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from '@/components/ui/popover';
+} from "@/components/ui/popover"
 import {
   dateToIsoDateString,
   formatDateRangeLabel,
   formatDateString,
   isoDateStringToDate,
-} from '@/lib/format';
-import { cn } from '@/lib/utils';
+} from "@/lib/format"
+import { cn } from "@/lib/utils"
 
 export function DatePicker({
   value,
   onChange,
-  placeholder = 'Pick a date',
+  placeholder = "Pick a date",
   clearable = false,
   disabled = false,
   id,
   ariaLabel,
   className,
 }: {
-  value: string;
-  onChange: (next: string) => void;
-  placeholder?: string;
-  clearable?: boolean;
-  disabled?: boolean;
-  id?: string;
-  ariaLabel?: string;
-  className?: string;
+  value: string
+  onChange: (next: string) => void
+  placeholder?: string
+  clearable?: boolean
+  disabled?: boolean
+  id?: string
+  ariaLabel?: string
+  className?: string
 }) {
-  const [open, setOpen] = useState(false);
-  const selected = value ? isoDateStringToDate(value) : undefined;
+  const [open, setOpen] = useState(false)
+  const selected = value ? isoDateStringToDate(value) : undefined
 
   return (
-    <div className={cn('flex items-center gap-1', className)}>
+    <div className={cn("flex items-center gap-1", className)}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger
           render={
@@ -53,8 +53,8 @@ export function DatePicker({
               disabled={disabled}
               aria-label={ariaLabel}
               className={cn(
-                'min-w-0 flex-1 justify-start text-left font-normal',
-                !value && 'text-muted-foreground',
+                "min-w-0 flex-1 justify-start text-left font-normal",
+                !value && "text-muted-foreground"
               )}
             />
           }
@@ -72,13 +72,13 @@ export function DatePicker({
             onSelect={(day) => {
               if (!day) {
                 if (clearable) {
-                  onChange('');
-                  setOpen(false);
+                  onChange("")
+                  setOpen(false)
                 }
-                return;
+                return
               }
-              onChange(dateToIsoDateString(day));
-              setOpen(false);
+              onChange(dateToIsoDateString(day))
+              setOpen(false)
             }}
           />
         </PopoverContent>
@@ -91,13 +91,13 @@ export function DatePicker({
           size="icon-sm"
           aria-label="Clear date"
           className="shrink-0"
-          onClick={() => onChange('')}
+          onClick={() => onChange("")}
         >
           <XIcon className="size-3.5" />
         </Button>
       )}
     </div>
-  );
+  )
 }
 
 export function DateRangePicker({
@@ -105,38 +105,38 @@ export function DateRangePicker({
   to,
   onChange,
   disabled = false,
-  ariaLabel = 'Filter by date range',
+  ariaLabel = "Filter by date range",
   className,
 }: {
-  from: string;
-  to: string;
-  onChange: (next: { from: string; to: string }) => void;
-  disabled?: boolean;
-  ariaLabel?: string;
-  className?: string;
+  from: string
+  to: string
+  onChange: (next: { from: string; to: string }) => void
+  disabled?: boolean
+  ariaLabel?: string
+  className?: string
 }) {
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<DateRange | undefined>(undefined);
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState<DateRange | undefined>(undefined)
 
-  const committedFrom = isoDateStringToDate(from);
-  const committedTo = isoDateStringToDate(to || from);
+  const committedFrom = isoDateStringToDate(from)
+  const committedTo = isoDateStringToDate(to || from)
   const committedRange: DateRange | undefined = committedFrom
     ? { from: committedFrom, to: committedTo ?? committedFrom }
-    : undefined;
+    : undefined
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
-      setDraft(committedRange);
-      setOpen(true);
-      return;
+      setDraft(committedRange)
+      setOpen(true)
+      return
     }
     if (draft?.from && !draft.to) {
-      const single = dateToIsoDateString(draft.from);
-      onChange({ from: single, to: single });
+      const single = dateToIsoDateString(draft.from)
+      onChange({ from: single, to: single })
     }
-    setDraft(undefined);
-    setOpen(false);
-  };
+    setDraft(undefined)
+    setOpen(false)
+  }
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
@@ -148,7 +148,7 @@ export function DateRangePicker({
             size="sm"
             disabled={disabled}
             aria-label={ariaLabel}
-            className={cn('justify-start text-left font-normal', className)}
+            className={cn("justify-start text-left font-normal", className)}
           />
         }
       >
@@ -165,22 +165,22 @@ export function DateRangePicker({
           defaultMonth={committedFrom}
           onSelect={(nextRange) => {
             if (!nextRange?.from) {
-              setDraft(undefined);
-              return;
+              setDraft(undefined)
+              return
             }
             if (nextRange.to) {
               onChange({
                 from: dateToIsoDateString(nextRange.from),
                 to: dateToIsoDateString(nextRange.to),
-              });
-              setDraft(undefined);
-              setOpen(false);
-              return;
+              })
+              setDraft(undefined)
+              setOpen(false)
+              return
             }
-            setDraft({ from: nextRange.from, to: undefined });
+            setDraft({ from: nextRange.from, to: undefined })
           }}
         />
       </PopoverContent>
     </Popover>
-  );
+  )
 }

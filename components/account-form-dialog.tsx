@@ -1,11 +1,11 @@
-'use client';
+"use client"
 
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useState, type FormEvent } from "react"
 
-import { DatePicker } from '@/components/date-picker';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { DatePicker } from "@/components/date-picker"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogClose,
@@ -14,16 +14,16 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
+} from "@/components/ui/dialog"
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from "@/components/ui/select"
 import {
   createAccountApi,
   updateAccountApi,
@@ -31,43 +31,43 @@ import {
   type AccountIdentifierKind,
   type AccountSummary,
   type AccountType,
-} from '@/lib/api';
+} from "@/lib/api"
 import {
   dateInputToUtcIso,
   minorToDecimalInput,
   parseDecimalToMinorClient,
   utcToDateInputValue,
-} from '@/lib/format';
+} from "@/lib/format"
 
 interface IdentifierDraft {
-  key: string;
-  kind: AccountIdentifierKind;
-  value: string;
+  key: string
+  kind: AccountIdentifierKind
+  value: string
 }
 
 const IDENTIFIER_PLACEHOLDERS: Record<AccountIdentifierKind, string> = {
-  card_last4: '1234',
-  bank_account: 'e.g. 1234-5678',
-  alias: 'e.g. GoPay Coins',
-};
+  card_last4: "1234",
+  bank_account: "e.g. 1234-5678",
+  alias: "e.g. GoPay Coins",
+}
 
 const ACCOUNT_TYPE_OPTIONS: ReadonlyArray<{
-  value: AccountType;
-  label: string;
+  value: AccountType
+  label: string
 }> = [
-  { value: 'credit_card', label: 'Credit Card' },
-  { value: 'debit_card', label: 'Debit Card' },
-  { value: 'digital_wallet', label: 'Digital Wallet' },
-];
+  { value: "credit_card", label: "Credit Card" },
+  { value: "debit_card", label: "Debit Card" },
+  { value: "digital_wallet", label: "Digital Wallet" },
+]
 
 const IDENTIFIER_KIND_OPTIONS: ReadonlyArray<{
-  value: AccountIdentifierKind;
-  label: string;
+  value: AccountIdentifierKind
+  label: string
 }> = [
-  { value: 'card_last4', label: 'Card last 4' },
-  { value: 'bank_account', label: 'Bank account' },
-  { value: 'alias', label: 'Alias / Wallet' },
-];
+  { value: "card_last4", label: "Card last 4" },
+  { value: "bank_account", label: "Bank account" },
+  { value: "alias", label: "Alias / Wallet" },
+]
 
 export function AccountFormDialog({
   open,
@@ -76,143 +76,147 @@ export function AccountFormDialog({
   currency,
   timezone,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  account?: AccountSummary | null;
-  currency: string;
-  timezone?: string | null;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  account?: AccountSummary | null
+  currency: string
+  timezone?: string | null
 }) {
-  const queryClient = useQueryClient();
+  const queryClient = useQueryClient()
 
-  const [name, setName] = useState('');
-  const [type, setType] = useState<AccountType>('credit_card');
-  const [initialBalance, setInitialBalance] = useState('0');
-  const [initialBalanceAsOf, setInitialBalanceAsOf] = useState('');
-  const [identifiers, setIdentifiers] = useState<IdentifierDraft[]>([]);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [name, setName] = useState("")
+  const [type, setType] = useState<AccountType>("credit_card")
+  const [initialBalance, setInitialBalance] = useState("0")
+  const [initialBalanceAsOf, setInitialBalanceAsOf] = useState("")
+  const [identifiers, setIdentifiers] = useState<IdentifierDraft[]>([])
+  const [formError, setFormError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!open) return;
-    setFormError(null);
+    if (!open) return
+    setFormError(null)
     if (account) {
-      setName(account.name);
-      setType(account.type);
+      setName(account.name)
+      setType(account.type)
       setInitialBalance(
         account.initial_balance_minor === null
-          ? ''
+          ? ""
           : minorToDecimalInput(
               account.initial_balance_minor,
-              account.currency || currency,
-            ),
-      );
+              account.currency || currency
+            )
+      )
       setInitialBalanceAsOf(
-        utcToDateInputValue(account.initial_balance_as_of_utc, timezone),
-      );
-      const existing = account.identifiers ?? [];
+        utcToDateInputValue(account.initial_balance_as_of_utc, timezone)
+      )
+      const existing = account.identifiers ?? []
       if (existing.length > 0) {
         setIdentifiers(
-          existing.map((id) => ({ key: id.id, kind: id.kind, value: id.value })),
-        );
+          existing.map((id) => ({ key: id.id, kind: id.kind, value: id.value }))
+        )
       } else if (account.last4) {
         setIdentifiers([
-          { key: crypto.randomUUID(), kind: 'card_last4', value: account.last4 },
-        ]);
+          {
+            key: crypto.randomUUID(),
+            kind: "card_last4",
+            value: account.last4,
+          },
+        ])
       } else {
-        setIdentifiers([]);
+        setIdentifiers([])
       }
     } else {
-      setName('');
-      setType('credit_card');
-      setInitialBalance('0');
+      setName("")
+      setType("credit_card")
+      setInitialBalance("0")
       setInitialBalanceAsOf(
-        utcToDateInputValue(new Date().toISOString(), timezone),
-      );
-      setIdentifiers([]);
+        utcToDateInputValue(new Date().toISOString(), timezone)
+      )
+      setIdentifiers([])
     }
-  }, [open, account, currency, timezone]);
+  }, [open, account, currency, timezone])
 
   const saveMutation = useMutation({
     mutationFn: async (payload: {
-      id?: string;
-      name: string;
-      type: AccountType;
-      initial_balance_minor: number | null;
-      initial_balance_as_of_utc: string;
-      identifiers: AccountIdentifierInput[];
+      id?: string
+      name: string
+      type: AccountType
+      initial_balance_minor: number | null
+      initial_balance_as_of_utc: string
+      identifiers: AccountIdentifierInput[]
     }) => {
       if (payload.id) {
-        return updateAccountApi({ ...payload, id: payload.id });
+        return updateAccountApi({ ...payload, id: payload.id })
       }
       return createAccountApi({
         ...payload,
         initial_balance_minor: payload.initial_balance_minor ?? 0,
-      });
+      })
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['accounts'] });
-      void queryClient.invalidateQueries({ queryKey: ['spending'] });
-      void queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      void queryClient.invalidateQueries({ queryKey: ['senders'] });
-      onOpenChange(false);
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] })
+      void queryClient.invalidateQueries({ queryKey: ["spending"] })
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] })
+      void queryClient.invalidateQueries({ queryKey: ["senders"] })
+      onOpenChange(false)
     },
     onError: (err) => {
       setFormError(
-        err instanceof Error ? err.message : 'Could not save account.',
-      );
+        err instanceof Error ? err.message : "Could not save account."
+      )
     },
-  });
+  })
 
   function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    setFormError(null);
+    e.preventDefault()
+    setFormError(null)
 
-    const trimmedName = name.trim();
+    const trimmedName = name.trim()
     if (!trimmedName) {
-      setFormError('Account name is required.');
-      return;
+      setFormError("Account name is required.")
+      return
     }
 
-    const cleanedIdentifiers: AccountIdentifierInput[] = [];
+    const cleanedIdentifiers: AccountIdentifierInput[] = []
     for (const row of identifiers) {
-      const trimmed = row.value.trim();
-      if (!trimmed) continue;
-      if (row.kind === 'card_last4' && !/^\d{4}$/.test(trimmed)) {
-        setFormError('Card last 4 digits must be exactly 4 numeric digits.');
-        return;
+      const trimmed = row.value.trim()
+      if (!trimmed) continue
+      if (row.kind === "card_last4" && !/^\d{4}$/.test(trimmed)) {
+        setFormError("Card last 4 digits must be exactly 4 numeric digits.")
+        return
       }
       if (
-        row.kind === 'bank_account' &&
-        trimmed.replace(/\D/g, '').length < 4
+        row.kind === "bank_account" &&
+        trimmed.replace(/\D/g, "").length < 4
       ) {
-        setFormError('Bank account number must contain at least 4 digits.');
-        return;
+        setFormError("Bank account number must contain at least 4 digits.")
+        return
       }
-      cleanedIdentifiers.push({ kind: row.kind, value: trimmed });
+      cleanedIdentifiers.push({ kind: row.kind, value: trimmed })
     }
 
-    let initialBalanceMinor: number | null;
-    if (account && initialBalance.trim() === '') {
-      initialBalanceMinor = null;
+    let initialBalanceMinor: number | null
+    if (account && initialBalance.trim() === "") {
+      initialBalanceMinor = null
     } else {
       try {
         initialBalanceMinor = parseDecimalToMinorClient(
           initialBalance,
-          account?.currency || currency,
-        );
+          account?.currency || currency
+        )
       } catch (err) {
         setFormError(
-          err instanceof Error ? err.message : 'Invalid initial balance.',
-        );
-        return;
+          err instanceof Error ? err.message : "Invalid initial balance."
+        )
+        return
       }
     }
 
-    let asOfUtc: string;
+    let asOfUtc: string
     try {
-      asOfUtc = dateInputToUtcIso(initialBalanceAsOf, timezone);
+      asOfUtc = dateInputToUtcIso(initialBalanceAsOf, timezone)
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Invalid date.');
-      return;
+      setFormError(err instanceof Error ? err.message : "Invalid date.")
+      return
     }
 
     saveMutation.mutate({
@@ -222,17 +226,17 @@ export function AccountFormDialog({
       initial_balance_minor: initialBalanceMinor,
       initial_balance_as_of_utc: asOfUtc,
       identifiers: cleanedIdentifiers,
-    });
+    })
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{account ? 'Edit account' : 'Add account'}</DialogTitle>
+          <DialogTitle>{account ? "Edit account" : "Add account"}</DialogTitle>
           <DialogDescription>
             {account
-              ? 'Update account details and starting balance.'
+              ? "Update account details and starting balance."
               : `Track balances in ${currency}.`}
           </DialogDescription>
         </DialogHeader>
@@ -256,7 +260,7 @@ export function AccountFormDialog({
               value={type}
               disabled={Boolean(account?.type_locked)}
               onValueChange={(v) => {
-                if (v) setType(v as AccountType);
+                if (v) setType(v as AccountType)
               }}
             >
               <SelectTrigger className="w-full" aria-label="Account type">
@@ -317,8 +321,8 @@ export function AccountFormDialog({
                     ...prev,
                     {
                       key: crypto.randomUUID(),
-                      kind: type === 'digital_wallet' ? 'alias' : 'card_last4',
-                      value: '',
+                      kind: type === "digital_wallet" ? "alias" : "card_last4",
+                      value: "",
                     },
                   ])
                 }
@@ -339,8 +343,8 @@ export function AccountFormDialog({
                   onChange={(e) =>
                     setIdentifiers((prev) =>
                       prev.map((r) =>
-                        r.key === row.key ? { ...r, value: e.target.value } : r,
-                      ),
+                        r.key === row.key ? { ...r, value: e.target.value } : r
+                      )
                     )
                   }
                   placeholder={IDENTIFIER_PLACEHOLDERS[row.kind]}
@@ -355,9 +359,9 @@ export function AccountFormDialog({
                         prev.map((r) =>
                           r.key === row.key
                             ? { ...r, kind: v as AccountIdentifierKind }
-                            : r,
-                        ),
-                      );
+                            : r
+                        )
+                      )
                     }
                   }}
                 >
@@ -377,7 +381,9 @@ export function AccountFormDialog({
                   variant="ghost"
                   size="sm"
                   onClick={() =>
-                    setIdentifiers((prev) => prev.filter((r) => r.key !== row.key))
+                    setIdentifiers((prev) =>
+                      prev.filter((r) => r.key !== row.key)
+                    )
                   }
                 >
                   Remove
@@ -398,14 +404,14 @@ export function AccountFormDialog({
             </DialogClose>
             <Button type="submit" disabled={saveMutation.isPending}>
               {saveMutation.isPending
-                ? 'Saving...'
+                ? "Saving..."
                 : account
-                  ? 'Save changes'
-                  : 'Create account'}
+                  ? "Save changes"
+                  : "Create account"}
             </Button>
           </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

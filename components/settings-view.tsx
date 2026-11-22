@@ -1,9 +1,9 @@
-'use client';
+"use client"
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMemo, useState, type FormEvent } from "react"
 
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,9 +14,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
-import { Button, buttonVariants } from '@/components/ui/button';
+} from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
+import { Button, buttonVariants } from "@/components/ui/button"
 import {
   Card,
   CardAction,
@@ -24,19 +24,19 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+} from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
+} from "@/components/ui/select"
+import { Separator } from "@/components/ui/separator"
 import {
   accountsQuery,
   createSenderApi,
@@ -53,78 +53,79 @@ import {
   updateLocaleSettingsApi,
   updateSenderApi,
   updateSyncSettingsApi,
-} from '@/lib/api';
-import { DatePicker } from '@/components/date-picker';
+} from "@/lib/api"
+import { DatePicker } from "@/components/date-picker"
 import {
   dateInputToUtcIso,
   formatRelativeUtc,
   formatUtcInTimezone,
   utcToDateInputValue,
-} from '@/lib/format';
+} from "@/lib/format"
 
 function formatBytes(bytes: number): string {
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
-  return `${Math.round(bytes / 1024 ** 2)} MB`;
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`
+  return `${Math.round(bytes / 1024 ** 2)} MB`
 }
 
-const NO_DEFAULT_ACCOUNT = '__none__';
+const NO_DEFAULT_ACCOUNT = "__none__"
 
 const SENDER_ROLE_OPTIONS = [
-  { value: 'auto', label: 'Auto-detect role' },
-  { value: 'card_charge', label: 'Card charge alert' },
-  { value: 'receipt', label: 'Merchant receipt' },
-] as const;
+  { value: "auto", label: "Auto-detect role" },
+  { value: "card_charge", label: "Card charge alert" },
+  { value: "receipt", label: "Merchant receipt" },
+] as const
 
 export function SettingsView({
   gmailParam,
   errorParam,
 }: {
-  gmailParam?: string;
-  errorParam?: string;
+  gmailParam?: string
+  errorParam?: string
 }) {
-  const queryClient = useQueryClient();
+  const queryClient = useQueryClient()
 
-  const settings = useQuery(settingsQuery());
-  const senders = useQuery(sendersQuery());
-  const gmail = useQuery(gmailStatusQuery());
-  const accounts = useQuery(accountsQuery());
-  const syncStatus = useQuery(syncStatusQuery());
+  const settings = useQuery(settingsQuery())
+  const senders = useQuery(sendersQuery())
+  const gmail = useQuery(gmailStatusQuery())
+  const accounts = useQuery(accountsQuery())
+  const syncStatus = useQuery(syncStatusQuery())
 
-  const [countryDraft, setCountryDraft] = useState<string | null>(null);
-  const [timezoneDraft, setTimezoneDraft] = useState<string | null>(null);
-  const [localeMessage, setLocaleMessage] = useState<string | null>(null);
+  const [countryDraft, setCountryDraft] = useState<string | null>(null)
+  const [timezoneDraft, setTimezoneDraft] = useState<string | null>(null)
+  const [localeMessage, setLocaleMessage] = useState<string | null>(null)
 
-  const [modelPathDraft, setModelPathDraft] = useState<string | null>(null);
-  const [contextSizeDraft, setContextSizeDraft] = useState<number | null>(null);
-  const [timeoutMsDraft, setTimeoutMsDraft] = useState<number | null>(null);
-  const [llmMessage, setLlmMessage] = useState<string | null>(null);
-  const [batchLimitDraft, setBatchLimitDraft] = useState<number | null>(null);
+  const [modelPathDraft, setModelPathDraft] = useState<string | null>(null)
+  const [contextSizeDraft, setContextSizeDraft] = useState<number | null>(null)
+  const [timeoutMsDraft, setTimeoutMsDraft] = useState<number | null>(null)
+  const [llmMessage, setLlmMessage] = useState<string | null>(null)
+  const [batchLimitDraft, setBatchLimitDraft] = useState<number | null>(null)
   const [syncSettingsMessage, setSyncSettingsMessage] = useState<string | null>(
-    null,
-  );
-  const [modelTestResult, setModelTestResult] = useState<string | null>(null);
+    null
+  )
+  const [modelTestResult, setModelTestResult] = useState<string | null>(null)
 
-  const [newSenderEmail, setNewSenderEmail] = useState('');
+  const [newSenderEmail, setNewSenderEmail] = useState("")
   const [newSenderRole, setNewSenderRole] = useState<
-    'auto' | 'card_charge' | 'receipt'
-  >('auto');
+    "auto" | "card_charge" | "receipt"
+  >("auto")
   const [newSenderAccountId, setNewSenderAccountId] =
-    useState(NO_DEFAULT_ACCOUNT);
-  const [newSenderBackfill, setNewSenderBackfill] = useState('');
-  const [senderMessage, setSenderMessage] = useState<string | null>(null);
-  const [gmailError, setGmailError] = useState<string | null>(null);
-  const [queueMessage, setQueueMessage] = useState<string | null>(null);
+    useState(NO_DEFAULT_ACCOUNT)
+  const [newSenderBackfill, setNewSenderBackfill] = useState("")
+  const [senderMessage, setSenderMessage] = useState<string | null>(null)
+  const [gmailError, setGmailError] = useState<string | null>(null)
+  const [queueMessage, setQueueMessage] = useState<string | null>(null)
 
-  const countryCode = countryDraft ?? settings.data?.country_code ?? '';
-  const timezone = timezoneDraft ?? settings.data?.timezone ?? '';
-  const modelPath = modelPathDraft ?? settings.data?.llm_model_path ?? '';
-  const contextSize = contextSizeDraft ?? settings.data?.llm_context_size ?? 8192;
-  const timeoutMs = timeoutMsDraft ?? settings.data?.llm_timeout_ms ?? 60000;
-  const batchLimit = batchLimitDraft ?? settings.data?.sync_batch_limit ?? 50;
+  const countryCode = countryDraft ?? settings.data?.country_code ?? ""
+  const timezone = timezoneDraft ?? settings.data?.timezone ?? ""
+  const modelPath = modelPathDraft ?? settings.data?.llm_model_path ?? ""
+  const contextSize =
+    contextSizeDraft ?? settings.data?.llm_context_size ?? 8192
+  const timeoutMs = timeoutMsDraft ?? settings.data?.llm_timeout_ms ?? 60000
+  const batchLimit = batchLimitDraft ?? settings.data?.sync_batch_limit ?? 50
 
   const selectedCountry = (settings.data?.countryCatalog ?? []).find(
-    (c) => c.code === countryCode,
-  );
+    (c) => c.code === countryCode
+  )
 
   const countryItems = useMemo(
     () =>
@@ -132,8 +133,8 @@ export function SettingsView({
         value: c.code,
         label: `${c.name} (${c.currency})`,
       })),
-    [settings.data?.countryCatalog],
-  );
+    [settings.data?.countryCatalog]
+  )
 
   const timezoneItems = useMemo(
     () =>
@@ -141,19 +142,19 @@ export function SettingsView({
         value: tz,
         label: tz,
       })),
-    [selectedCountry?.timezones],
-  );
+    [selectedCountry?.timezones]
+  )
 
   const defaultAccountItems = useMemo(
     () => [
-      { value: NO_DEFAULT_ACCOUNT, label: 'Default account (optional)' },
+      { value: NO_DEFAULT_ACCOUNT, label: "Default account (optional)" },
       ...(accounts.data ?? []).map((acct) => ({
         value: acct.id,
         label: acct.name,
       })),
     ],
-    [accounts.data],
-  );
+    [accounts.data]
+  )
 
   const modelItems = useMemo(
     () =>
@@ -161,172 +162,172 @@ export function SettingsView({
         value: m.relativePath,
         label: `${m.relativePath} (${formatBytes(m.sizeBytes)})`,
       })),
-    [settings.data?.availableModels],
-  );
+    [settings.data?.availableModels]
+  )
 
   const localeMutation = useMutation({
     mutationFn: updateLocaleSettingsApi,
     onSuccess: () => {
-      setLocaleMessage('Locale settings saved.');
-      void queryClient.invalidateQueries({ queryKey: ['settings'] });
-      void queryClient.invalidateQueries({ queryKey: ['spending'] });
+      setLocaleMessage("Locale settings saved.")
+      void queryClient.invalidateQueries({ queryKey: ["settings"] })
+      void queryClient.invalidateQueries({ queryKey: ["spending"] })
     },
     onError: (err) => {
       setLocaleMessage(
-        err instanceof Error ? err.message : 'Failed to save locale.',
-      );
+        err instanceof Error ? err.message : "Failed to save locale."
+      )
     },
-  });
+  })
 
   const llmMutation = useMutation({
     mutationFn: updateLlmSettingsApi,
     onSuccess: () => {
-      setLlmMessage('Model settings saved.');
-      void queryClient.invalidateQueries({ queryKey: ['settings'] });
+      setLlmMessage("Model settings saved.")
+      void queryClient.invalidateQueries({ queryKey: ["settings"] })
     },
     onError: (err) => {
       setLlmMessage(
-        err instanceof Error ? err.message : 'Failed to save model settings.',
-      );
+        err instanceof Error ? err.message : "Failed to save model settings."
+      )
     },
-  });
+  })
 
   const syncSettingsMutation = useMutation({
     mutationFn: updateSyncSettingsApi,
     onSuccess: () => {
-      setSyncSettingsMessage('Sync settings saved.');
-      void queryClient.invalidateQueries({ queryKey: ['settings'] });
+      setSyncSettingsMessage("Sync settings saved.")
+      void queryClient.invalidateQueries({ queryKey: ["settings"] })
     },
     onError: (err) => {
       setSyncSettingsMessage(
-        err instanceof Error ? err.message : 'Failed to save sync settings.',
-      );
+        err instanceof Error ? err.message : "Failed to save sync settings."
+      )
     },
-  });
+  })
 
   const testModelMutation = useMutation({
     mutationFn: testLlmModelApi,
     onSuccess: (res) => {
       setModelTestResult(
-        `Loaded ${res.modelPath} cleanly (context ${res.contextSize}).`,
-      );
+        `Loaded ${res.modelPath} cleanly (context ${res.contextSize}).`
+      )
     },
     onError: (err) => {
       setModelTestResult(
-        err instanceof Error ? err.message : 'Model test failed.',
-      );
+        err instanceof Error ? err.message : "Model test failed."
+      )
     },
-  });
+  })
 
   const createSenderMutation = useMutation({
     mutationFn: createSenderApi,
     onSuccess: () => {
-      setNewSenderEmail('');
-      setNewSenderRole('auto');
-      setNewSenderAccountId(NO_DEFAULT_ACCOUNT);
-      setNewSenderBackfill('');
-      setSenderMessage('Sender added.');
-      void queryClient.invalidateQueries({ queryKey: ['senders'] });
+      setNewSenderEmail("")
+      setNewSenderRole("auto")
+      setNewSenderAccountId(NO_DEFAULT_ACCOUNT)
+      setNewSenderBackfill("")
+      setSenderMessage("Sender added.")
+      void queryClient.invalidateQueries({ queryKey: ["senders"] })
     },
     onError: (err) => {
       setSenderMessage(
-        err instanceof Error ? err.message : 'Could not add sender.',
-      );
+        err instanceof Error ? err.message : "Could not add sender."
+      )
     },
-  });
+  })
 
   const updateSenderMutation = useMutation({
     mutationFn: updateSenderApi,
     onSuccess: () => {
-      setSenderMessage('Sender updated.');
-      void queryClient.invalidateQueries({ queryKey: ['senders'] });
+      setSenderMessage("Sender updated.")
+      void queryClient.invalidateQueries({ queryKey: ["senders"] })
     },
     onError: (err) => {
       setSenderMessage(
-        err instanceof Error ? err.message : 'Could not update sender.',
-      );
+        err instanceof Error ? err.message : "Could not update sender."
+      )
     },
-  });
+  })
 
   const deleteSenderMutation = useMutation({
     mutationFn: deleteSenderApi,
     onSuccess: () => {
-      setSenderMessage('Sender removed.');
-      void queryClient.invalidateQueries({ queryKey: ['senders'] });
+      setSenderMessage("Sender removed.")
+      void queryClient.invalidateQueries({ queryKey: ["senders"] })
     },
     onError: (err) => {
       setSenderMessage(
-        err instanceof Error ? err.message : 'Could not remove sender.',
-      );
+        err instanceof Error ? err.message : "Could not remove sender."
+      )
     },
-  });
+  })
 
   const disconnectGmailMutation = useMutation({
     mutationFn: disconnectGmailApi,
     onSuccess: () => {
-      setGmailError(null);
-      void queryClient.invalidateQueries({ queryKey: ['gmail-status'] });
+      setGmailError(null)
+      void queryClient.invalidateQueries({ queryKey: ["gmail-status"] })
     },
     onError: (err) => {
       setGmailError(
-        err instanceof Error ? err.message : 'Could not disconnect Gmail.',
-      );
+        err instanceof Error ? err.message : "Could not disconnect Gmail."
+      )
     },
-  });
+  })
 
   const retryMutation = useMutation({
     mutationFn: retryFailedExtractionsApi,
     onSuccess: () => {
-      setQueueMessage(null);
-      void queryClient.invalidateQueries({ queryKey: ['sync-status'] });
+      setQueueMessage(null)
+      void queryClient.invalidateQueries({ queryKey: ["sync-status"] })
     },
     onError: (err) => {
       setQueueMessage(
-        err instanceof Error ? err.message : 'Could not start retry.',
-      );
+        err instanceof Error ? err.message : "Could not start retry."
+      )
     },
-  });
+  })
 
   const dismissQueueMutation = useMutation({
     mutationFn: dismissPendingQueueApi,
     onSuccess: () => {
-      setQueueMessage(null);
-      void queryClient.invalidateQueries({ queryKey: ['sync-status'] });
+      setQueueMessage(null)
+      void queryClient.invalidateQueries({ queryKey: ["sync-status"] })
     },
     onError: (err) => {
       setQueueMessage(
-        err instanceof Error ? err.message : 'Could not dismiss pending queue.',
-      );
+        err instanceof Error ? err.message : "Could not dismiss pending queue."
+      )
     },
-  });
+  })
 
   function handleLocaleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!countryCode) return;
+    e.preventDefault()
+    if (!countryCode) return
     localeMutation.mutate({
       country_code: countryCode,
       timezone: timezone || undefined,
       currency: settings.data?.currencyLocked
         ? (settings.data.currency ?? undefined)
         : selectedCountry?.currency,
-    });
+    })
   }
 
   function handleAddSender(e: FormEvent) {
-    e.preventDefault();
-    setSenderMessage(null);
-    let backfillUtc: string | undefined;
+    e.preventDefault()
+    setSenderMessage(null)
+    let backfillUtc: string | undefined
     if (newSenderBackfill.trim()) {
       try {
         backfillUtc = dateInputToUtcIso(
           newSenderBackfill,
-          settings.data?.timezone,
-        );
+          settings.data?.timezone
+        )
       } catch (err) {
         setSenderMessage(
-          err instanceof Error ? err.message : 'Invalid backfill date.',
-        );
-        return;
+          err instanceof Error ? err.message : "Invalid backfill date."
+        )
+        return
       }
     }
     createSenderMutation.mutate({
@@ -335,7 +336,7 @@ export function SettingsView({
       default_account_id:
         newSenderAccountId !== NO_DEFAULT_ACCOUNT ? newSenderAccountId : null,
       backfill_from_utc: backfillUtc,
-    });
+    })
   }
 
   return (
@@ -348,14 +349,16 @@ export function SettingsView({
         </p>
       </div>
 
-      {gmailParam === 'connected' && (
+      {gmailParam === "connected" && (
         <Alert>
           <AlertDescription>Gmail connected successfully.</AlertDescription>
         </Alert>
       )}
       {errorParam && (
         <Alert variant="destructive">
-          <AlertDescription>Gmail connection error: {errorParam}</AlertDescription>
+          <AlertDescription>
+            Gmail connection error: {errorParam}
+          </AlertDescription>
         </Alert>
       )}
 
@@ -376,7 +379,10 @@ export function SettingsView({
           )}
         </CardHeader>
         <CardContent className="space-y-4">
-          <form onSubmit={handleLocaleSubmit} className="grid gap-4 sm:grid-cols-2">
+          <form
+            onSubmit={handleLocaleSubmit}
+            className="grid gap-4 sm:grid-cols-2"
+          >
             <Field>
               <FieldLabel>Country</FieldLabel>
               <Select
@@ -384,12 +390,12 @@ export function SettingsView({
                 value={countryCode || null}
                 disabled={settings.data?.currencyLocked}
                 onValueChange={(nextCode) => {
-                  const code = nextCode ?? '';
-                  setCountryDraft(code);
+                  const code = nextCode ?? ""
+                  setCountryDraft(code)
                   const match = settings.data?.countryCatalog.find(
-                    (c) => c.code === code,
-                  );
-                  if (match) setTimezoneDraft(match.defaultTimezone);
+                    (c) => c.code === code
+                  )
+                  if (match) setTimezoneDraft(match.defaultTimezone)
                 }}
               >
                 <SelectTrigger className="w-full" aria-label="Country">
@@ -410,7 +416,7 @@ export function SettingsView({
               <Select
                 items={timezoneItems}
                 value={timezone || null}
-                onValueChange={(val) => setTimezoneDraft(val ?? '')}
+                onValueChange={(val) => setTimezoneDraft(val ?? "")}
               >
                 <SelectTrigger className="w-full" aria-label="Timezone">
                   <SelectValue placeholder="Select timezone..." />
@@ -429,14 +435,14 @@ export function SettingsView({
               <p className="text-xs text-muted-foreground">
                 {settings.data?.currencyLocked
                   ? `Currency (${settings.data.currency}) is locked because accounts or transactions exist. Timezone remains editable.`
-                  : 'Currency is derived from your country and locks once accounts or transactions exist.'}
+                  : "Currency is derived from your country and locks once accounts or transactions exist."}
               </p>
               <Button
                 type="submit"
                 size="sm"
                 disabled={!countryCode || localeMutation.isPending}
               >
-                {localeMutation.isPending ? 'Saving...' : 'Save locale'}
+                {localeMutation.isPending ? "Saving..." : "Save locale"}
               </Button>
             </div>
           </form>
@@ -454,7 +460,7 @@ export function SettingsView({
             configured senders.
           </CardDescription>
           <CardAction className="flex items-center gap-2">
-            {gmail.data?.status === 'connected' ? (
+            {gmail.data?.status === "connected" ? (
               <>
                 <Badge variant="secondary">
                   Connected: {gmail.data.email_address}
@@ -477,8 +483,8 @@ export function SettingsView({
                         Disconnect Gmail account?
                       </AlertDialogTitle>
                       <AlertDialogDescription>
-                        Spender will stop syncing alerts and receipts from{' '}
-                        {gmail.data.email_address ?? 'your Gmail account'} until
+                        Spender will stop syncing alerts and receipts from{" "}
+                        {gmail.data.email_address ?? "your Gmail account"} until
                         you reconnect.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
@@ -497,11 +503,11 @@ export function SettingsView({
             ) : (
               <a
                 href="/api/gmail/auth"
-                className={buttonVariants({ size: 'sm' })}
+                className={buttonVariants({ size: "sm" })}
               >
-                {gmail.data?.status === 'expired'
-                  ? 'Reconnect Gmail'
-                  : 'Connect Gmail'}
+                {gmail.data?.status === "expired"
+                  ? "Reconnect Gmail"
+                  : "Connect Gmail"}
               </a>
             )}
           </CardAction>
@@ -521,9 +527,9 @@ export function SettingsView({
           <form
             className="flex flex-wrap items-end gap-3"
             onSubmit={(e) => {
-              e.preventDefault();
-              setSyncSettingsMessage(null);
-              syncSettingsMutation.mutate({ sync_batch_limit: batchLimit });
+              e.preventDefault()
+              setSyncSettingsMessage(null)
+              syncSettingsMutation.mutate({ sync_batch_limit: batchLimit })
             }}
           >
             <Field className="w-44">
@@ -542,7 +548,9 @@ export function SettingsView({
               size="sm"
               disabled={syncSettingsMutation.isPending}
             >
-              {syncSettingsMutation.isPending ? 'Saving...' : 'Save batch limit'}
+              {syncSettingsMutation.isPending
+                ? "Saving..."
+                : "Save batch limit"}
             </Button>
             {syncSettingsMessage && (
               <p className="text-sm">{syncSettingsMessage}</p>
@@ -557,7 +565,8 @@ export function SettingsView({
           <CardTitle>Email Senders</CardTitle>
           <CardDescription>
             Each sender maintains an independent sync cursor. Moving a backfill
-            date earlier rewinds that sender&apos;s cursor to fetch older emails.
+            date earlier rewinds that sender&apos;s cursor to fetch older
+            emails.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -582,8 +591,8 @@ export function SettingsView({
                 items={SENDER_ROLE_OPTIONS}
                 value={newSenderRole}
                 onValueChange={(v) => {
-                  if (v === 'auto' || v === 'card_charge' || v === 'receipt') {
-                    setNewSenderRole(v);
+                  if (v === "auto" || v === "card_charge" || v === "receipt") {
+                    setNewSenderRole(v)
                   }
                 }}
               >
@@ -658,24 +667,24 @@ export function SettingsView({
                     <div>
                       <p className="font-medium">{sender.email}</p>
                       <p className="text-xs text-muted-foreground">
-                        Role: {sender.role_hint} · Backfill from{' '}
+                        Role: {sender.role_hint} · Backfill from{" "}
                         {utcToDateInputValue(
                           sender.backfill_from_utc,
-                          settings.data?.timezone,
+                          settings.data?.timezone
                         )}
                         {sender.last_sync_at_utc ? (
                           <span
                             title={formatUtcInTimezone(
                               sender.last_sync_at_utc,
-                              settings.data?.timezone,
+                              settings.data?.timezone
                             )}
                           >
-                            {' '}
-                            · Last synced{' '}
+                            {" "}
+                            · Last synced{" "}
                             {formatRelativeUtc(sender.last_sync_at_utc)}
                           </span>
                         ) : (
-                          ' · Never synced'
+                          " · Never synced"
                         )}
                       </p>
                     </div>
@@ -686,17 +695,17 @@ export function SettingsView({
                         className="w-44"
                         value={utcToDateInputValue(
                           sender.backfill_from_utc,
-                          settings.data?.timezone,
+                          settings.data?.timezone
                         )}
                         onChange={(nextDate) => {
-                          if (!nextDate) return;
+                          if (!nextDate) return
                           updateSenderMutation.mutate({
                             id: sender.id,
                             backfill_from_utc: dateInputToUtcIso(
                               nextDate,
-                              settings.data?.timezone,
+                              settings.data?.timezone
                             ),
-                          });
+                          })
                         }}
                       />
 
@@ -712,7 +721,7 @@ export function SettingsView({
                           }
                         />
                         <Label htmlFor={`sender-enabled-${sender.id}`}>
-                          {sender.enabled === 1 ? 'Enabled' : 'Disabled'}
+                          {sender.enabled === 1 ? "Enabled" : "Disabled"}
                         </Label>
                       </div>
 
@@ -765,7 +774,7 @@ export function SettingsView({
         <CardHeader>
           <CardTitle>Local GGUF Model</CardTitle>
           <CardDescription>
-            Models directory: {settings.data?.modelsDir ?? 'models'}
+            Models directory: {settings.data?.modelsDir ?? "models"}
           </CardDescription>
           <CardAction>
             <Button
@@ -773,7 +782,7 @@ export function SettingsView({
               variant="outline"
               size="sm"
               onClick={() =>
-                void queryClient.invalidateQueries({ queryKey: ['settings'] })
+                void queryClient.invalidateQueries({ queryKey: ["settings"] })
               }
             >
               Rescan models
@@ -784,13 +793,13 @@ export function SettingsView({
           <form
             className="grid gap-4 sm:grid-cols-3"
             onSubmit={(e) => {
-              e.preventDefault();
-              setLlmMessage(null);
+              e.preventDefault()
+              setLlmMessage(null)
               llmMutation.mutate({
                 llm_model_path: modelPath || null,
                 llm_context_size: contextSize || 8192,
                 llm_timeout_ms: timeoutMs || 60000,
-              });
+              })
             }}
           >
             <Field className="sm:col-span-3">
@@ -798,9 +807,12 @@ export function SettingsView({
               <Select
                 items={modelItems}
                 value={modelPath || null}
-                onValueChange={(v) => setModelPathDraft(v ?? '')}
+                onValueChange={(v) => setModelPathDraft(v ?? "")}
               >
-                <SelectTrigger className="w-full" aria-label="Selected .gguf model">
+                <SelectTrigger
+                  className="w-full"
+                  aria-label="Selected .gguf model"
+                >
                   <SelectValue placeholder="Select a local GGUF model..." />
                 </SelectTrigger>
                 <SelectContent>
@@ -813,8 +825,9 @@ export function SettingsView({
               </Select>
               {(settings.data?.availableModels.length ?? 0) === 0 && (
                 <FieldDescription>
-                  Place a .gguf model file inside{' '}
-                  {settings.data?.modelsDir ?? 'models'} and click Rescan models.
+                  Place a .gguf model file inside{" "}
+                  {settings.data?.modelsDir ?? "models"} and click Rescan
+                  models.
                 </FieldDescription>
               )}
             </Field>
@@ -857,11 +870,11 @@ export function SettingsView({
                   !modelPath
                 }
                 onClick={() => {
-                  setModelTestResult(null);
-                  testModelMutation.mutate();
+                  setModelTestResult(null)
+                  testModelMutation.mutate()
                 }}
               >
-                {testModelMutation.isPending ? 'Testing...' : 'Test load'}
+                {testModelMutation.isPending ? "Testing..." : "Test load"}
               </Button>
             </div>
           </form>
@@ -877,7 +890,7 @@ export function SettingsView({
 
           <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
             <span className="text-muted-foreground">
-              Extraction queue: {syncStatus.data?.pendingEmailCount ?? 0}{' '}
+              Extraction queue: {syncStatus.data?.pendingEmailCount ?? 0}{" "}
               pending, {syncStatus.data?.failedEmailCount ?? 0} failed
             </span>
             <div className="flex items-center gap-2">
@@ -922,5 +935,5 @@ export function SettingsView({
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

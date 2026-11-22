@@ -1,6 +1,6 @@
-'use client';
+"use client"
 
-import { Badge } from '@/components/ui/badge';
+import { Badge } from "@/components/ui/badge"
 import {
   Card,
   CardAction,
@@ -8,16 +8,16 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import type { MonthlySpendingSummary } from '@/lib/api';
-import { formatMinorCurrency } from '@/lib/format';
+} from "@/components/ui/card"
+import type { MonthlySpendingSummary } from "@/lib/api"
+import { formatMinorCurrency } from "@/lib/format"
 
 export function MonthlySummary({
   summary,
 }: {
-  summary: MonthlySpendingSummary;
+  summary: MonthlySpendingSummary
 }) {
-  const currency = summary.currency ?? 'USD';
+  const currency = summary.currency ?? "USD"
 
   return (
     <Card>
@@ -36,10 +36,10 @@ export function MonthlySummary({
       </CardHeader>
       <CardContent>
         <p className="text-sm text-muted-foreground">
-          {summary.transactionCount}{' '}
-          {summary.transactionCount === 1 ? 'transaction' : 'transactions'}
+          {summary.transactionCount}{" "}
+          {summary.transactionCount === 1 ? "transaction" : "transactions"}
         </p>
       </CardContent>
     </Card>
-  );
+  )
 }

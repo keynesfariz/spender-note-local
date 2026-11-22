@@ -1,11 +1,11 @@
-'use client';
+"use client"
 
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useMemo, useState, type FormEvent } from "react"
 
-import { DatePicker } from '@/components/date-picker';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { DatePicker } from "@/components/date-picker"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogClose,
@@ -14,30 +14,30 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Field, FieldLabel } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
+} from "@/components/ui/dialog"
+import { Field, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { addManualTransactionApi, type AccountSummary } from '@/lib/api';
-import { DEFAULT_CATEGORIES } from '@/lib/categories';
+} from "@/components/ui/select"
+import { addManualTransactionApi, type AccountSummary } from "@/lib/api"
+import { DEFAULT_CATEGORIES } from "@/lib/categories"
 import {
   dateInputToUtcIso,
   parseDecimalToMinorClient,
   utcToDateInputValue,
-} from '@/lib/format';
+} from "@/lib/format"
 
-const UNASSIGNED_ACCOUNT = '__unassigned__';
+const UNASSIGNED_ACCOUNT = "__unassigned__"
 
 const CATEGORY_OPTIONS = DEFAULT_CATEGORIES.map((cat) => ({
   value: cat,
   label: cat,
-}));
+}))
 
 export function AddTransactionDialog({
   open,
@@ -46,62 +46,62 @@ export function AddTransactionDialog({
   currency,
   timezone,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  accounts: AccountSummary[];
-  currency: string;
-  timezone: string | null | undefined;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  accounts: AccountSummary[]
+  currency: string
+  timezone: string | null | undefined
 }) {
-  const queryClient = useQueryClient();
+  const queryClient = useQueryClient()
 
-  const [amount, setAmount] = useState('');
-  const [merchant, setMerchant] = useState('');
-  const [category, setCategory] = useState<string>('Other');
-  const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT);
-  const [date, setDate] = useState('');
-  const [note, setNote] = useState('');
-  const [formError, setFormError] = useState<string | null>(null);
+  const [amount, setAmount] = useState("")
+  const [merchant, setMerchant] = useState("")
+  const [category, setCategory] = useState<string>("Other")
+  const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT)
+  const [date, setDate] = useState("")
+  const [note, setNote] = useState("")
+  const [formError, setFormError] = useState<string | null>(null)
 
   const accountItems = useMemo(
     () => [
-      { value: UNASSIGNED_ACCOUNT, label: 'Unassigned' },
+      { value: UNASSIGNED_ACCOUNT, label: "Unassigned" },
       ...accounts.map((acct) => ({ value: acct.id, label: acct.name })),
     ],
-    [accounts],
-  );
+    [accounts]
+  )
 
   useEffect(() => {
-    if (!open) return;
-    setAmount('');
-    setMerchant('');
-    setCategory('Other');
-    setAccountId(UNASSIGNED_ACCOUNT);
-    setDate(utcToDateInputValue(new Date().toISOString(), timezone));
-    setNote('');
-    setFormError(null);
-  }, [open, timezone]);
+    if (!open) return
+    setAmount("")
+    setMerchant("")
+    setCategory("Other")
+    setAccountId(UNASSIGNED_ACCOUNT)
+    setDate(utcToDateInputValue(new Date().toISOString(), timezone))
+    setNote("")
+    setFormError(null)
+  }, [open, timezone])
 
   const addMutation = useMutation({
     mutationFn: addManualTransactionApi,
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['spending'] });
-      void queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      void queryClient.invalidateQueries({ queryKey: ['accounts'] });
-      onOpenChange(false);
+      void queryClient.invalidateQueries({ queryKey: ["spending"] })
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] })
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] })
+      onOpenChange(false)
     },
     onError: (err) => {
       setFormError(
-        err instanceof Error ? err.message : 'Failed to add transaction.',
-      );
+        err instanceof Error ? err.message : "Failed to add transaction."
+      )
     },
-  });
+  })
 
   function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    setFormError(null);
+    event.preventDefault()
+    setFormError(null)
     try {
-      const amountMinor = parseDecimalToMinorClient(amount, currency);
-      const occurredAtUtc = dateInputToUtcIso(date, timezone);
+      const amountMinor = parseDecimalToMinorClient(amount, currency)
+      const occurredAtUtc = dateInputToUtcIso(date, timezone)
       addMutation.mutate({
         amount_minor: amountMinor,
         occurred_at_utc: occurredAtUtc,
@@ -109,9 +109,9 @@ export function AddTransactionDialog({
         category,
         account_id: accountId !== UNASSIGNED_ACCOUNT ? accountId : null,
         note: note.trim() || null,
-      });
+      })
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Invalid input.');
+      setFormError(err instanceof Error ? err.message : "Invalid input.")
     }
   }
 
@@ -161,7 +161,7 @@ export function AddTransactionDialog({
               <Select
                 items={CATEGORY_OPTIONS}
                 value={category}
-                onValueChange={(v) => setCategory(v ?? 'Other')}
+                onValueChange={(v) => setCategory(v ?? "Other")}
               >
                 <SelectTrigger className="w-full" aria-label="Category">
                   <SelectValue />
@@ -221,11 +221,11 @@ export function AddTransactionDialog({
               Cancel
             </DialogClose>
             <Button type="submit" disabled={addMutation.isPending}>
-              {addMutation.isPending ? 'Adding...' : 'Add transaction'}
+              {addMutation.isPending ? "Adding..." : "Add transaction"}
             </Button>
           </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

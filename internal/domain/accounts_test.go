@@ -401,4 +401,13 @@ func TestBackdatedReconciliation_PreservesNewerAnchor(t *testing.T) {
 	if summary.ComputedBalanceMinor == nil || *summary.ComputedBalanceMinor != 10000000 {
 		t.Fatalf("expected balance=10000000 anchored to Nov 25, got %v", summary.ComputedBalanceMinor)
 	}
+
+	// Reject future-dated reconciliation timestamp
+	if _, err := reconcileAccountAt(gdb, ReconcileAccountInput{
+		AccountID:          acct.ID,
+		ActualBalanceMinor: 10000000,
+		RecordedAtUtc:      strPtr("2026-11-26T00:00:00Z"),
+	}, now); err == nil {
+		t.Fatalf("expected error for future-dated reconciliation timestamp")
+	}
 }

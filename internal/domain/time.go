@@ -166,12 +166,16 @@ func clampedStatementDate(year int, month time.Month, statementDay int, loc *tim
 	return time.Date(year, month, day, 0, 0, 0, 0, loc)
 }
 
+func nextLocalMidnight(d time.Time) time.Time {
+	return time.Date(d.Year(), d.Month(), d.Day()+1, 0, 0, 0, 0, d.Location())
+}
+
 func buildBillingCycleWindow(startDay, endDay time.Time) BillingCycleWindow {
 	return BillingCycleWindow{
 		StartDate:       startDay.Format("2006-01-02"),
 		EndDate:         endDay.Format("2006-01-02"),
 		StartUtc:        ToUtcIsoSeconds(startDay),
-		EndExclusiveUtc: ToUtcIsoSeconds(endDay.AddDate(0, 0, 1)),
+		EndExclusiveUtc: ToUtcIsoSeconds(nextLocalMidnight(endDay)),
 	}
 }
 
@@ -195,9 +199,9 @@ func ComputeCreditCardCycleBounds(statementDay int, tz string, now time.Time) (C
 		prev2Y, prev2M := shiftYearMonth(today.Year(), today.Month(), -2)
 		prev2Stmt := clampedStatementDate(prev2Y, prev2M, statementDay, loc)
 
-		curStart = prevStmt.AddDate(0, 0, 1)
+		curStart = nextLocalMidnight(prevStmt)
 		curEnd = thisMonthStmt
-		lastStart = prev2Stmt.AddDate(0, 0, 1)
+		lastStart = nextLocalMidnight(prev2Stmt)
 		lastEnd = prevStmt
 	} else {
 		nextY, nextM := shiftYearMonth(today.Year(), today.Month(), 1)
@@ -205,9 +209,9 @@ func ComputeCreditCardCycleBounds(statementDay int, tz string, now time.Time) (C
 		prevY, prevM := shiftYearMonth(today.Year(), today.Month(), -1)
 		prevStmt := clampedStatementDate(prevY, prevM, statementDay, loc)
 
-		curStart = thisMonthStmt.AddDate(0, 0, 1)
+		curStart = nextLocalMidnight(thisMonthStmt)
 		curEnd = nextStmt
-		lastStart = prevStmt.AddDate(0, 0, 1)
+		lastStart = nextLocalMidnight(prevStmt)
 		lastEnd = thisMonthStmt
 	}
 

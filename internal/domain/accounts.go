@@ -713,6 +713,9 @@ func reconcileAccountAt(gdb *gorm.DB, input ReconcileAccountInput, now time.Time
 	if !IsValidUtcIsoSeconds(recordedAt) {
 		return nil, errors.New("Reconciliation timestamp must be a valid UTC ISO-8601 string.")
 	}
+	if recordedAt > nowUtc {
+		return nil, errors.New("Reconciliation timestamp cannot be in the future.")
+	}
 
 	var rec db.AccountReconciliation
 	var summary AccountSummary

@@ -539,20 +539,30 @@ func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *va
 		email := rows[0]
 
 		if IsBillingStatementEmail(email.Subject, email.CleanedText) {
-			_ = gdb.Transaction(func(tx *gorm.DB) error {
-				tx.Exec(`
+			txErr := gdb.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Exec(`
 					INSERT OR REPLACE INTO email_extractions (
 						id, email_id, email_kind, extraction_model, raw_llm_json
 					) VALUES (?, ?, 'non_transaction', 'rule:billing_statement', ?)`,
 					uuid.NewString(), email.ID, `{"email_kind":"non_transaction","reason":"billing_statement_filter"}`,
-				)
-				tx.Model(&db.RawEmail{}).Where("id = ?", email.ID).Updates(map[string]any{
+				).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&db.RawEmail{}).Where("id = ?", email.ID).Updates(map[string]any{
 					"status":        "non_transaction",
 					"error_message": nil,
-				})
-				tx.Exec(`UPDATE sync_runs SET skipped_count = skipped_count + 1 WHERE id = ?`, runID)
-				return nil
+				}).Error; err != nil {
+					return err
+				}
+				return tx.Exec(`UPDATE sync_runs SET skipped_count = skipped_count + 1 WHERE id = ?`, runID).Error
 			})
+			if txErr != nil {
+				gdb.Model(&db.RawEmail{}).Where("id = ?", email.ID).Updates(map[string]any{
+					"status":        "failed",
+					"error_message": txErr.Error(),
+				})
+				gdb.Exec(`UPDATE sync_runs SET failed_count = failed_count + 1 WHERE id = ?`, runID)
+			}
 			continue
 		}
 

@@ -240,19 +240,11 @@ func listAccountsAt(gdb *gorm.DB, now time.Time) ([]AccountSummary, error) {
 		byAcct[ident.AccountID] = append(byAcct[ident.AccountID], ident)
 	}
 
-	out := make([]AccountSummary, 0, len(rows))
-	for _, row := range rows {
-		idents := byAcct[row.ID]
-		if idents == nil {
-			idents = []db.AccountIdentifier{}
-		}
-		summary, err := buildAccountSummaryAt(gdb, row, targetCurrency, targetTimezone, idents, now)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, summary)
+	if len(rows) == 0 {
+		return []AccountSummary{}, nil
 	}
-	return out, nil
+
+	return buildAccountSummariesAt(gdb, rows, byAcct, targetCurrency, targetTimezone, now)
 }
 
 type CreateAccountInput struct {

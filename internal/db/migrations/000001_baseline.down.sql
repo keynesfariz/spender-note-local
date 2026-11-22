@@ -1,0 +1,12 @@
+DROP TABLE IF EXISTS transaction_sources;
+DROP TABLE IF EXISTS transactions;
+DROP TABLE IF EXISTS email_extractions;
+DROP TABLE IF EXISTS raw_emails;
+DROP TABLE IF EXISTS sync_runs;
+DROP TABLE IF EXISTS senders;
+DROP TABLE IF EXISTS account_reconciliations;
+DROP TABLE IF EXISTS account_identifiers;
+DROP TABLE IF EXISTS accounts;
+DROP TABLE IF EXISTS oauth_states;
+DROP TABLE IF EXISTS gmail_oauth;
+DROP TABLE IF EXISTS app_settings;

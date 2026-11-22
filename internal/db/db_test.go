@@ -2,6 +2,7 @@ package db
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -9,7 +10,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func TestOpenDatabase_FreshSchemaDefaultsAndSyncingPhase(t *testing.T) {
+func TestOpenDatabase_FreshSchemaDefaultsAndIndexes(t *testing.T) {
 	gdb, err := OpenDatabase(":memory:", false)
 	if err != nil {
 		t.Fatalf("open fresh db: %v", err)
@@ -29,6 +30,27 @@ func TestOpenDatabase_FreshSchemaDefaultsAndSyncingPhase(t *testing.T) {
 		t.Fatalf("expected llm_model=nil, got %q", *s.LlmModel)
 	}
 
+	var mig struct {
+		Version int  `gorm:"column:version"`
+		Dirty   bool `gorm:"column:dirty"`
+	}
+	if err := gdb.Raw(`SELECT version, dirty FROM schema_migrations`).Scan(&mig).Error; err != nil {
+		t.Fatalf("read schema_migrations: %v", err)
+	}
+	if mig.Version != 2 || mig.Dirty {
+		t.Fatalf("expected schema_migrations version=2 dirty=false, got version=%d dirty=%v", mig.Version, mig.Dirty)
+	}
+
+	for _, idxName := range []string{"idx_transactions_currency_occurred", "idx_raw_emails_sender_date"} {
+		var found string
+		if err := gdb.Raw(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, idxName).Scan(&found).Error; err != nil {
+			t.Fatalf("check index %s: %v", idxName, err)
+		}
+		if found != idxName {
+			t.Fatalf("expected index %s to exist", idxName)
+		}
+	}
+
 	run := SyncRun{
 		ID:           "run-syncing-1",
 		Status:       "running",
@@ -42,54 +64,27 @@ func TestOpenDatabase_FreshSchemaDefaultsAndSyncingPhase(t *testing.T) {
 	}
 }
 
-func TestOpenDatabase_MigratesLegacyGgufAppSettingsAndSyncRuns(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+func TestOpenDatabase_AutoBaselinesExistingDatabaseAndAppliesV2(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "existing.db")
 
 	rawDB, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {
-		t.Fatalf("open raw legacy db: %v", err)
+		t.Fatalf("open raw existing db: %v", err)
 	}
 
-	legacySQL := `
-		CREATE TABLE app_settings (
-			id INTEGER PRIMARY KEY CHECK (id = 1),
-			country_code TEXT,
-			timezone TEXT,
-			currency TEXT,
-			llm_provider TEXT NOT NULL DEFAULT 'gguf' CHECK (llm_provider IN ('gguf')),
-			llm_model_path TEXT,
-			llm_context_size INTEGER NOT NULL DEFAULT 8192 CHECK (llm_context_size > 0),
-			llm_timeout_ms INTEGER NOT NULL DEFAULT 60000 CHECK (llm_timeout_ms > 0),
-			sync_batch_limit INTEGER NOT NULL DEFAULT 50 CHECK (sync_batch_limit >= 1 AND sync_batch_limit <= 500)
-		) STRICT;
-		INSERT INTO app_settings (id, country_code, timezone, currency, llm_provider, llm_model_path, llm_context_size, llm_timeout_ms, sync_batch_limit)
-		VALUES (1, 'ID', 'Asia/Jakarta', 'IDR', 'gguf', 'hf_Qwen.gguf', 16384, 45000, 25);
-
-		CREATE TABLE sync_runs (
-			id TEXT PRIMARY KEY,
-			status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'partial_error', 'failed', 'cancelled', 'interrupted')),
-			phase TEXT NOT NULL CHECK (phase IN ('preflight', 'fetching', 'extracting', 'done')),
-			llm_provider TEXT NOT NULL,
-			llm_model TEXT NOT NULL,
-			fetched_count INTEGER NOT NULL DEFAULT 0,
-			cleaned_count INTEGER NOT NULL DEFAULT 0,
-			imported_count INTEGER NOT NULL DEFAULT 0,
-			merged_count INTEGER NOT NULL DEFAULT 0,
-			skipped_count INTEGER NOT NULL DEFAULT 0,
-			failed_count INTEGER NOT NULL DEFAULT 0,
-			has_more_emails INTEGER NOT NULL DEFAULT 0 CHECK (has_more_emails IN (0, 1)),
-			provisional_accounts_created INTEGER NOT NULL DEFAULT 0,
-			error_message TEXT,
-			started_at_utc TEXT NOT NULL CHECK (length(started_at_utc) = 20 AND started_at_utc LIKE '%Z'),
-			finished_at_utc TEXT
-		) STRICT;
-		INSERT INTO sync_runs (id, status, phase, llm_provider, llm_model, imported_count, started_at_utc, finished_at_utc)
-		VALUES ('legacy-run-1', 'completed', 'done', 'gguf', 'hf_Qwen.gguf', 3, '2026-11-22T01:00:00Z', '2026-11-22T01:01:00Z');
-	`
-	if err := rawDB.Exec(legacySQL).Error; err != nil {
-		t.Fatalf("seed legacy schema: %v", err)
+	baselineSQL, err := migrationsFS.ReadFile("migrations/000001_baseline.up.sql")
+	if err != nil {
+		t.Fatalf("read baseline sql: %v", err)
+	}
+	if err := rawDB.Exec(string(baselineSQL)).Error; err != nil {
+		t.Fatalf("seed baseline schema: %v", err)
+	}
+	if err := rawDB.Exec(`
+		INSERT INTO app_settings (id, country_code, timezone, currency, llm_provider, llm_base_url, llm_timeout_ms, sync_batch_limit)
+		VALUES (1, 'ID', 'Asia/Jakarta', 'IDR', 'openai_compatible', ?, 45000, 25)`, DefaultLlmBaseURL).Error; err != nil {
+		t.Fatalf("seed app_settings: %v", err)
 	}
 	if sqlDB, err := rawDB.DB(); err == nil {
 		_ = sqlDB.Close()
@@ -107,30 +102,19 @@ func TestOpenDatabase_MigratesLegacyGgufAppSettingsAndSyncRuns(t *testing.T) {
 	if s.CountryCode == nil || *s.CountryCode != "ID" || s.Timezone == nil || *s.Timezone != "Asia/Jakarta" || s.Currency == nil || *s.Currency != "IDR" {
 		t.Fatalf("expected locale preserved, got %+v", s)
 	}
-	if s.LlmProvider != "openai_compatible" || s.LlmBaseURL != DefaultLlmBaseURL || s.LlmModel != nil {
-		t.Fatalf("expected llm settings migrated cleanly, got %+v", s)
-	}
 	if s.LlmTimeoutMs != 45000 || s.SyncBatchLimit != 25 {
 		t.Fatalf("expected timeout=45000 and batch=25 preserved, got timeout=%d batch=%d", s.LlmTimeoutMs, s.SyncBatchLimit)
 	}
 
-	var legacyRun SyncRun
-	if err := migrated.First(&legacyRun, "id = ?", "legacy-run-1").Error; err != nil {
-		t.Fatalf("expected legacy sync_run preserved: %v", err)
+	var mig struct {
+		Version int  `gorm:"column:version"`
+		Dirty   bool `gorm:"column:dirty"`
 	}
-	if legacyRun.ImportedCount != 3 {
-		t.Fatalf("expected legacy imported_count=3, got %d", legacyRun.ImportedCount)
+	if err := migrated.Raw(`SELECT version, dirty FROM schema_migrations`).Scan(&mig).Error; err != nil {
+		t.Fatalf("read schema_migrations: %v", err)
 	}
-
-	if err := migrated.Create(&SyncRun{
-		ID:           "new-syncing-run",
-		Status:       "running",
-		Phase:        "syncing",
-		LlmProvider:  "openai_compatible",
-		LlmModel:     "llama-3",
-		StartedAtUtc: "2026-11-23T00:05:00Z",
-	}).Error; err != nil {
-		t.Fatalf("expected migrated sync_runs to accept phase='syncing': %v", err)
+	if mig.Version != 2 || mig.Dirty {
+		t.Fatalf("expected version=2 dirty=false, got version=%d dirty=%v", mig.Version, mig.Dirty)
 	}
 
 	if sqlDB, err := migrated.DB(); err == nil {
@@ -144,5 +128,33 @@ func TestOpenDatabase_MigratesLegacyGgufAppSettingsAndSyncRuns(t *testing.T) {
 	}
 	if sqlDB, err := reopened.DB(); err == nil {
 		_ = sqlDB.Close()
+	}
+}
+
+func TestOpenDatabase_ConcurrentStartupMigrationsSerializeCleanly(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "concurrent.db")
+
+	const workers = 6
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			gdb, err := OpenDatabase(dbPath, false)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if sqlDB, err := gdb.DB(); err == nil {
+				_ = sqlDB.Close()
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Fatalf("concurrent OpenDatabase failed: %v", err)
 	}
 }

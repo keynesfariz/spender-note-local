@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"sort"
 	"strings"
 
 	"gorm.io/gorm"
@@ -120,64 +121,87 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 		return nil, err
 	}
 
-	type totalsRow struct {
-		LocalTotal   int64 `gorm:"column:local_total"`
-		LocalCount   int64 `gorm:"column:local_count"`
-		ForeignCount int64 `gorm:"column:foreign_count"`
+	type summaryTxRow struct {
+		AmountMinor int64   `gorm:"column:amount_minor"`
+		Currency    string  `gorm:"column:currency"`
+		Category    string  `gorm:"column:category"`
+		Merchant    string  `gorm:"column:merchant"`
+		AccountID   *string `gorm:"column:account_id"`
+		AccountName *string `gorm:"column:account_name"`
 	}
-	var totals totalsRow
+	var monthRows []summaryTxRow
 	if err := gdb.Raw(`
-		SELECT
-			COALESCE(SUM(CASE WHEN currency = ? THEN amount_minor ELSE 0 END), 0) AS local_total,
-			COALESCE(SUM(CASE WHEN currency = ? THEN 1 ELSE 0 END), 0) AS local_count,
-			COALESCE(SUM(CASE WHEN currency != ? THEN 1 ELSE 0 END), 0) AS foreign_count
-		FROM transactions
-		WHERE occurred_at_utc >= ? AND occurred_at_utc < ?`,
-		currency, currency, currency, startUtc, endUtc,
-	).Scan(&totals).Error; err != nil {
-		return nil, err
-	}
-
-	byCategory := []SpendingGroupRow{}
-	if err := gdb.Raw(`
-		SELECT category AS key, category AS label, SUM(amount_minor) AS total_minor, COUNT(*) AS count
-		FROM transactions
-		WHERE currency = ? AND occurred_at_utc >= ? AND occurred_at_utc < ?
-		GROUP BY category
-		ORDER BY total_minor DESC, label ASC`,
-		currency, startUtc, endUtc,
-	).Scan(&byCategory).Error; err != nil {
-		return nil, err
-	}
-
-	byMerchant := []SpendingGroupRow{}
-	if err := gdb.Raw(`
-		SELECT LOWER(TRIM(merchant)) AS key, MIN(merchant) AS label, SUM(amount_minor) AS total_minor, COUNT(*) AS count
-		FROM transactions
-		WHERE currency = ? AND occurred_at_utc >= ? AND occurred_at_utc < ?
-		GROUP BY LOWER(TRIM(merchant))
-		ORDER BY total_minor DESC, label ASC
-		LIMIT 10`,
-		currency, startUtc, endUtc,
-	).Scan(&byMerchant).Error; err != nil {
-		return nil, err
-	}
-
-	byAccount := []SpendingGroupRow{}
-	if err := gdb.Raw(`
-		SELECT
-			COALESCE(t.account_id, 'unassigned') AS key,
-			COALESCE(a.name, 'Unassigned') AS label,
-			SUM(t.amount_minor) AS total_minor,
-			COUNT(*) AS count
+		SELECT t.amount_minor, t.currency, t.category, t.merchant, t.account_id, a.name AS account_name
 		FROM transactions t
 		LEFT JOIN accounts a ON a.id = t.account_id
-		WHERE t.currency = ? AND t.occurred_at_utc >= ? AND t.occurred_at_utc < ?
-		GROUP BY COALESCE(t.account_id, 'unassigned'), COALESCE(a.name, 'Unassigned')
-		ORDER BY total_minor DESC, label ASC`,
-		currency, startUtc, endUtc,
-	).Scan(&byAccount).Error; err != nil {
+		WHERE t.occurred_at_utc >= ? AND t.occurred_at_utc < ?`,
+		startUtc, endUtc,
+	).Scan(&monthRows).Error; err != nil {
 		return nil, err
+	}
+
+	var localTotal, localCount, foreignCount int64
+	catMap := map[string]*SpendingGroupRow{}
+	merchMap := map[string]*SpendingGroupRow{}
+	acctMap := map[string]*SpendingGroupRow{}
+
+	for _, r := range monthRows {
+		if r.Currency != currency {
+			foreignCount++
+			continue
+		}
+		localTotal += r.AmountMinor
+		localCount++
+
+		if g, ok := catMap[r.Category]; ok {
+			g.TotalMinor += r.AmountMinor
+			g.Count++
+		} else {
+			catMap[r.Category] = &SpendingGroupRow{Key: r.Category, Label: r.Category, TotalMinor: r.AmountMinor, Count: 1}
+		}
+
+		mKey := strings.ToLower(strings.TrimSpace(r.Merchant))
+		if g, ok := merchMap[mKey]; ok {
+			g.TotalMinor += r.AmountMinor
+			g.Count++
+			if r.Merchant < g.Label {
+				g.Label = r.Merchant
+			}
+		} else {
+			merchMap[mKey] = &SpendingGroupRow{Key: mKey, Label: r.Merchant, TotalMinor: r.AmountMinor, Count: 1}
+		}
+
+		aKey := "unassigned"
+		if r.AccountID != nil && *r.AccountID != "" {
+			aKey = *r.AccountID
+		}
+		aLabel := "Unassigned"
+		if r.AccountName != nil && *r.AccountName != "" {
+			aLabel = *r.AccountName
+		}
+		if g, ok := acctMap[aKey]; ok {
+			g.TotalMinor += r.AmountMinor
+			g.Count++
+		} else {
+			acctMap[aKey] = &SpendingGroupRow{Key: aKey, Label: aLabel, TotalMinor: r.AmountMinor, Count: 1}
+		}
+	}
+
+	sortGroups := func(m map[string]*SpendingGroupRow, limit int) []SpendingGroupRow {
+		res := make([]SpendingGroupRow, 0, len(m))
+		for _, g := range m {
+			res = append(res, *g)
+		}
+		sort.Slice(res, func(i, j int) bool {
+			if res[i].TotalMinor != res[j].TotalMinor {
+				return res[i].TotalMinor > res[j].TotalMinor
+			}
+			return res[i].Label < res[j].Label
+		})
+		if limit > 0 && len(res) > limit {
+			res = res[:limit]
+		}
+		return res
 	}
 
 	return &MonthlySpendingSummary{
@@ -187,12 +211,12 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 		Currency:             &currency,
 		StartUtc:             &startUtc,
 		EndUtc:               &endUtc,
-		TotalSpentMinor:      totals.LocalTotal,
-		TransactionCount:     totals.LocalCount + totals.ForeignCount,
-		ForeignCurrencyCount: totals.ForeignCount,
-		ByCategory:           byCategory,
-		ByMerchant:           byMerchant,
-		ByAccount:            byAccount,
+		TotalSpentMinor:      localTotal,
+		TransactionCount:     localCount + foreignCount,
+		ForeignCurrencyCount: foreignCount,
+		ByCategory:           sortGroups(catMap, 0),
+		ByMerchant:           sortGroups(merchMap, 10),
+		ByAccount:            sortGroups(acctMap, 0),
 	}, nil
 }
 
@@ -311,28 +335,28 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 		return nil, err
 	}
 
-	var totalCount int64
-	if err := gdb.Raw(`SELECT COUNT(*) FROM transactions t `+whereClause, args...).Scan(&totalCount).Error; err != nil {
-		return nil, err
+	totalCount := rangeStats.TotalInRange
+	if whereClause != rangeWhere {
+		if err := gdb.Raw(`SELECT COUNT(*) FROM transactions t `+whereClause, args...).Scan(&totalCount).Error; err != nil {
+			return nil, err
+		}
 	}
 
 	type rawTxRow struct {
-		ID               string  `gorm:"column:id"`
-		SourceType       string  `gorm:"column:source_type"`
-		AccountID        *string `gorm:"column:account_id"`
-		AccountName      *string `gorm:"column:account_name"`
-		PaymentMethodRaw *string `gorm:"column:payment_method_raw"`
-		AmountMinor      int64   `gorm:"column:amount_minor"`
-		Currency         string  `gorm:"column:currency"`
-		OccurredAtUtc    string  `gorm:"column:occurred_at_utc"`
-		Merchant         string  `gorm:"column:merchant"`
-		Category         string  `gorm:"column:category"`
-		ManualOverride   int     `gorm:"column:manual_override"`
-		Reviewed         int     `gorm:"column:reviewed"`
-		Note             *string `gorm:"column:note"`
-		CreatedAtUtc     string  `gorm:"column:created_at_utc"`
-		UpdatedAtUtc     string  `gorm:"column:updated_at_utc"`
-		RolesCSV         *string `gorm:"column:roles_csv"`
+		ID             string  `gorm:"column:id"`
+		SourceType     string  `gorm:"column:source_type"`
+		AccountID      *string `gorm:"column:account_id"`
+		AccountName    *string `gorm:"column:account_name"`
+		AmountMinor    int64   `gorm:"column:amount_minor"`
+		Currency       string  `gorm:"column:currency"`
+		OccurredAtUtc  string  `gorm:"column:occurred_at_utc"`
+		Merchant       string  `gorm:"column:merchant"`
+		Category       string  `gorm:"column:category"`
+		ManualOverride int     `gorm:"column:manual_override"`
+		Reviewed       int     `gorm:"column:reviewed"`
+		Note           *string `gorm:"column:note"`
+		CreatedAtUtc   string  `gorm:"column:created_at_utc"`
+		UpdatedAtUtc   string  `gorm:"column:updated_at_utc"`
 	}
 
 	offset := (page - 1) * pageSize
@@ -342,9 +366,7 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 	query := `
 		SELECT
 			t.*,
-			a.name AS account_name,
-			` + paymentMethodSubquery + ` AS payment_method_raw,
-			(SELECT GROUP_CONCAT(ts.role) FROM transaction_sources ts WHERE ts.transaction_id = t.id) AS roles_csv
+			a.name AS account_name
 		FROM transactions t
 		LEFT JOIN accounts a ON a.id = t.account_id
 		` + whereClause + `
@@ -355,18 +377,55 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 		return nil, err
 	}
 
+	rolesByTx := map[string][]string{}
+	pmByTx := map[string]*string{}
+	pmIsReceiptByTx := map[string]bool{}
+	if len(rows) > 0 {
+		txIDs := make([]string, len(rows))
+		for i, r := range rows {
+			txIDs[i] = r.ID
+		}
+		type pageSourceRow struct {
+			TransactionID    string  `gorm:"column:transaction_id"`
+			Role             string  `gorm:"column:role"`
+			PaymentMethodRaw *string `gorm:"column:payment_method_raw"`
+		}
+		var srcRows []pageSourceRow
+		if err := gdb.Raw(`
+			SELECT ts.transaction_id, ts.role, ee.payment_method_raw
+			FROM transaction_sources ts
+			LEFT JOIN email_extractions ee ON ee.email_id = ts.email_id
+			WHERE ts.transaction_id IN ?
+			ORDER BY ts.rowid ASC`, txIDs).Scan(&srcRows).Error; err != nil {
+			return nil, err
+		}
+		for _, s := range srcRows {
+			rolesByTx[s.TransactionID] = append(rolesByTx[s.TransactionID], s.Role)
+			if s.PaymentMethodRaw != nil {
+				if s.Role == "receipt" && !pmIsReceiptByTx[s.TransactionID] {
+					v := *s.PaymentMethodRaw
+					pmByTx[s.TransactionID] = &v
+					pmIsReceiptByTx[s.TransactionID] = true
+				} else if _, exists := pmByTx[s.TransactionID]; !exists {
+					v := *s.PaymentMethodRaw
+					pmByTx[s.TransactionID] = &v
+				}
+			}
+		}
+	}
+
 	out := make([]TransactionListItem, 0, len(rows))
 	for _, r := range rows {
-		roles := []string{}
-		if r.RolesCSV != nil && *r.RolesCSV != "" {
-			roles = strings.Split(*r.RolesCSV, ",")
+		roles := rolesByTx[r.ID]
+		if roles == nil {
+			roles = []string{}
 		}
 		out = append(out, TransactionListItem{
 			ID:                r.ID,
 			SourceType:        r.SourceType,
 			AccountID:         r.AccountID,
 			AccountName:       r.AccountName,
-			PaymentMethodRaw:  r.PaymentMethodRaw,
+			PaymentMethodRaw:  pmByTx[r.ID],
 			AmountMinor:       r.AmountMinor,
 			Currency:          r.Currency,
 			OccurredAtUtc:     r.OccurredAtUtc,

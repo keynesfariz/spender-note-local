@@ -268,6 +268,196 @@ func buildAccountSummary(gdb *gorm.DB, account db.Account, targetCurrency string
 	return buildAccountSummaryAt(gdb, account, targetCurrency, "", identifiers, time.Now().UTC())
 }
 
+func buildAccountSummariesAt(
+	gdb *gorm.DB,
+	accounts []db.Account,
+	identsByAcct map[string][]db.AccountIdentifier,
+	targetCurrency string,
+	targetTimezone string,
+	now time.Time,
+) ([]AccountSummary, error) {
+	nowUtc := ToUtcIsoSeconds(now)
+
+	// 1. Latest reconciliation per account (<= nowUtc) in a single query.
+	var latestRecRows []db.AccountReconciliation
+	if err := gdb.Raw(`
+		SELECT id, account_id, currency, computed_balance_minor, actual_balance_minor, adjustment_minor, note, recorded_at_utc
+		FROM (
+			SELECT *,
+				ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY recorded_at_utc DESC, rowid DESC) AS rn
+			FROM account_reconciliations
+			WHERE recorded_at_utc <= ?
+		)
+		WHERE rn = 1`, nowUtc).Scan(&latestRecRows).Error; err != nil {
+		return nil, err
+	}
+	latestRecByAcct := make(map[string]*db.AccountReconciliation, len(latestRecRows))
+	for i := range latestRecRows {
+		rec := latestRecRows[i]
+		latestRecByAcct[rec.AccountID] = &rec
+	}
+
+	// 2. Single scan of account-linked transactions to compute balances, future counts,
+	//    type-lock status, and credit card billing-cycle spend for all accounts at once.
+	type acctTxRow struct {
+		AccountID     string `gorm:"column:account_id"`
+		Currency      string `gorm:"column:currency"`
+		AmountMinor   int64  `gorm:"column:amount_minor"`
+		OccurredAtUtc string `gorm:"column:occurred_at_utc"`
+	}
+	var allTx []acctTxRow
+	if err := gdb.Raw(`
+		SELECT account_id, currency, amount_minor, occurred_at_utc
+		FROM transactions
+		WHERE account_id IS NOT NULL`).Scan(&allTx).Error; err != nil {
+		return nil, err
+	}
+
+	type acctState struct {
+		account           db.Account
+		settingsCurrency  string
+		latestRec         *db.AccountReconciliation
+		anchorBalance     *int64
+		anchorTime        string
+		strictAfterAnchor bool
+		localTotal        int64
+		foreignCnt        int64
+		futureCnt         int64
+		hasTx             bool
+		cycleBounds       *CreditCardCycleBounds
+		curCycleSpent     int64
+		curCycleCount     int64
+		lastCycleSpent    int64
+		lastCycleCount    int64
+	}
+
+	states := make([]*acctState, len(accounts))
+	stateByID := make(map[string]*acctState, len(accounts))
+	for i, acct := range accounts {
+		settingsCurrency := targetCurrency
+		if settingsCurrency == "" {
+			settingsCurrency = acct.Currency
+		}
+		st := &acctState{
+			account:          acct,
+			settingsCurrency: settingsCurrency,
+			latestRec:        latestRecByAcct[acct.ID],
+		}
+		if st.latestRec != nil {
+			b := st.latestRec.ActualBalanceMinor
+			st.anchorBalance = &b
+			st.anchorTime = st.latestRec.RecordedAtUtc
+			st.strictAfterAnchor = true
+		} else if acct.InitialBalanceMinor != nil && acct.InitialBalanceAsOfUtc <= nowUtc {
+			st.anchorBalance = acct.InitialBalanceMinor
+			st.anchorTime = acct.InitialBalanceAsOfUtc
+		}
+		if acct.Type == "credit_card" && acct.StatementDay != nil {
+			if bounds, err := ComputeCreditCardCycleBounds(*acct.StatementDay, targetTimezone, now); err == nil {
+				st.cycleBounds = &bounds
+			}
+		}
+		states[i] = st
+		stateByID[acct.ID] = st
+	}
+
+	for _, tx := range allTx {
+		st, ok := stateByID[tx.AccountID]
+		if !ok {
+			continue
+		}
+		st.hasTx = true
+		if tx.OccurredAtUtc > nowUtc {
+			st.futureCnt++
+		} else {
+			inAnchorWindow := false
+			if st.anchorBalance == nil {
+				inAnchorWindow = true
+			} else if st.strictAfterAnchor {
+				inAnchorWindow = tx.OccurredAtUtc > st.anchorTime
+			} else {
+				inAnchorWindow = tx.OccurredAtUtc >= st.anchorTime
+			}
+			if inAnchorWindow {
+				if tx.Currency == st.settingsCurrency {
+					st.localTotal += tx.AmountMinor
+				} else {
+					st.foreignCnt++
+				}
+			}
+		}
+
+		if st.cycleBounds != nil && tx.Currency == st.settingsCurrency {
+			cb := st.cycleBounds
+			if tx.OccurredAtUtc >= cb.CurrentCycle.StartUtc && tx.OccurredAtUtc < cb.CurrentCycle.EndExclusiveUtc && tx.OccurredAtUtc <= nowUtc {
+				st.curCycleSpent += tx.AmountMinor
+				st.curCycleCount++
+			}
+			if tx.OccurredAtUtc >= cb.LastCycle.StartUtc && tx.OccurredAtUtc < cb.LastCycle.EndExclusiveUtc {
+				st.lastCycleSpent += tx.AmountMinor
+				st.lastCycleCount++
+			}
+		}
+	}
+
+	out := make([]AccountSummary, 0, len(accounts))
+	for _, st := range states {
+		idents := identsByAcct[st.account.ID]
+		if idents == nil {
+			idents = []db.AccountIdentifier{}
+		}
+
+		var netFlow int64
+		if st.localTotal != 0 {
+			if st.account.Type == "credit_card" {
+				netFlow = st.localTotal
+			} else {
+				netFlow = -st.localTotal
+			}
+		}
+		var computed *int64
+		if st.anchorBalance != nil {
+			v := *st.anchorBalance + netFlow
+			computed = &v
+		}
+
+		var billingCycle *CreditCardBillingCycleSummary
+		if st.cycleBounds != nil && st.account.StatementDay != nil {
+			billingCycle = &CreditCardBillingCycleSummary{
+				StatementDay:      *st.account.StatementDay,
+				LastStatementDate: st.cycleBounds.LastStatementDate,
+				CurrentCycle: BillingCycleSpendSummary{
+					StartDate:        st.cycleBounds.CurrentCycle.StartDate,
+					EndDate:          st.cycleBounds.CurrentCycle.EndDate,
+					SpentMinor:       st.curCycleSpent,
+					TransactionCount: st.curCycleCount,
+				},
+				LastCycle: BillingCycleSpendSummary{
+					StartDate:        st.cycleBounds.LastCycle.StartDate,
+					EndDate:          st.cycleBounds.LastCycle.EndDate,
+					SpentMinor:       st.lastCycleSpent,
+					TransactionCount: st.lastCycleCount,
+				},
+			}
+		}
+
+		typeLocked := st.latestRec != nil || (st.account.Status != "provisional" && st.hasTx)
+
+		out = append(out, AccountSummary{
+			Account:                st.account,
+			Identifiers:            idents,
+			ComputedBalanceMinor:   computed,
+			NetFlowMinor:           netFlow,
+			UncountedForeignCount:  st.foreignCnt,
+			FutureTransactionCount: st.futureCnt,
+			LatestReconciliation:   st.latestRec,
+			BillingCycle:           billingCycle,
+			TypeLocked:             typeLocked,
+		})
+	}
+	return out, nil
+}
+
 type ReconcileAccountInput struct {
 	AccountID          string  `json:"account_id"`
 	ActualBalanceMinor int64   `json:"actual_balance_minor"`

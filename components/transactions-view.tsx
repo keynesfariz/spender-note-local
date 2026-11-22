@@ -78,11 +78,11 @@ export function TransactionsView() {
 
   // Clamp page if items shrink after filtering, merging, or reviewing.
   useEffect(() => {
-    if (!txQuery.isLoading && page > totalPages) {
+    if (txQuery.isSuccess && page > totalPages) {
       setPage(totalPages);
       setSelectedIds([]);
     }
-  }, [txQuery.isLoading, page, totalPages]);
+  }, [txQuery.isSuccess, page, totalPages]);
 
   // Prune stale selected IDs if background sync shifts page contents.
   useEffect(() => {
@@ -265,7 +265,9 @@ export function TransactionsView() {
                     size="sm"
                     onClick={() => handleShiftRange(-1)}
                   >
-                    Previous day
+                    {activeRange.from === activeRange.to
+                      ? 'Previous day'
+                      : 'Previous range'}
                   </Button>
                   <Button
                     type="button"
@@ -273,7 +275,9 @@ export function TransactionsView() {
                     size="sm"
                     onClick={() => handleShiftRange(1)}
                   >
-                    Next day
+                    {activeRange.from === activeRange.to
+                      ? 'Next day'
+                      : 'Next range'}
                   </Button>
                 </div>
               </AlertDescription>

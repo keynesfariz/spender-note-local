@@ -331,7 +331,7 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 		FROM transactions t
 		LEFT JOIN accounts a ON a.id = t.account_id
 		` + whereClause + `
-		ORDER BY t.occurred_at_utc DESC, t.created_at_utc DESC
+		ORDER BY t.occurred_at_utc DESC, t.created_at_utc DESC, t.id DESC
 		LIMIT ? OFFSET ?`
 
 	if err := gdb.Raw(query, pageArgs...).Scan(&rows).Error; err != nil {

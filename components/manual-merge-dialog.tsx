@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { DatePicker } from '@/components/date-picker';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -86,8 +86,20 @@ export function ManualMergeDialog({
   );
   const sharedCurrency = transactions[0]?.currency ?? 'USD';
 
+  const lastInitKeyRef = useRef<string | null>(null);
+  const selectionKey =
+    mode && transactions.length >= 2
+      ? `${mode}:${transactions.map((tx) => tx.id).sort().join(',')}`
+      : null;
+
   useEffect(() => {
-    if (!mode || transactions.length < 2) return;
+    if (!selectionKey) {
+      lastInitKeyRef.current = null;
+      return;
+    }
+    if (lastInitKeyRef.current === selectionKey) return;
+    lastInitKeyRef.current = selectionKey;
+
     setFormError(null);
     setKeepId('');
 
@@ -107,7 +119,7 @@ export function ManualMergeDialog({
         .join(' / ');
       setNote(combinedNotes);
     }
-  }, [mode, transactions, sortedByOccurred, timezone]);
+  }, [selectionKey, sortedByOccurred, timezone]);
 
   const invalidateAll = () => {
     void queryClient.invalidateQueries({ queryKey: ['transactions'] });

@@ -53,7 +53,7 @@ export function DatePicker({
               disabled={disabled}
               aria-label={ariaLabel}
               className={cn(
-                'w-full justify-start text-left font-normal',
+                'min-w-0 flex-1 justify-start text-left font-normal',
                 !value && 'text-muted-foreground',
               )}
             />
@@ -90,6 +90,7 @@ export function DatePicker({
           variant="ghost"
           size="icon-sm"
           aria-label="Clear date"
+          className="shrink-0"
           onClick={() => onChange('')}
         >
           <XIcon className="size-3.5" />
@@ -157,6 +158,8 @@ export function DateRangePicker({
       <PopoverContent className="w-auto p-0" align="start">
         <Calendar
           mode="range"
+          resetOnSelect
+          required
           numberOfMonths={1}
           selected={open ? draft : committedRange}
           defaultMonth={committedFrom}
@@ -165,7 +168,7 @@ export function DateRangePicker({
               setDraft(undefined);
               return;
             }
-            if (nextRange.to && nextRange.to.getTime() !== nextRange.from.getTime()) {
+            if (nextRange.to) {
               onChange({
                 from: dateToIsoDateString(nextRange.from),
                 to: dateToIsoDateString(nextRange.to),

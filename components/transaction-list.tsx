@@ -331,7 +331,7 @@ export function TransactionList({
                       variant="ghost"
                       aria-label={`Inspect ${tx.merchant} (${formattedAmount})`}
                       onClick={() => onSelectTransaction(tx.id)}
-                      className="flex h-auto min-w-0 flex-1 items-center justify-between gap-4 px-2 py-2.5 text-left font-normal"
+                      className="flex h-auto min-w-0 flex-1 items-center justify-between gap-4 px-2 py-2.5 text-left font-normal whitespace-normal"
                     >
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
@@ -357,7 +357,7 @@ export function TransactionList({
                             </Badge>
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="truncate text-xs text-muted-foreground">
                           {tx.account_name ??
                             (tx.payment_method_raw
                               ? `Unassigned (${tx.payment_method_raw})`

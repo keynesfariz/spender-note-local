@@ -249,4 +249,66 @@ func TestManualReviewTransitionsAndDateRangePagination(t *testing.T) {
 	if afterReview.TotalCount != 0 || afterReview.TotalInRangeCount != 4 || afterReview.UnreviewedInRangeCount != 0 {
 		t.Fatalf("expected totalCount=0 totalInRange=4 unreviewedInRange=0, got %+v", afterReview)
 	}
+
+	// Out-of-range local day boundaries (2026-11-20 23:59:59 and 2026-11-22 00:00:00 Asia/Jakarta) are excluded.
+	_, _ = CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor: 1000, OccurredAtUtc: "2026-11-20T16:59:59Z", Merchant: "Prev Day", AccountID: &acctA,
+	})
+	_, _ = CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor: 1000, OccurredAtUtc: "2026-11-21T17:00:00Z", Merchant: "Next Day", AccountID: &acctA,
+	})
+	page2, err := ListTransactions(gdb, ListTransactionsParams{
+		StartDate: "2026-11-21",
+		EndDate:   "2026-11-21",
+		Page:      2,
+		PageSize:  2,
+	})
+	if err != nil {
+		t.Fatalf("ListTransactions page 2: %v", err)
+	}
+	if page2.TotalCount != 4 || len(page2.Items) != 2 {
+		t.Fatalf("expected page 2 to return 2 of 4 in-range items (excluding adjacent days), got total=%d len=%d", page2.TotalCount, len(page2.Items))
+	}
+}
+
+func TestMergeEligibilityEdgeCases_CurrencyNullAccountAndManualWithGmail(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	acctA := seedTestAccount(t, gdb, "acct-a", "BCA", "IDR")
+	seedTestEmail(t, gdb, "e-idr", 1795251000000, "2026-11-21T08:50:00Z")
+	seedTestEmail(t, gdb, "e-usd", 1795251005000, "2026-11-21T08:50:05Z")
+	seedTestEmail(t, gdb, "e-nil", 1795251010000, "2026-11-21T08:50:10Z")
+
+	txIDR, _ := SaveExtractedTransaction(gdb, ExtractedTransactionInput{
+		EmailID: "e-idr", EmailKind: "card_charge", AmountMinor: 25000, Currency: "IDR",
+		OccurredAtUtc: "2026-11-21T08:50:00Z", MerchantRaw: "Store", Category: "Food", ResolvedAccountID: &acctA,
+	})
+	txUSD, _ := SaveExtractedTransaction(gdb, ExtractedTransactionInput{
+		EmailID: "e-usd", EmailKind: "card_charge", AmountMinor: 25000, Currency: "USD",
+		OccurredAtUtc: "2026-11-21T08:50:05Z", MerchantRaw: "Store", Category: "Food", ResolvedAccountID: &acctA,
+	})
+	txNilAcct, _ := SaveExtractedTransaction(gdb, ExtractedTransactionInput{
+		EmailID: "e-nil", EmailKind: "receipt", AmountMinor: 25000, Currency: "IDR",
+		OccurredAtUtc: "2026-11-21T08:50:10Z", MerchantRaw: "Store", Category: "Food",
+	})
+
+	if _, err := DuplicateMergeTransactions(gdb, txIDR, txUSD); err == nil {
+		t.Fatalf("expected mismatched currency (IDR vs USD) to be rejected")
+	}
+	if _, err := DuplicateMergeTransactions(gdb, txIDR, txNilAcct); err == nil {
+		t.Fatalf("expected NULL account vs concrete account to be rejected")
+	}
+
+	manualSame, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor: 25000, OccurredAtUtc: "2026-11-21T08:50:00Z", Merchant: "Manual Store", AccountID: &acctA,
+	})
+	if err != nil {
+		t.Fatalf("CreateManualTransaction: %v", err)
+	}
+	merged, err := DuplicateMergeTransactions(gdb, manualSame.ID, txIDR)
+	if err != nil {
+		t.Fatalf("expected manual + gmail duplicate merge to succeed: %v", err)
+	}
+	if merged.SourceCount != 1 {
+		t.Fatalf("expected 1 linked email preserved on manual+gmail merge, got %d", merged.SourceCount)
+	}
 }

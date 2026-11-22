@@ -18,6 +18,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   accountsQuery,
+  deleteTransactionsApi,
   markTransactionsReviewedApi,
   settingsQuery,
   transactionsQuery,
@@ -51,6 +52,7 @@ export function TransactionsView() {
   );
   const [mergeMode, setMergeMode] = useState<ManualMergeMode | null>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
 
   const todayStr = useMemo(() => getTodayDateString(timezone), [timezone]);
@@ -108,10 +110,24 @@ export function TransactionsView() {
     },
   });
 
+  const deleteTransactionsMutation = useMutation({
+    mutationFn: deleteTransactionsApi,
+    onSuccess: () => {
+      setSelectedIds([]);
+      void queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      void queryClient.invalidateQueries({ queryKey: ['spending'] });
+      void queryClient.invalidateQueries({ queryKey: ['accounts'] });
+    },
+    onSettled: () => {
+      setDeleteDialogOpen(false);
+    },
+  });
+
   const updateRange = (next: { from: string; to: string }) => {
     setDateRange(next);
     setPage(1);
     setSelectedIds([]);
+    deleteTransactionsMutation.reset();
   };
 
   const handleShiftRange = (direction: -1 | 1) => {
@@ -122,32 +138,38 @@ export function TransactionsView() {
     setSearch(value);
     setPage(1);
     setSelectedIds([]);
+    deleteTransactionsMutation.reset();
   };
 
   const handleCategoryChange = (value: string) => {
     setCategory(value);
     setPage(1);
     setSelectedIds([]);
+    deleteTransactionsMutation.reset();
   };
 
   const handleAccountIdChange = (value: string) => {
     setAccountId(value);
     setPage(1);
     setSelectedIds([]);
+    deleteTransactionsMutation.reset();
   };
 
   const handleUnreviewedOnlyChange = (value: boolean) => {
     setUnreviewedOnly(value);
     setPage(1);
     setSelectedIds([]);
+    deleteTransactionsMutation.reset();
   };
 
   const handlePageChange = (nextPage: number) => {
     setPage(nextPage);
     setSelectedIds([]);
+    deleteTransactionsMutation.reset();
   };
 
   const handleToggleRow = (id: string, checked: boolean) => {
+    deleteTransactionsMutation.reset();
     setSelectedIds((prev) => {
       if (checked) {
         return prev.includes(id) ? prev : [...prev, id];
@@ -157,6 +179,7 @@ export function TransactionsView() {
   };
 
   const handleToggleSelectAllPage = (checked: boolean) => {
+    deleteTransactionsMutation.reset();
     if (checked) {
       setSelectedIds(items.map((tx) => tx.id));
     } else {
@@ -336,6 +359,20 @@ export function TransactionsView() {
             onMarkReviewed={(ids) => markReviewedMutation.mutate(ids)}
             isMarkingReviewed={markReviewedMutation.isPending}
             reviewErrorMessage={reviewError}
+            onDeleteSelected={(ids) => deleteTransactionsMutation.mutate(ids)}
+            deleteDialogOpen={deleteDialogOpen}
+            onDeleteDialogOpenChange={(open) => {
+              if (!open && deleteTransactionsMutation.isPending) return;
+              setDeleteDialogOpen(open);
+            }}
+            isDeleting={deleteTransactionsMutation.isPending}
+            deleteErrorMessage={
+              deleteTransactionsMutation.isError
+                ? deleteTransactionsMutation.error instanceof Error
+                  ? deleteTransactionsMutation.error.message
+                  : 'Failed to delete transactions.'
+                : null
+            }
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
             totalCount={totalCount}

@@ -312,3 +312,142 @@ func TestMergeEligibilityEdgeCases_CurrencyNullAccountAndManualWithGmail(t *test
 		t.Fatalf("expected 1 linked email preserved on manual+gmail merge, got %d", merged.SourceCount)
 	}
 }
+
+func TestDeleteTransactions_DeletesMixedBatchDismissesEmailsAndLeavesOthersIntact(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	acctA := seedTestAccount(t, gdb, "acct-a", "BCA", "IDR")
+	acctB := seedTestAccount(t, gdb, "acct-b", "Visa", "IDR")
+	seedTestEmail(t, gdb, "e1", 1795251000000, "2026-11-21T08:50:00Z")
+	seedTestEmail(t, gdb, "e2", 1795251005000, "2026-11-21T08:50:05Z")
+	seedTestEmail(t, gdb, "e-keep", 1795251010000, "2026-11-21T08:50:10Z")
+
+	tx1, err := SaveExtractedTransaction(gdb, ExtractedTransactionInput{
+		EmailID: "e1", EmailKind: "card_charge", AmountMinor: 25000, Currency: "IDR",
+		OccurredAtUtc: "2026-11-21T08:50:00Z", MerchantRaw: "Coffee", Category: "Food", ResolvedAccountID: &acctA,
+	})
+	if err != nil {
+		t.Fatalf("save tx1: %v", err)
+	}
+	tx2, err := SaveExtractedTransaction(gdb, ExtractedTransactionInput{
+		EmailID: "e2", EmailKind: "receipt", AmountMinor: 1500, Currency: "USD",
+		OccurredAtUtc: "2026-11-21T08:50:05Z", MerchantRaw: "App Store", Category: "Subscriptions", ResolvedAccountID: &acctB,
+	})
+	if err != nil {
+		t.Fatalf("save tx2: %v", err)
+	}
+	txKeep, err := SaveExtractedTransaction(gdb, ExtractedTransactionInput{
+		EmailID: "e-keep", EmailKind: "receipt", AmountMinor: 50000, Currency: "IDR",
+		OccurredAtUtc: "2026-11-21T08:50:10Z", MerchantRaw: "Groceries", Category: "Food", ResolvedAccountID: &acctA,
+	})
+	if err != nil {
+		t.Fatalf("save txKeep: %v", err)
+	}
+	txManual, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor: 10000, OccurredAtUtc: "2026-11-21T08:55:00Z", Merchant: "Cash Snack",
+	})
+	if err != nil {
+		t.Fatalf("create manual tx: %v", err)
+	}
+
+	deleted, err := DeleteTransactions(gdb, []string{tx1, tx2, txManual.ID, " " + tx1 + " "})
+	if err != nil {
+		t.Fatalf("DeleteTransactions: %v", err)
+	}
+	if deleted != 3 {
+		t.Fatalf("expected 3 deleted transactions, got %d", deleted)
+	}
+
+	var remaining []db.Transaction
+	gdb.Find(&remaining)
+	if len(remaining) != 1 || remaining[0].ID != txKeep {
+		t.Fatalf("expected only %s to remain, got %+v", txKeep, remaining)
+	}
+
+	var dismissedEmails []db.RawEmail
+	gdb.Where("id IN ?", []string{"e1", "e2"}).Find(&dismissedEmails)
+	if len(dismissedEmails) != 2 {
+		t.Fatalf("expected 2 emails e1/e2, got %d", len(dismissedEmails))
+	}
+	for _, em := range dismissedEmails {
+		if em.Status != "dismissed" {
+			t.Fatalf("expected email %s status to be 'dismissed', got %q", em.ID, em.Status)
+		}
+	}
+
+	var keptEmail db.RawEmail
+	if err := gdb.Where("id = ?", "e-keep").First(&keptEmail).Error; err != nil {
+		t.Fatalf("load e-keep: %v", err)
+	}
+	if keptEmail.Status != "extracted" {
+		t.Fatalf("expected unselected email e-keep to remain 'extracted', got %q", keptEmail.Status)
+	}
+}
+
+func TestDeleteTransactions_RejectsEmptyAndRollsBackOnMissingID(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	seedTestEmail(t, gdb, "e1", 1795251000000, "2026-11-21T08:50:00Z")
+	tx1, err := SaveExtractedTransaction(gdb, ExtractedTransactionInput{
+		EmailID: "e1", EmailKind: "card_charge", AmountMinor: 25000, Currency: "IDR",
+		OccurredAtUtc: "2026-11-21T08:50:00Z", MerchantRaw: "Coffee", Category: "Food",
+	})
+	if err != nil {
+		t.Fatalf("save tx1: %v", err)
+	}
+
+	if _, err := DeleteTransactions(gdb, nil); err == nil {
+		t.Fatalf("expected error for nil transaction IDs")
+	}
+	if _, err := DeleteTransactions(gdb, []string{"", "   "}); err == nil {
+		t.Fatalf("expected error for blank transaction IDs")
+	}
+	if _, err := DeleteTransactions(gdb, []string{tx1, "non-existent-id"}); err == nil {
+		t.Fatalf("expected error when batch contains a non-existent transaction ID")
+	}
+
+	var count int64
+	gdb.Model(&db.Transaction{}).Where("id = ?", tx1).Count(&count)
+	if count != 1 {
+		t.Fatalf("expected %s to remain after rolled-back batch delete, got count=%d", tx1, count)
+	}
+	var em db.RawEmail
+	if err := gdb.Where("id = ?", "e1").First(&em).Error; err != nil {
+		t.Fatalf("load e1: %v", err)
+	}
+	if em.Status != "extracted" {
+		t.Fatalf("expected e1 status to remain 'extracted' after rollback, got %q", em.Status)
+	}
+}
+
+func TestDeleteTransaction_DeletesSingleAndRejectsMissing(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	seedTestEmail(t, gdb, "e-single", 1795251000000, "2026-11-21T08:50:00Z")
+	txID, err := SaveExtractedTransaction(gdb, ExtractedTransactionInput{
+		EmailID: "e-single", EmailKind: "card_charge", AmountMinor: 15000, Currency: "IDR",
+		OccurredAtUtc: "2026-11-21T08:50:00Z", MerchantRaw: "Bakery", Category: "Food",
+	})
+	if err != nil {
+		t.Fatalf("save tx: %v", err)
+	}
+
+	if err := DeleteTransaction(gdb, "missing-id"); err == nil {
+		t.Fatalf("expected DeleteTransaction to return error for missing ID")
+	}
+
+	if err := DeleteTransaction(gdb, txID); err != nil {
+		t.Fatalf("DeleteTransaction: %v", err)
+	}
+
+	var count int64
+	gdb.Model(&db.Transaction{}).Where("id = ?", txID).Count(&count)
+	if count != 0 {
+		t.Fatalf("expected transaction %s to be deleted, got count=%d", txID, count)
+	}
+
+	var em db.RawEmail
+	if err := gdb.Where("id = ?", "e-single").First(&em).Error; err != nil {
+		t.Fatalf("load e-single: %v", err)
+	}
+	if em.Status != "dismissed" {
+		t.Fatalf("expected e-single status to be 'dismissed', got %q", em.Status)
+	}
+}

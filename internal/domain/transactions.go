@@ -637,19 +637,69 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 	return &item, nil
 }
 
+func normalizeTransactionIDs(rawIDs []string) []string {
+	seen := make(map[string]struct{}, len(rawIDs))
+	ids := make([]string, 0, len(rawIDs))
+	for _, raw := range rawIDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func dismissEmailsAndDeleteTransactions(tx *gorm.DB, ids []string) (int64, error) {
+	emailSubquery := tx.Model(&db.TransactionSource{}).Select("email_id").Where("transaction_id IN ?", ids)
+	if err := tx.Model(&db.RawEmail{}).Where("id IN (?)", emailSubquery).Update("status", "dismissed").Error; err != nil {
+		return 0, err
+	}
+	res := tx.Where("id IN ?", ids).Delete(&db.Transaction{})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
 func DeleteTransaction(gdb *gorm.DB, id string) error {
 	return gdb.Transaction(func(tx *gorm.DB) error {
-		var existing db.Transaction
-		if err := tx.Select("id").Where("id = ?", id).First(&existing).Error; err != nil {
+		deleted, err := dismissEmailsAndDeleteTransactions(tx, []string{id})
+		if err != nil {
+			return err
+		}
+		if deleted == 0 {
 			return errors.New("Transaction not found.")
 		}
-		var emailIDs []string
-		tx.Model(&db.TransactionSource{}).Where("transaction_id = ?", id).Pluck("email_id", &emailIDs)
-		if len(emailIDs) > 0 {
-			tx.Model(&db.RawEmail{}).Where("id IN ?", emailIDs).Update("status", "dismissed")
-		}
-		return tx.Where("id = ?", id).Delete(&db.Transaction{}).Error
+		return nil
 	})
+}
+
+func DeleteTransactions(gdb *gorm.DB, transactionIDs []string) (int64, error) {
+	ids := normalizeTransactionIDs(transactionIDs)
+	if len(ids) == 0 {
+		return 0, errors.New("Select at least one transaction to delete.")
+	}
+
+	var deletedCount int64
+	err := gdb.Transaction(func(tx *gorm.DB) error {
+		deleted, err := dismissEmailsAndDeleteTransactions(tx, ids)
+		if err != nil {
+			return err
+		}
+		if int(deleted) != len(ids) {
+			return errors.New("Cannot delete: one or more selected transactions no longer exist.")
+		}
+		deletedCount = deleted
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return deletedCount, nil
 }
 
 func nullableStringEqual(a, b *string) bool {
@@ -663,18 +713,7 @@ func nullableStringEqual(a, b *string) bool {
 }
 
 func MarkTransactionsReviewed(gdb *gorm.DB, transactionIDs []string) (int64, error) {
-	seen := make(map[string]struct{}, len(transactionIDs))
-	ids := make([]string, 0, len(transactionIDs))
-	for _, raw := range transactionIDs {
-		id := strings.TrimSpace(raw)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; !ok {
-			seen[id] = struct{}{}
-			ids = append(ids, id)
-		}
-	}
+	ids := normalizeTransactionIDs(transactionIDs)
 	if len(ids) == 0 {
 		return 0, errors.New("Select at least one transaction to mark reviewed.")
 	}
@@ -760,18 +799,7 @@ type CombineTransactionsInput struct {
 }
 
 func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*TransactionListItem, error) {
-	seen := make(map[string]struct{}, len(input.TransactionIDs))
-	ids := make([]string, 0, len(input.TransactionIDs))
-	for _, raw := range input.TransactionIDs {
-		id := strings.TrimSpace(raw)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; !ok {
-			seen[id] = struct{}{}
-			ids = append(ids, id)
-		}
-	}
+	ids := normalizeTransactionIDs(input.TransactionIDs)
 	if len(ids) < 2 {
 		return nil, errors.New("Combine transactions requires at least 2 distinct transactions.")
 	}

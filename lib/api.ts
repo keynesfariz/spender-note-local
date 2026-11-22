@@ -455,6 +455,12 @@ export const updateTransactionApi = (input: {
 export const deleteTransactionApi = (id: string) =>
   apiFetch(`/api/transactions/${encodeURIComponent(id)}`, { method: 'DELETE' });
 
+export const deleteTransactionsApi = (transactionIds: string[]) =>
+  apiFetch<{ deletedCount: number }>('/api/transactions/delete', {
+    method: 'POST',
+    body: JSON.stringify({ transactionIds }),
+  });
+
 export const splitTransactionSourceApi = (input: {
   transactionId: string;
   emailId: string;

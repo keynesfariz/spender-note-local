@@ -3,6 +3,17 @@
 import { CheckCircle2Icon } from 'lucide-react';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
@@ -109,6 +120,11 @@ export function TransactionList({
   onMarkReviewed,
   isMarkingReviewed,
   reviewErrorMessage,
+  onDeleteSelected,
+  deleteDialogOpen,
+  onDeleteDialogOpenChange,
+  isDeleting,
+  deleteErrorMessage,
   page,
   pageSize,
   totalCount,
@@ -136,6 +152,11 @@ export function TransactionList({
   onMarkReviewed: (ids: string[]) => void;
   isMarkingReviewed: boolean;
   reviewErrorMessage: string | null;
+  onDeleteSelected: (ids: string[]) => void;
+  deleteDialogOpen: boolean;
+  onDeleteDialogOpenChange: (open: boolean) => void;
+  isDeleting: boolean;
+  deleteErrorMessage: string | null;
   page: number;
   pageSize: number;
   totalCount: number;
@@ -242,7 +263,7 @@ export function TransactionList({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={isMarkingReviewed}
+                disabled={isMarkingReviewed || isDeleting}
                 onClick={() =>
                   onMarkReviewed(selectedTransactions.map((tx) => tx.id))
                 }
@@ -253,7 +274,7 @@ export function TransactionList({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={!eligibility.canDuplicate}
+                disabled={!eligibility.canDuplicate || isDeleting}
                 aria-describedby={
                   !eligibility.canDuplicate ? 'merge-eligibility-reason' : undefined
                 }
@@ -265,7 +286,7 @@ export function TransactionList({
                 type="button"
                 variant="default"
                 size="sm"
-                disabled={!eligibility.canCombine}
+                disabled={!eligibility.canCombine || isDeleting}
                 aria-describedby={
                   !eligibility.canCombine ? 'merge-eligibility-reason' : undefined
                 }
@@ -273,6 +294,55 @@ export function TransactionList({
               >
                 Combine transactions
               </Button>
+              <AlertDialog
+                open={deleteDialogOpen}
+                onOpenChange={onDeleteDialogOpenChange}
+              >
+                <AlertDialogTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      disabled={isDeleting || isMarkingReviewed}
+                    />
+                  }
+                >
+                  {isDeleting ? 'Deleting...' : 'Delete'}
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Delete {selectedTransactions.length}{' '}
+                      {selectedTransactions.length === 1
+                        ? 'transaction'
+                        : 'transactions'}
+                      ?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This permanently deletes the selected{' '}
+                      {selectedTransactions.length === 1
+                        ? 'transaction'
+                        : 'transactions'}{' '}
+                      and marks any linked source emails as dismissed.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={isDeleting}>
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      variant="destructive"
+                      disabled={isDeleting}
+                      onClick={() =>
+                        onDeleteSelected(selectedTransactions.map((tx) => tx.id))
+                      }
+                    >
+                      {isDeleting ? 'Deleting...' : 'Delete forever'}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
               {disabledHint && (
                 <span
                   id="merge-eligibility-reason"
@@ -288,6 +358,11 @@ export function TransactionList({
         {reviewErrorMessage && (
           <Alert variant="destructive">
             <AlertDescription>{reviewErrorMessage}</AlertDescription>
+          </Alert>
+        )}
+        {deleteErrorMessage && (
+          <Alert variant="destructive">
+            <AlertDescription>{deleteErrorMessage}</AlertDescription>
           </Alert>
         )}
       </CardHeader>
@@ -375,7 +450,7 @@ export function TransactionList({
                         variant="outline"
                         size="sm"
                         aria-label={`Mark ${tx.merchant} as reviewed`}
-                        disabled={isMarkingReviewed}
+                        disabled={isMarkingReviewed || isDeleting}
                         onClick={() => onMarkReviewed([tx.id])}
                         className="shrink-0"
                       >

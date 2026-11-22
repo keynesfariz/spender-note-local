@@ -332,7 +332,7 @@ export function buildExtractionPrompt(
     "Classify email_kind as:",
     '- "card_charge": bank/card authorization or charge alert.',
     '- "receipt": merchant purchase receipt or order confirmation.',
-    '- "non_transaction": bank statements, bill payments, shipping updates, OTPs, security alerts, promotional emails, and refunds.',
+    '- "non_transaction": credit card or bank billing statements, e-statements, monthly bill summaries (emails showing Total Billing, Minimum Payment, Statement Balance, or a future Payment Due Date), bill payments, shipping updates, OTPs, security alerts, promotional emails, and refunds. Never classify a billing statement or its due date as a card_charge.',
     "Rules:",
     '- Return amount_decimal as a plain unformatted number string without thousand separators (e.g. "12.50" for "$12.50", or "1250" for "1,250").',
     '- Return currency as a 3-letter ISO 4217 code (e.g. "USD", "EUR", "GBP").',

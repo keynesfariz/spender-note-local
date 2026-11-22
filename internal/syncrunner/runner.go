@@ -538,6 +538,24 @@ func runExtractionPhase(ctx context.Context, gdb *gorm.DB, runID string, cfg *va
 		}
 		email := rows[0]
 
+		if IsBillingStatementEmail(email.Subject, email.CleanedText) {
+			_ = gdb.Transaction(func(tx *gorm.DB) error {
+				tx.Exec(`
+					INSERT OR REPLACE INTO email_extractions (
+						id, email_id, email_kind, extraction_model, raw_llm_json
+					) VALUES (?, ?, 'non_transaction', 'rule:billing_statement', ?)`,
+					uuid.NewString(), email.ID, `{"email_kind":"non_transaction","reason":"billing_statement_filter"}`,
+				)
+				tx.Model(&db.RawEmail{}).Where("id = ?", email.ID).Updates(map[string]any{
+					"status":        "non_transaction",
+					"error_message": nil,
+				})
+				tx.Exec(`UPDATE sync_runs SET skipped_count = skipped_count + 1 WHERE id = ?`, runID)
+				return nil
+			})
+			continue
+		}
+
 		extracted, errKind, err := callNodeLlamaExtract(ctx, llmBaseURL, llmExtractRequest{
 			ModelPath:     cfg.LlmModelPath,
 			ContextSize:   cfg.LlmContextSize,

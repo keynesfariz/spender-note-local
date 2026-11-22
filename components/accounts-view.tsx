@@ -45,6 +45,7 @@ import {
   type AccountType,
 } from "@/lib/api"
 import {
+  formatDateRangeLabel,
   formatMinorCurrency,
   formatSignedMinor,
   formatUtcInTimezone,
@@ -286,6 +287,15 @@ export function AccountsView() {
                           excluded
                         </Badge>
                       )}
+                      {account.future_transaction_count > 0 && (
+                        <Badge variant="destructive">
+                          {account.future_transaction_count} future-dated{" "}
+                          {account.future_transaction_count === 1
+                            ? "transaction"
+                            : "transactions"}{" "}
+                          excluded
+                        </Badge>
+                      )}
                     </div>
 
                     {account.latest_reconciliation && (
@@ -350,6 +360,45 @@ export function AccountsView() {
                     )}
                   </div>
                 </CardHeader>
+
+                {account.billing_cycle && (
+                  <CardContent className="pt-0 pb-4">
+                    <div className="grid gap-3 rounded-md border bg-muted/30 p-3 sm:grid-cols-2">
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          Unbilled (current cycle ·{" "}
+                          {formatDateRangeLabel(
+                            account.billing_cycle.current_cycle.start_date,
+                            account.billing_cycle.current_cycle.end_date
+                          )}
+                          )
+                        </p>
+                        <p className="mt-0.5 text-sm font-semibold tabular-nums">
+                          {formatMinorCurrency(
+                            account.billing_cycle.current_cycle.spent_minor,
+                            account.currency
+                          )}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          Last cycle (
+                          {formatDateRangeLabel(
+                            account.billing_cycle.last_cycle.start_date,
+                            account.billing_cycle.last_cycle.end_date
+                          )}
+                          )
+                        </p>
+                        <p className="mt-0.5 text-sm font-semibold tabular-nums">
+                          {formatMinorCurrency(
+                            account.billing_cycle.last_cycle.spent_minor,
+                            account.currency
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                )}
 
                 <CardFooter className="flex flex-wrap items-center gap-2">
                   {account.status === "provisional" && (

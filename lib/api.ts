@@ -29,6 +29,20 @@ export interface ReconciliationRow {
   recorded_at_utc: string
 }
 
+export interface BillingCycleSpendSummary {
+  start_date: string
+  end_date: string
+  spent_minor: number
+  transaction_count: number
+}
+
+export interface CreditCardBillingCycleSummary {
+  statement_day: number
+  last_statement_date: string
+  current_cycle: BillingCycleSpendSummary
+  last_cycle: BillingCycleSpendSummary
+}
+
 export interface AccountSummary {
   id: string
   name: string
@@ -37,13 +51,16 @@ export interface AccountSummary {
   initial_balance_minor: number | null
   initial_balance_as_of_utc: string
   last4: string | null
+  statement_day: number | null
   status: AccountStatus
   created_at_utc: string
   identifiers: AccountIdentifierRow[]
   computed_balance_minor: number | null
   net_flow_minor: number
   uncounted_foreign_count: number
+  future_transaction_count: number
   latest_reconciliation: ReconciliationRow | null
+  billing_cycle: CreditCardBillingCycleSummary | null
   type_locked: boolean
 }
 
@@ -379,6 +396,7 @@ export const createAccountApi = (input: {
   initial_balance_minor: number
   initial_balance_as_of_utc?: string
   last4?: string | null
+  statement_day?: number | null
   identifiers?: AccountIdentifierInput[]
 }) =>
   apiFetch<AccountSummary>("/api/accounts", {
@@ -393,6 +411,7 @@ export const updateAccountApi = (input: {
   initial_balance_minor?: number | null
   initial_balance_as_of_utc?: string
   last4?: string | null
+  statement_day?: number | null
   identifiers?: AccountIdentifierInput[]
 }) => {
   const { id, ...patch } = input

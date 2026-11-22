@@ -88,6 +88,7 @@ export function AccountFormDialog({
   const [type, setType] = useState<AccountType>("credit_card")
   const [initialBalance, setInitialBalance] = useState("0")
   const [initialBalanceAsOf, setInitialBalanceAsOf] = useState("")
+  const [statementDay, setStatementDay] = useState("")
   const [identifiers, setIdentifiers] = useState<IdentifierDraft[]>([])
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -107,6 +108,11 @@ export function AccountFormDialog({
       )
       setInitialBalanceAsOf(
         utcToDateInputValue(account.initial_balance_as_of_utc, timezone)
+      )
+      setStatementDay(
+        account.statement_day !== null && account.statement_day !== undefined
+          ? String(account.statement_day)
+          : ""
       )
       const existing = account.identifiers ?? []
       if (existing.length > 0) {
@@ -131,6 +137,7 @@ export function AccountFormDialog({
       setInitialBalanceAsOf(
         utcToDateInputValue(new Date().toISOString(), timezone)
       )
+      setStatementDay("")
       setIdentifiers([])
     }
   }, [open, account, currency, timezone])
@@ -142,6 +149,7 @@ export function AccountFormDialog({
       type: AccountType
       initial_balance_minor: number | null
       initial_balance_as_of_utc: string
+      statement_day: number | null
       identifiers: AccountIdentifierInput[]
     }) => {
       if (payload.id) {
@@ -219,12 +227,23 @@ export function AccountFormDialog({
       return
     }
 
+    let parsedStatementDay: number | null = null
+    if (type === "credit_card" && statementDay.trim() !== "") {
+      const n = Number(statementDay.trim())
+      if (!Number.isInteger(n) || n < 1 || n > 31) {
+        setFormError("Statement day must be a whole number between 1 and 31.")
+        return
+      }
+      parsedStatementDay = n
+    }
+
     saveMutation.mutate({
       id: account?.id,
       name: trimmedName,
       type,
       initial_balance_minor: initialBalanceMinor,
       initial_balance_as_of_utc: asOfUtc,
+      statement_day: parsedStatementDay,
       identifiers: cleanedIdentifiers,
     })
   }
@@ -306,6 +325,26 @@ export function AccountFormDialog({
               />
             </Field>
           </div>
+
+          {type === "credit_card" && (
+            <Field>
+              <FieldLabel>Statement day (optional)</FieldLabel>
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={31}
+                step={1}
+                value={statementDay}
+                onChange={(e) => setStatementDay(e.target.value)}
+                placeholder="e.g. 22"
+              />
+              <FieldDescription>
+                Day of the month your credit card statement closes (1–31).
+                Shorter months clamp to the last day of the month.
+              </FieldDescription>
+            </Field>
+          )}
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -25,14 +26,30 @@ type AccountIdentifierInput struct {
 	Value string `json:"value"`
 }
 
+type BillingCycleSpendSummary struct {
+	StartDate        string `json:"start_date"`
+	EndDate          string `json:"end_date"`
+	SpentMinor       int64  `json:"spent_minor"`
+	TransactionCount int64  `json:"transaction_count"`
+}
+
+type CreditCardBillingCycleSummary struct {
+	StatementDay      int                      `json:"statement_day"`
+	LastStatementDate string                   `json:"last_statement_date"`
+	CurrentCycle      BillingCycleSpendSummary `json:"current_cycle"`
+	LastCycle         BillingCycleSpendSummary `json:"last_cycle"`
+}
+
 type AccountSummary struct {
 	db.Account
-	Identifiers           []db.AccountIdentifier    `json:"identifiers"`
-	ComputedBalanceMinor  *int64                    `json:"computed_balance_minor"`
-	NetFlowMinor          int64                     `json:"net_flow_minor"`
-	UncountedForeignCount int64                     `json:"uncounted_foreign_count"`
-	LatestReconciliation  *db.AccountReconciliation `json:"latest_reconciliation"`
-	TypeLocked            bool                      `json:"type_locked"`
+	Identifiers            []db.AccountIdentifier         `json:"identifiers"`
+	ComputedBalanceMinor   *int64                         `json:"computed_balance_minor"`
+	NetFlowMinor           int64                          `json:"net_flow_minor"`
+	UncountedForeignCount  int64                          `json:"uncounted_foreign_count"`
+	FutureTransactionCount int64                          `json:"future_transaction_count"`
+	LatestReconciliation   *db.AccountReconciliation      `json:"latest_reconciliation"`
+	BillingCycle           *CreditCardBillingCycleSummary `json:"billing_cycle"`
+	TypeLocked             bool                           `json:"type_locked"`
 }
 
 type ExtractionAccountContext struct {
@@ -192,27 +209,45 @@ func hasAccountLedgerRows(gdb *gorm.DB, accountID string) bool {
 }
 
 type accountBalanceInfo struct {
-	ComputedBalanceMinor  *int64
-	NetFlowMinor          int64
-	UncountedForeignCount int64
-	LatestReconciliation  *db.AccountReconciliation
-	Currency              string
+	ComputedBalanceMinor   *int64
+	NetFlowMinor           int64
+	UncountedForeignCount  int64
+	FutureTransactionCount int64
+	LatestReconciliation   *db.AccountReconciliation
+	Currency               string
 }
 
-func computeAccountBalance(gdb *gorm.DB, account db.Account, targetCurrency string) accountBalanceInfo {
-	settingsCurrency := targetCurrency
-	if settingsCurrency == "" {
+func resolveAppCurrencyAndTimezone(gdb *gorm.DB, targetCurrency string, targetTimezone string) (string, string) {
+	currency := strings.TrimSpace(targetCurrency)
+	tz := strings.TrimSpace(targetTimezone)
+	if currency == "" || tz == "" {
 		var s db.AppSetting
-		if err := gdb.First(&s, 1).Error; err == nil && s.Currency != nil && *s.Currency != "" {
-			settingsCurrency = *s.Currency
-		} else {
-			settingsCurrency = account.Currency
+		if err := gdb.First(&s, 1).Error; err == nil {
+			if currency == "" && s.Currency != nil && *s.Currency != "" {
+				currency = *s.Currency
+			}
+			if tz == "" && s.Timezone != nil && *s.Timezone != "" {
+				tz = *s.Timezone
+			}
 		}
+	}
+	if tz == "" {
+		tz = "UTC"
+	}
+	return currency, tz
+}
+
+func computeAccountBalanceAsOf(gdb *gorm.DB, account db.Account, targetCurrency string, asOfUtc string, nowUtc string) accountBalanceInfo {
+	settingsCurrency, _ := resolveAppCurrencyAndTimezone(gdb, targetCurrency, "UTC")
+	if settingsCurrency == "" {
+		settingsCurrency = account.Currency
 	}
 
 	var latestRec db.AccountReconciliation
 	var latestRecPtr *db.AccountReconciliation
-	if err := gdb.Where("account_id = ?", account.ID).Order("recorded_at_utc DESC, rowid DESC").First(&latestRec).Error; err == nil {
+	if err := gdb.Where("account_id = ? AND recorded_at_utc <= ?", account.ID, asOfUtc).
+		Order("recorded_at_utc DESC, rowid DESC").
+		First(&latestRec).Error; err == nil {
 		latestRecPtr = &latestRec
 	}
 
@@ -224,7 +259,7 @@ func computeAccountBalance(gdb *gorm.DB, account db.Account, targetCurrency stri
 		anchorBalance = &b
 		anchorTime = latestRecPtr.RecordedAtUtc
 		timeOp = ">"
-	} else {
+	} else if account.InitialBalanceMinor != nil && account.InitialBalanceAsOfUtc <= asOfUtc {
 		anchorBalance = account.InitialBalanceMinor
 		anchorTime = account.InitialBalanceAsOfUtc
 	}
@@ -240,8 +275,8 @@ func computeAccountBalance(gdb *gorm.DB, account db.Account, targetCurrency stri
 				COALESCE(SUM(CASE WHEN currency = ? THEN amount_minor ELSE 0 END), 0) AS local_total,
 				COALESCE(SUM(CASE WHEN currency != ? THEN 1 ELSE 0 END), 0) AS foreign_cnt
 			FROM transactions
-			WHERE account_id = ?`,
-			settingsCurrency, settingsCurrency, account.ID,
+			WHERE account_id = ? AND occurred_at_utc <= ?`,
+			settingsCurrency, settingsCurrency, account.ID, asOfUtc,
 		).Scan(&agg)
 	} else {
 		gdb.Raw(fmt.Sprintf(`
@@ -249,10 +284,15 @@ func computeAccountBalance(gdb *gorm.DB, account db.Account, targetCurrency stri
 				COALESCE(SUM(CASE WHEN currency = ? THEN amount_minor ELSE 0 END), 0) AS local_total,
 				COALESCE(SUM(CASE WHEN currency != ? THEN 1 ELSE 0 END), 0) AS foreign_cnt
 			FROM transactions
-			WHERE account_id = ? AND occurred_at_utc %s ?`, timeOp),
-			settingsCurrency, settingsCurrency, account.ID, anchorTime,
+			WHERE account_id = ? AND occurred_at_utc %s ? AND occurred_at_utc <= ?`, timeOp),
+			settingsCurrency, settingsCurrency, account.ID, anchorTime, asOfUtc,
 		).Scan(&agg)
 	}
+
+	var futureCnt int64
+	gdb.Model(&db.Transaction{}).
+		Where("account_id = ? AND occurred_at_utc > ?", account.ID, nowUtc).
+		Count(&futureCnt)
 
 	var netFlow int64
 	if agg.LocalTotal != 0 {
@@ -270,11 +310,76 @@ func computeAccountBalance(gdb *gorm.DB, account db.Account, targetCurrency stri
 	}
 
 	return accountBalanceInfo{
-		ComputedBalanceMinor:  computed,
-		NetFlowMinor:          netFlow,
-		UncountedForeignCount: agg.ForeignCnt,
-		LatestReconciliation:  latestRecPtr,
-		Currency:              settingsCurrency,
+		ComputedBalanceMinor:   computed,
+		NetFlowMinor:           netFlow,
+		UncountedForeignCount:  agg.ForeignCnt,
+		FutureTransactionCount: futureCnt,
+		LatestReconciliation:   latestRecPtr,
+		Currency:               settingsCurrency,
+	}
+}
+
+func computeAccountBalance(gdb *gorm.DB, account db.Account, targetCurrency string) accountBalanceInfo {
+	nowUtc := NowUtcIsoSeconds()
+	return computeAccountBalanceAsOf(gdb, account, targetCurrency, nowUtc, nowUtc)
+}
+
+func computeBillingCycleSummary(gdb *gorm.DB, account db.Account, targetCurrency string, tz string, now time.Time) *CreditCardBillingCycleSummary {
+	if account.Type != "credit_card" || account.StatementDay == nil {
+		return nil
+	}
+	settingsCurrency, resolvedTz := resolveAppCurrencyAndTimezone(gdb, targetCurrency, tz)
+	if settingsCurrency == "" {
+		settingsCurrency = account.Currency
+	}
+
+	bounds, err := ComputeCreditCardCycleBounds(*account.StatementDay, resolvedTz, now)
+	if err != nil {
+		return nil
+	}
+
+	type cycleAgg struct {
+		SpentMinor int64 `gorm:"column:spent_minor"`
+		TxCount    int64 `gorm:"column:tx_count"`
+	}
+
+	nowUtc := ToUtcIsoSeconds(now)
+
+	var curAgg cycleAgg
+	gdb.Raw(`
+		SELECT
+			COALESCE(SUM(amount_minor), 0) AS spent_minor,
+			COUNT(*) AS tx_count
+		FROM transactions
+		WHERE account_id = ? AND currency = ? AND occurred_at_utc >= ? AND occurred_at_utc < ? AND occurred_at_utc <= ?`,
+		account.ID, settingsCurrency, bounds.CurrentCycle.StartUtc, bounds.CurrentCycle.EndExclusiveUtc, nowUtc,
+	).Scan(&curAgg)
+
+	var lastAgg cycleAgg
+	gdb.Raw(`
+		SELECT
+			COALESCE(SUM(amount_minor), 0) AS spent_minor,
+			COUNT(*) AS tx_count
+		FROM transactions
+		WHERE account_id = ? AND currency = ? AND occurred_at_utc >= ? AND occurred_at_utc < ?`,
+		account.ID, settingsCurrency, bounds.LastCycle.StartUtc, bounds.LastCycle.EndExclusiveUtc,
+	).Scan(&lastAgg)
+
+	return &CreditCardBillingCycleSummary{
+		StatementDay:      *account.StatementDay,
+		LastStatementDate: bounds.LastStatementDate,
+		CurrentCycle: BillingCycleSpendSummary{
+			StartDate:        bounds.CurrentCycle.StartDate,
+			EndDate:          bounds.CurrentCycle.EndDate,
+			SpentMinor:       curAgg.SpentMinor,
+			TransactionCount: curAgg.TxCount,
+		},
+		LastCycle: BillingCycleSpendSummary{
+			StartDate:        bounds.LastCycle.StartDate,
+			EndDate:          bounds.LastCycle.EndDate,
+			SpentMinor:       lastAgg.SpentMinor,
+			TransactionCount: lastAgg.TxCount,
+		},
 	}
 }
 
@@ -288,28 +393,35 @@ func isAccountTypeLocked(gdb *gorm.DB, account db.Account, hasRec bool) bool {
 	return hasAccountLedgerRows(gdb, account.ID)
 }
 
-func buildAccountSummary(gdb *gorm.DB, account db.Account, targetCurrency string, identifiers []db.AccountIdentifier) AccountSummary {
-	bal := computeAccountBalance(gdb, account, targetCurrency)
+func buildAccountSummaryAt(gdb *gorm.DB, account db.Account, targetCurrency string, targetTimezone string, identifiers []db.AccountIdentifier, now time.Time) AccountSummary {
+	nowUtc := ToUtcIsoSeconds(now)
+	bal := computeAccountBalanceAsOf(gdb, account, targetCurrency, nowUtc, nowUtc)
 	if identifiers == nil {
 		identifiers = listIdentifiersForAccount(gdb, account.ID)
 	}
 	return AccountSummary{
-		Account:               account,
-		Identifiers:           identifiers,
-		ComputedBalanceMinor:  bal.ComputedBalanceMinor,
-		NetFlowMinor:          bal.NetFlowMinor,
-		UncountedForeignCount: bal.UncountedForeignCount,
-		LatestReconciliation:  bal.LatestReconciliation,
-		TypeLocked:            isAccountTypeLocked(gdb, account, bal.LatestReconciliation != nil),
+		Account:                account,
+		Identifiers:            identifiers,
+		ComputedBalanceMinor:   bal.ComputedBalanceMinor,
+		NetFlowMinor:           bal.NetFlowMinor,
+		UncountedForeignCount:  bal.UncountedForeignCount,
+		FutureTransactionCount: bal.FutureTransactionCount,
+		LatestReconciliation:   bal.LatestReconciliation,
+		BillingCycle:           computeBillingCycleSummary(gdb, account, bal.Currency, targetTimezone, now),
+		TypeLocked:             isAccountTypeLocked(gdb, account, bal.LatestReconciliation != nil),
 	}
 }
 
+func buildAccountSummary(gdb *gorm.DB, account db.Account, targetCurrency string, identifiers []db.AccountIdentifier) AccountSummary {
+	return buildAccountSummaryAt(gdb, account, targetCurrency, "", identifiers, time.Now().UTC())
+}
+
 func ListAccounts(gdb *gorm.DB) ([]AccountSummary, error) {
-	var s db.AppSetting
-	targetCurrency := ""
-	if err := gdb.First(&s, 1).Error; err == nil && s.Currency != nil {
-		targetCurrency = *s.Currency
-	}
+	return listAccountsAt(gdb, time.Now().UTC())
+}
+
+func listAccountsAt(gdb *gorm.DB, now time.Time) ([]AccountSummary, error) {
+	targetCurrency, targetTimezone := resolveAppCurrencyAndTimezone(gdb, "", "")
 
 	var rows []db.Account
 	if err := gdb.Order("created_at_utc ASC, name ASC").Find(&rows).Error; err != nil {
@@ -329,7 +441,7 @@ func ListAccounts(gdb *gorm.DB) ([]AccountSummary, error) {
 		if idents == nil {
 			idents = []db.AccountIdentifier{}
 		}
-		out = append(out, buildAccountSummary(gdb, row, targetCurrency, idents))
+		out = append(out, buildAccountSummaryAt(gdb, row, targetCurrency, targetTimezone, idents, now))
 	}
 	return out, nil
 }
@@ -589,7 +701,12 @@ type ReconcileAccountInput struct {
 }
 
 func ReconcileAccount(gdb *gorm.DB, input ReconcileAccountInput) (map[string]any, error) {
-	recordedAt := NowUtcIsoSeconds()
+	return reconcileAccountAt(gdb, input, time.Now().UTC())
+}
+
+func reconcileAccountAt(gdb *gorm.DB, input ReconcileAccountInput, now time.Time) (map[string]any, error) {
+	nowUtc := ToUtcIsoSeconds(now)
+	recordedAt := nowUtc
 	if input.RecordedAtUtc != nil && strings.TrimSpace(*input.RecordedAtUtc) != "" {
 		recordedAt = strings.TrimSpace(*input.RecordedAtUtc)
 	}
@@ -605,7 +722,7 @@ func ReconcileAccount(gdb *gorm.DB, input ReconcileAccountInput) (map[string]any
 			return errors.New("Account not found.")
 		}
 
-		balBefore := computeAccountBalance(tx, current, "")
+		balBefore := computeAccountBalanceAsOf(tx, current, "", recordedAt, nowUtc)
 		computedMinor := input.ActualBalanceMinor
 		if balBefore.ComputedBalanceMinor != nil {
 			computedMinor = *balBefore.ComputedBalanceMinor
@@ -639,7 +756,7 @@ func ReconcileAccount(gdb *gorm.DB, input ReconcileAccountInput) (map[string]any
 			current.Status = "confirmed"
 		}
 
-		summary = buildAccountSummary(tx, current, "", nil)
+		summary = buildAccountSummaryAt(tx, current, "", "", nil, now)
 		summary.TypeLocked = true
 		return nil
 	})

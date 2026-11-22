@@ -128,3 +128,92 @@ func GetDateRangeUtcBounds(startDateYYYYMMDD string, endDateYYYYMMDD string, tz 
 	endExclusive := endDay.AddDate(0, 0, 1)
 	return ToUtcIsoSeconds(startDay), ToUtcIsoSeconds(endExclusive), nil
 }
+
+type BillingCycleWindow struct {
+	StartDate       string
+	EndDate         string
+	StartUtc        string
+	EndExclusiveUtc string
+}
+
+type CreditCardCycleBounds struct {
+	CurrentCycle      BillingCycleWindow
+	LastCycle         BillingCycleWindow
+	LastStatementDate string
+}
+
+func daysInMonth(year int, month time.Month) int {
+	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
+}
+
+func shiftYearMonth(year int, month time.Month, deltaMonths int) (int, time.Month) {
+	total := year*12 + int(month-1) + deltaMonths
+	y := total / 12
+	m := total % 12
+	if m < 0 {
+		m += 12
+		y--
+	}
+	return y, time.Month(m + 1)
+}
+
+func clampedStatementDate(year int, month time.Month, statementDay int, loc *time.Location) time.Time {
+	day := statementDay
+	maxDay := daysInMonth(year, month)
+	if day > maxDay {
+		day = maxDay
+	}
+	return time.Date(year, month, day, 0, 0, 0, 0, loc)
+}
+
+func buildBillingCycleWindow(startDay, endDay time.Time) BillingCycleWindow {
+	return BillingCycleWindow{
+		StartDate:       startDay.Format("2006-01-02"),
+		EndDate:         endDay.Format("2006-01-02"),
+		StartUtc:        ToUtcIsoSeconds(startDay),
+		EndExclusiveUtc: ToUtcIsoSeconds(endDay.AddDate(0, 0, 1)),
+	}
+}
+
+func ComputeCreditCardCycleBounds(statementDay int, tz string, now time.Time) (CreditCardCycleBounds, error) {
+	if statementDay < 1 || statementDay > 31 {
+		return CreditCardCycleBounds{}, fmt.Errorf("statementDay must be between 1 and 31, got %d", statementDay)
+	}
+	loc, err := LoadTimezone(tz)
+	if err != nil {
+		return CreditCardCycleBounds{}, err
+	}
+
+	localNow := now.In(loc)
+	today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
+	thisMonthStmt := clampedStatementDate(today.Year(), today.Month(), statementDay, loc)
+
+	var curStart, curEnd, lastStart, lastEnd time.Time
+	if !today.After(thisMonthStmt) {
+		prevY, prevM := shiftYearMonth(today.Year(), today.Month(), -1)
+		prevStmt := clampedStatementDate(prevY, prevM, statementDay, loc)
+		prev2Y, prev2M := shiftYearMonth(today.Year(), today.Month(), -2)
+		prev2Stmt := clampedStatementDate(prev2Y, prev2M, statementDay, loc)
+
+		curStart = prevStmt.AddDate(0, 0, 1)
+		curEnd = thisMonthStmt
+		lastStart = prev2Stmt.AddDate(0, 0, 1)
+		lastEnd = prevStmt
+	} else {
+		nextY, nextM := shiftYearMonth(today.Year(), today.Month(), 1)
+		nextStmt := clampedStatementDate(nextY, nextM, statementDay, loc)
+		prevY, prevM := shiftYearMonth(today.Year(), today.Month(), -1)
+		prevStmt := clampedStatementDate(prevY, prevM, statementDay, loc)
+
+		curStart = thisMonthStmt.AddDate(0, 0, 1)
+		curEnd = nextStmt
+		lastStart = prevStmt.AddDate(0, 0, 1)
+		lastEnd = thisMonthStmt
+	}
+
+	return CreditCardCycleBounds{
+		CurrentCycle:      buildBillingCycleWindow(curStart, curEnd),
+		LastCycle:         buildBillingCycleWindow(lastStart, lastEnd),
+		LastStatementDate: lastEnd.Format("2006-01-02"),
+	}, nil
+}

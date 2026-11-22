@@ -3,6 +3,7 @@ package domain
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -159,5 +160,245 @@ func TestMigrateSchema_AddsStatementDayToExistingAccountsTable(t *testing.T) {
 	}
 	if acct.StatementDay == nil || *acct.StatementDay != 22 {
 		t.Fatalf("expected statement_day=22 after migration, got %v", acct.StatementDay)
+	}
+}
+
+func seedAccountTx(t *testing.T, gdb *gorm.DB, id, accountID string, amountMinor int64, currency, occurredAtUtc string) {
+	t.Helper()
+	tx := db.Transaction{
+		ID:            id,
+		SourceType:    "manual",
+		AccountID:     &accountID,
+		AmountMinor:   amountMinor,
+		Currency:      currency,
+		OccurredAtUtc: occurredAtUtc,
+		Merchant:      "Test Merchant",
+		Category:      "Other",
+		Reviewed:      1,
+		CreatedAtUtc:  "2026-11-01T00:00:00Z",
+		UpdatedAtUtc:  "2026-11-01T00:00:00Z",
+	}
+	if err := gdb.Create(&tx).Error; err != nil {
+		t.Fatalf("seed tx %s: %v", id, err)
+	}
+}
+
+func TestComputeCreditCardCycleBounds_ClampingAndBoundaries(t *testing.T) {
+	// Non-leap February 2026 with statement_day=31 clamps to Feb 28
+	nowNonLeap := time.Date(2026, 3, 5, 10, 0, 0, 0, time.UTC)
+	bNonLeap, err := ComputeCreditCardCycleBounds(31, "Asia/Jakarta", nowNonLeap)
+	if err != nil {
+		t.Fatalf("ComputeCreditCardCycleBounds non-leap: %v", err)
+	}
+	if bNonLeap.LastStatementDate != "2026-02-28" {
+		t.Fatalf("expected LastStatementDate=2026-02-28, got %s", bNonLeap.LastStatementDate)
+	}
+	if bNonLeap.CurrentCycle.StartDate != "2026-03-01" || bNonLeap.CurrentCycle.EndDate != "2026-03-31" {
+		t.Fatalf("unexpected non-leap current cycle: %+v", bNonLeap.CurrentCycle)
+	}
+	if bNonLeap.LastCycle.StartDate != "2026-02-01" || bNonLeap.LastCycle.EndDate != "2026-02-28" {
+		t.Fatalf("unexpected non-leap last cycle: %+v", bNonLeap.LastCycle)
+	}
+
+	// Leap February 2028 with statement_day=31 clamps to Feb 29
+	nowLeap := time.Date(2028, 3, 5, 10, 0, 0, 0, time.UTC)
+	bLeap, err := ComputeCreditCardCycleBounds(31, "Asia/Jakarta", nowLeap)
+	if err != nil {
+		t.Fatalf("ComputeCreditCardCycleBounds leap: %v", err)
+	}
+	if bLeap.LastStatementDate != "2028-02-29" {
+		t.Fatalf("expected LastStatementDate=2028-02-29, got %s", bLeap.LastStatementDate)
+	}
+	if bLeap.LastCycle.EndDate != "2028-02-29" {
+		t.Fatalf("unexpected leap last cycle: %+v", bLeap.LastCycle)
+	}
+
+	// On statement day itself (Nov 22 WIB), current cycle is still Oct 23 - Nov 22 and last closed statement is Oct 22
+	nowOnStmtDay := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC) // 19:00 WIB on Nov 22
+	bOnDay, err := ComputeCreditCardCycleBounds(22, "Asia/Jakarta", nowOnStmtDay)
+	if err != nil {
+		t.Fatalf("ComputeCreditCardCycleBounds on statement day: %v", err)
+	}
+	if bOnDay.CurrentCycle.StartDate != "2026-10-23" || bOnDay.CurrentCycle.EndDate != "2026-11-22" {
+		t.Fatalf("unexpected on-day current cycle: %+v", bOnDay.CurrentCycle)
+	}
+	if bOnDay.LastStatementDate != "2026-10-22" {
+		t.Fatalf("expected LastStatementDate=2026-10-22 on Nov 22, got %s", bOnDay.LastStatementDate)
+	}
+}
+
+func TestCreditCardStatementReconciliation_PreservesUnbilledSpending(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	configureTestLocale(t, gdb, "Asia/Jakarta", "IDR")
+
+	acct, err := CreateAccount(gdb, CreateAccountInput{
+		Name:                  "Smbci 6039",
+		Type:                  "credit_card",
+		InitialBalanceMinor:   0,
+		InitialBalanceAsOfUtc: strPtr("2026-10-01T00:00:00Z"),
+		StatementDay:          intPtr(22),
+	})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	// Last cycle charge on Nov 22 at 23:30 WIB (2026-11-22T16:30:00Z)
+	seedAccountTx(t, gdb, "tx-last-cycle", acct.ID, 500000, "IDR", "2026-11-22T16:30:00Z")
+	// Current unbilled cycle charges on Nov 23 at 00:05 WIB (2026-11-22T17:05:00Z) and Nov 24
+	seedAccountTx(t, gdb, "tx-unbilled-1", acct.ID, 242455, "IDR", "2026-11-22T17:05:00Z")
+	seedAccountTx(t, gdb, "tx-unbilled-2", acct.ID, 500000, "IDR", "2026-11-24T05:00:00Z")
+
+	// Today is Nov 25 12:00 WIB (2026-11-25T05:00:00Z)
+	now := time.Date(2026, 11, 25, 5, 0, 0, 0, time.UTC)
+
+	// Reconcile as of Nov 22 23:59:59 WIB (2026-11-22T16:59:59Z) with IDR 9,139,549
+	res, err := reconcileAccountAt(gdb, ReconcileAccountInput{
+		AccountID:          acct.ID,
+		ActualBalanceMinor: 9139549,
+		RecordedAtUtc:      strPtr("2026-11-22T16:59:59Z"),
+	}, now)
+	if err != nil {
+		t.Fatalf("reconcileAccountAt: %v", err)
+	}
+
+	rec := res["reconciliation"].(db.AccountReconciliation)
+	// Computed as of Nov 22 23:59:59 WIB should only include tx-last-cycle (500,000), not Nov 23-24 unbilled tx
+	if rec.ComputedBalanceMinor != 500000 {
+		t.Fatalf("expected historical computed_balance_minor=500000, got %d", rec.ComputedBalanceMinor)
+	}
+	if rec.AdjustmentMinor != 9139549-500000 {
+		t.Fatalf("expected adjustment_minor=%d, got %d", 9139549-500000, rec.AdjustmentMinor)
+	}
+
+	summary := res["account"].(AccountSummary)
+	if summary.ComputedBalanceMinor == nil || *summary.ComputedBalanceMinor != 9882004 {
+		t.Fatalf("expected live balance owed=9882004, got %v", summary.ComputedBalanceMinor)
+	}
+	if summary.BillingCycle == nil {
+		t.Fatalf("expected non-nil billing_cycle")
+	}
+	if summary.BillingCycle.LastStatementDate != "2026-11-22" {
+		t.Fatalf("expected last_statement_date=2026-11-22, got %s", summary.BillingCycle.LastStatementDate)
+	}
+	if summary.BillingCycle.CurrentCycle.SpentMinor != 742455 {
+		t.Fatalf("expected current cycle unbilled spend=742455, got %d", summary.BillingCycle.CurrentCycle.SpentMinor)
+	}
+	if summary.BillingCycle.LastCycle.SpentMinor != 500000 {
+		t.Fatalf("expected last cycle spend=500000, got %d", summary.BillingCycle.LastCycle.SpentMinor)
+	}
+}
+
+func TestFutureDatedTransactions_ExcludedFromBalanceAndCounted(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	configureTestLocale(t, gdb, "Asia/Jakarta", "IDR")
+
+	acct, err := CreateAccount(gdb, CreateAccountInput{
+		Name:                  "Smbci 6039",
+		Type:                  "credit_card",
+		InitialBalanceMinor:   0,
+		InitialBalanceAsOfUtc: strPtr("2026-11-01T00:00:00Z"),
+	})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	now := time.Date(2026, 11, 22, 13, 10, 0, 0, time.UTC)
+	if _, err := reconcileAccountAt(gdb, ReconcileAccountInput{
+		AccountID:          acct.ID,
+		ActualBalanceMinor: 9882004,
+		RecordedAtUtc:      strPtr("2026-11-22T13:08:50Z"),
+	}, now); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	// Future-dated misclassified billing statement on Dec 8
+	seedAccountTx(t, gdb, "tx-future-stmt", acct.ID, 9139549, "IDR", "2026-12-08T09:20:03Z")
+
+	accounts, err := listAccountsAt(gdb, now)
+	if err != nil {
+		t.Fatalf("listAccountsAt: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+	got := accounts[0]
+	if got.ComputedBalanceMinor == nil || *got.ComputedBalanceMinor != 9882004 {
+		t.Fatalf("expected balance=9882004 (excluding future tx), got %v", got.ComputedBalanceMinor)
+	}
+	if got.FutureTransactionCount != 1 {
+		t.Fatalf("expected future_transaction_count=1, got %d", got.FutureTransactionCount)
+	}
+	if got.BillingCycle != nil {
+		t.Fatalf("expected nil billing_cycle when statement_day is unset")
+	}
+
+	// Also verify unanchored provisional account excludes future-dated tx from net_flow_minor
+	prov := db.Account{
+		ID:                    "prov-cc",
+		Name:                  "Provisional CC",
+		Type:                  "credit_card",
+		Currency:              "IDR",
+		InitialBalanceMinor:   nil,
+		InitialBalanceAsOfUtc: "2026-11-01T00:00:00Z",
+		Status:                "provisional",
+		CreatedAtUtc:          "2026-11-01T00:00:00Z",
+	}
+	if err := gdb.Create(&prov).Error; err != nil {
+		t.Fatalf("seed provisional account: %v", err)
+	}
+	seedAccountTx(t, gdb, "tx-prov-past", prov.ID, 100000, "IDR", "2026-11-20T10:00:00Z")
+	seedAccountTx(t, gdb, "tx-prov-future", prov.ID, 999999, "IDR", "2026-12-08T10:00:00Z")
+
+	bal := computeAccountBalanceAsOf(gdb, prov, "IDR", ToUtcIsoSeconds(now), ToUtcIsoSeconds(now))
+	if bal.NetFlowMinor != 100000 {
+		t.Fatalf("expected provisional net_flow_minor=100000 (excluding future tx), got %d", bal.NetFlowMinor)
+	}
+	if bal.FutureTransactionCount != 1 {
+		t.Fatalf("expected provisional future_transaction_count=1, got %d", bal.FutureTransactionCount)
+	}
+}
+
+func TestBackdatedReconciliation_PreservesNewerAnchor(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	configureTestLocale(t, gdb, "Asia/Jakarta", "IDR")
+
+	acct, err := CreateAccount(gdb, CreateAccountInput{
+		Name:                  "Smbci 6039",
+		Type:                  "credit_card",
+		InitialBalanceMinor:   0,
+		InitialBalanceAsOfUtc: strPtr("2026-11-01T00:00:00Z"),
+		StatementDay:          intPtr(22),
+	})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	now := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+
+	// Newer reconciliation on Nov 25
+	if _, err := reconcileAccountAt(gdb, ReconcileAccountInput{
+		AccountID:          acct.ID,
+		ActualBalanceMinor: 10000000,
+		RecordedAtUtc:      strPtr("2026-11-25T09:00:00Z"),
+	}, now); err != nil {
+		t.Fatalf("reconcile Nov 25: %v", err)
+	}
+
+	// Older backdated reconciliation on Nov 22
+	res, err := reconcileAccountAt(gdb, ReconcileAccountInput{
+		AccountID:          acct.ID,
+		ActualBalanceMinor: 9139549,
+		RecordedAtUtc:      strPtr("2026-11-22T16:59:59Z"),
+	}, now)
+	if err != nil {
+		t.Fatalf("reconcile Nov 22: %v", err)
+	}
+
+	summary := res["account"].(AccountSummary)
+	if summary.LatestReconciliation == nil || summary.LatestReconciliation.RecordedAtUtc != "2026-11-25T09:00:00Z" {
+		t.Fatalf("expected Nov 25 reconciliation to remain active anchor, got %+v", summary.LatestReconciliation)
+	}
+	if summary.ComputedBalanceMinor == nil || *summary.ComputedBalanceMinor != 10000000 {
+		t.Fatalf("expected balance=10000000 anchored to Nov 25, got %v", summary.ComputedBalanceMinor)
 	}
 }

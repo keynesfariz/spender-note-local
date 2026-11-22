@@ -36,17 +36,16 @@ func POST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	baseURL := httpx.InternalBaseURL(r)
 	switch body.Action {
 	case "trigger":
-		runID, err := syncrunner.TriggerSync(gdb, baseURL)
+		runID, err := syncrunner.TriggerSync(gdb)
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		httpx.WriteJSON(w, http.StatusAccepted, map[string]string{"runId": runID})
 	case "retry":
-		runID, err := syncrunner.RetryPendingAndFailedExtractions(gdb, baseURL)
+		runID, err := syncrunner.RetryPendingAndFailedExtractions(gdb)
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, err.Error())
 			return

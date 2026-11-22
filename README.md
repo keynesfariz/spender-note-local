@@ -11,7 +11,7 @@ Most expense trackers either require manual entry for every purchase or ask you 
 - **Frontend:** Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, shadcn/ui + Base UI (`@base-ui/react`), TanStack Query
 - **Backend:** Go API routes (`app/api/`, `internal/syncrunner`, `internal/gmail`, `internal/domain`, `internal/db`)
 - **Database:** SQLite (WAL mode) via GORM + `glebarez/sqlite` (`data/spender.db`)
-- **Local LLM Extraction:** `node-llama-cpp` running local `.gguf` models
+- **Local LLM Extraction:** Direct OpenAI-compatible local server (defaults to `llama.app` at `http://localhost:9931/v1`)
 - **Runtime:** Bun (`bun run dev`, `bun run build`, `bun run typecheck`)
 
 ## TODO

@@ -1,6 +1,8 @@
 package db
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,18 +15,22 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-const schemaSQL = `
+const DefaultLlmBaseURL = "http://localhost:9931/v1"
+
+const appSettingsTableSQL = `
 CREATE TABLE IF NOT EXISTS app_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   country_code TEXT,
   timezone TEXT,
   currency TEXT,
-  llm_provider TEXT NOT NULL DEFAULT 'gguf' CHECK (llm_provider IN ('gguf')),
-  llm_model_path TEXT,
-  llm_context_size INTEGER NOT NULL DEFAULT 8192 CHECK (llm_context_size > 0),
+  llm_provider TEXT NOT NULL DEFAULT 'openai_compatible' CHECK (llm_provider IN ('openai_compatible')),
+  llm_base_url TEXT NOT NULL DEFAULT 'http://localhost:9931/v1',
+  llm_model TEXT,
   llm_timeout_ms INTEGER NOT NULL DEFAULT 60000 CHECK (llm_timeout_ms > 0),
   sync_batch_limit INTEGER NOT NULL DEFAULT 50 CHECK (sync_batch_limit >= 1 AND sync_batch_limit <= 500)
-) STRICT;
+) STRICT;`
+
+const schemaSQL = appSettingsTableSQL + `
 
 CREATE TABLE IF NOT EXISTS gmail_oauth (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -99,7 +105,7 @@ CREATE TABLE IF NOT EXISTS senders (
 CREATE TABLE IF NOT EXISTS sync_runs (
   id TEXT PRIMARY KEY,
   status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'partial_error', 'failed', 'cancelled', 'interrupted')),
-  phase TEXT NOT NULL CHECK (phase IN ('preflight', 'fetching', 'extracting', 'done')),
+  phase TEXT NOT NULL CHECK (phase IN ('preflight', 'fetching', 'syncing', 'extracting', 'done')),
   llm_provider TEXT NOT NULL,
   llm_model TEXT NOT NULL,
   fetched_count INTEGER NOT NULL DEFAULT 0,
@@ -323,7 +329,182 @@ func migrateSchema(gdb *gorm.DB) error {
 	if err := gdb.Exec(`DROP TABLE IF EXISTS rejected_merges`).Error; err != nil {
 		return fmt.Errorf("drop legacy rejected_merges table: %w", err)
 	}
+
+	if err := migrateAppSettingsTable(gdb); err != nil {
+		return err
+	}
+	if err := migrateSyncRunsTable(gdb); err != nil {
+		return err
+	}
 	return nil
+}
+
+func getTableCreateSQL(gdb *gorm.DB, tableName string) (string, error) {
+	var row struct {
+		SQL string `gorm:"column:sql"`
+	}
+	if err := gdb.Raw(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, tableName).Scan(&row).Error; err != nil {
+		return "", fmt.Errorf("inspect %s schema: %w", tableName, err)
+	}
+	return row.SQL, nil
+}
+
+func runImmediateMigration(gdb *gorm.DB, fn func(ctx context.Context, conn *sql.Conn) error) error {
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("begin immediate migration tx: %w", err)
+	}
+	if err := fn(ctx, conn); err != nil {
+		_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		return fmt.Errorf("commit migration tx: %w", err)
+	}
+	return nil
+}
+
+func getTableCreateSQLConn(ctx context.Context, conn *sql.Conn, tableName string) (string, error) {
+	var ddl sql.NullString
+	err := conn.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, tableName).Scan(&ddl)
+	if err != nil && err != sql.ErrNoRows {
+		return "", fmt.Errorf("inspect %s schema: %w", tableName, err)
+	}
+	return ddl.String, nil
+}
+
+func migrateAppSettingsTable(gdb *gorm.DB) error {
+	createSQL, err := getTableCreateSQL(gdb, "app_settings")
+	if err != nil {
+		return err
+	}
+	if strings.Contains(createSQL, "llm_base_url") && strings.Contains(createSQL, "'openai_compatible'") && !strings.Contains(createSQL, "llm_context_size") {
+		return nil
+	}
+
+	return runImmediateMigration(gdb, func(ctx context.Context, conn *sql.Conn) error {
+		lockedSQL, err := getTableCreateSQLConn(ctx, conn, "app_settings")
+		if err != nil {
+			return err
+		}
+		if strings.Contains(lockedSQL, "llm_base_url") && strings.Contains(lockedSQL, "'openai_compatible'") && !strings.Contains(lockedSQL, "llm_context_size") {
+			return nil
+		}
+		if _, err := conn.ExecContext(ctx, `DROP TABLE IF EXISTS app_settings_new`); err != nil {
+			return fmt.Errorf("cleanup app_settings_new: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, `
+			CREATE TABLE app_settings_new (
+				id INTEGER PRIMARY KEY CHECK (id = 1),
+				country_code TEXT,
+				timezone TEXT,
+				currency TEXT,
+				llm_provider TEXT NOT NULL DEFAULT 'openai_compatible' CHECK (llm_provider IN ('openai_compatible')),
+				llm_base_url TEXT NOT NULL DEFAULT 'http://localhost:9931/v1',
+				llm_model TEXT,
+				llm_timeout_ms INTEGER NOT NULL DEFAULT 60000 CHECK (llm_timeout_ms > 0),
+				sync_batch_limit INTEGER NOT NULL DEFAULT 50 CHECK (sync_batch_limit >= 1 AND sync_batch_limit <= 500)
+			) STRICT`); err != nil {
+			return fmt.Errorf("create app_settings_new: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, `
+			INSERT INTO app_settings_new (
+				id, country_code, timezone, currency, llm_provider, llm_base_url, llm_model, llm_timeout_ms, sync_batch_limit
+			)
+			SELECT
+				id, country_code, timezone, currency, 'openai_compatible', ?, NULL,
+				COALESCE(llm_timeout_ms, 60000), COALESCE(sync_batch_limit, 50)
+			FROM app_settings`, DefaultLlmBaseURL); err != nil {
+			return fmt.Errorf("copy app_settings into app_settings_new: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, `DROP TABLE app_settings`); err != nil {
+			return fmt.Errorf("drop legacy app_settings: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, `ALTER TABLE app_settings_new RENAME TO app_settings`); err != nil {
+			return fmt.Errorf("rename app_settings_new: %w", err)
+		}
+		return nil
+	})
+}
+
+func migrateSyncRunsTable(gdb *gorm.DB) error {
+	createSQL, err := getTableCreateSQL(gdb, "sync_runs")
+	if err != nil {
+		return err
+	}
+	if strings.Contains(createSQL, "'syncing'") {
+		return nil
+	}
+
+	return runImmediateMigration(gdb, func(ctx context.Context, conn *sql.Conn) error {
+		lockedSQL, err := getTableCreateSQLConn(ctx, conn, "sync_runs")
+		if err != nil {
+			return err
+		}
+		if strings.Contains(lockedSQL, "'syncing'") {
+			return nil
+		}
+		if _, err := conn.ExecContext(ctx, `DROP TABLE IF EXISTS sync_runs_new`); err != nil {
+			return fmt.Errorf("cleanup sync_runs_new: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, `
+			CREATE TABLE sync_runs_new (
+				id TEXT PRIMARY KEY,
+				status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'partial_error', 'failed', 'cancelled', 'interrupted')),
+				phase TEXT NOT NULL CHECK (phase IN ('preflight', 'fetching', 'syncing', 'extracting', 'done')),
+				llm_provider TEXT NOT NULL,
+				llm_model TEXT NOT NULL,
+				fetched_count INTEGER NOT NULL DEFAULT 0,
+				cleaned_count INTEGER NOT NULL DEFAULT 0,
+				imported_count INTEGER NOT NULL DEFAULT 0,
+				merged_count INTEGER NOT NULL DEFAULT 0,
+				skipped_count INTEGER NOT NULL DEFAULT 0,
+				failed_count INTEGER NOT NULL DEFAULT 0,
+				has_more_emails INTEGER NOT NULL DEFAULT 0 CHECK (has_more_emails IN (0, 1)),
+				provisional_accounts_created INTEGER NOT NULL DEFAULT 0,
+				error_message TEXT,
+				started_at_utc TEXT NOT NULL CHECK (length(started_at_utc) = 20 AND started_at_utc LIKE '%Z'),
+				finished_at_utc TEXT
+			) STRICT`); err != nil {
+			return fmt.Errorf("create sync_runs_new: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, `
+			INSERT INTO sync_runs_new (
+				id, status, phase, llm_provider, llm_model,
+				fetched_count, cleaned_count, imported_count, merged_count,
+				skipped_count, failed_count, has_more_emails, provisional_accounts_created,
+				error_message, started_at_utc, finished_at_utc
+			)
+			SELECT
+				id, status, phase, llm_provider, llm_model,
+				fetched_count, cleaned_count, imported_count, merged_count,
+				skipped_count, failed_count, has_more_emails, provisional_accounts_created,
+				error_message, started_at_utc, finished_at_utc
+			FROM sync_runs`); err != nil {
+			return fmt.Errorf("copy sync_runs into sync_runs_new: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, `DROP TABLE sync_runs`); err != nil {
+			return fmt.Errorf("drop legacy sync_runs: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, `ALTER TABLE sync_runs_new RENAME TO sync_runs`); err != nil {
+			return fmt.Errorf("rename sync_runs_new: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_runs_single_running ON sync_runs(status) WHERE status = 'running'`); err != nil {
+			return fmt.Errorf("recreate idx_sync_runs_single_running: %w", err)
+		}
+		return nil
+	})
 }
 
 func GetDB() (*gorm.DB, error) {

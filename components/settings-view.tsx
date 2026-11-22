@@ -44,6 +44,7 @@ import {
   disconnectGmailApi,
   dismissPendingQueueApi,
   gmailStatusQuery,
+  probeLlmModelsApi,
   retryFailedExtractionsApi,
   sendersQuery,
   settingsQuery,
@@ -62,10 +63,7 @@ import {
   utcToDateInputValue,
 } from "@/lib/format"
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`
-  return `${Math.round(bytes / 1024 ** 2)} MB`
-}
+const DEFAULT_LLM_BASE_URL = "http://localhost:9931/v1"
 
 const NO_DEFAULT_ACCOUNT = "__none__"
 
@@ -94,9 +92,16 @@ export function SettingsView({
   const [timezoneDraft, setTimezoneDraft] = useState<string | null>(null)
   const [localeMessage, setLocaleMessage] = useState<string | null>(null)
 
-  const [modelPathDraft, setModelPathDraft] = useState<string | null>(null)
-  const [contextSizeDraft, setContextSizeDraft] = useState<number | null>(null)
+  const [baseUrlDraft, setBaseUrlDraft] = useState<string | null>(null)
+  const [modelDraft, setModelDraft] = useState<string | null>(null)
+  const [customModelMode, setCustomModelMode] = useState(false)
   const [timeoutMsDraft, setTimeoutMsDraft] = useState<number | null>(null)
+  const [probedState, setProbedState] = useState<{
+    baseUrl: string
+    availableModels: string[]
+    serverReachable: boolean
+    serverError: string | null
+  } | null>(null)
   const [llmMessage, setLlmMessage] = useState<string | null>(null)
   const [batchLimitDraft, setBatchLimitDraft] = useState<number | null>(null)
   const [syncSettingsMessage, setSyncSettingsMessage] = useState<string | null>(
@@ -118,11 +123,20 @@ export function SettingsView({
   const rawCountryCode = countryDraft ?? settings.data?.country_code ?? ""
   const countryCode = rawCountryCode.trim().toUpperCase()
   const timezone = timezoneDraft ?? settings.data?.timezone ?? ""
-  const modelPath = modelPathDraft ?? settings.data?.llm_model_path ?? ""
-  const contextSize =
-    contextSizeDraft ?? settings.data?.llm_context_size ?? 8192
+  const baseUrl =
+    baseUrlDraft ?? settings.data?.llm_base_url ?? DEFAULT_LLM_BASE_URL
+  const llmModel = modelDraft ?? settings.data?.llm_model ?? ""
   const timeoutMs = timeoutMsDraft ?? settings.data?.llm_timeout_ms ?? 60000
   const batchLimit = batchLimitDraft ?? settings.data?.sync_batch_limit ?? 50
+
+  const activeProbe =
+    probedState && probedState.baseUrl === baseUrl.trim() ? probedState : null
+  const availableModels =
+    activeProbe?.availableModels ?? settings.data?.availableModels ?? []
+  const serverReachable =
+    activeProbe?.serverReachable ?? settings.data?.serverReachable ?? false
+  const serverError =
+    activeProbe?.serverError ?? settings.data?.serverError ?? null
 
   const selectedCountry = (settings.data?.countryCatalog ?? []).find(
     (c) => c.code === countryCode
@@ -185,14 +199,16 @@ export function SettingsView({
     [accounts.data]
   )
 
-  const modelItems = useMemo(
-    () =>
-      (settings.data?.availableModels ?? []).map((m) => ({
-        value: m.relativePath,
-        label: `${m.relativePath} (${formatBytes(m.sizeBytes)})`,
-      })),
-    [settings.data?.availableModels]
-  )
+  const modelItems = useMemo(() => {
+    const base = availableModels.map((id) => ({
+      value: id,
+      label: id,
+    }))
+    if (llmModel && !base.some((item) => item.value === llmModel)) {
+      base.push({ value: llmModel, label: llmModel })
+    }
+    return base
+  }, [availableModels, llmModel])
 
   const localeMutation = useMutation({
     mutationFn: updateLocaleSettingsApi,
@@ -211,13 +227,31 @@ export function SettingsView({
   const llmMutation = useMutation({
     mutationFn: updateLlmSettingsApi,
     onSuccess: () => {
-      setLlmMessage("Model settings saved.")
+      setBaseUrlDraft(null)
+      setModelDraft(null)
+      setTimeoutMsDraft(null)
+      setProbedState(null)
+      setLlmMessage("LLM server settings saved.")
       void queryClient.invalidateQueries({ queryKey: ["settings"] })
     },
     onError: (err) => {
       setLlmMessage(
-        err instanceof Error ? err.message : "Failed to save model settings."
+        err instanceof Error
+          ? err.message
+          : "Failed to save LLM server settings."
       )
+    },
+  })
+
+  const probeModelsMutation = useMutation({
+    mutationFn: (url: string) => probeLlmModelsApi(url),
+    onSuccess: (res, queriedUrl) => {
+      setProbedState({
+        baseUrl: queriedUrl.trim(),
+        availableModels: res.availableModels,
+        serverReachable: res.serverReachable,
+        serverError: res.serverError,
+      })
     },
   })
 
@@ -238,12 +272,12 @@ export function SettingsView({
     mutationFn: testLlmModelApi,
     onSuccess: (res) => {
       setModelTestResult(
-        `Loaded ${res.modelPath} cleanly (context ${res.contextSize}).`
+        `Connected to ${res.baseUrl} and verified model "${res.model}".`
       )
     },
     onError: (err) => {
       setModelTestResult(
-        err instanceof Error ? err.message : "Model test failed."
+        err instanceof Error ? err.message : "Connection test failed."
       )
     },
   })
@@ -374,7 +408,7 @@ export function SettingsView({
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground">
           Configure your locale, Gmail connection, trusted senders, and local
-          GGUF model.
+          LLM server.
         </p>
       </div>
 
@@ -813,23 +847,25 @@ export function SettingsView({
         </CardContent>
       </Card>
 
-      {/* Local GGUF Model */}
+      {/* Local LLM Server */}
       <Card>
         <CardHeader>
-          <CardTitle>Local GGUF Model</CardTitle>
+          <CardTitle>Local LLM Server</CardTitle>
           <CardDescription>
-            Models directory: {settings.data?.modelsDir ?? "models"}
+            OpenAI-compatible local endpoint (defaults to llama.app at{" "}
+            {DEFAULT_LLM_BASE_URL})
           </CardDescription>
           <CardAction>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={() =>
-                void queryClient.invalidateQueries({ queryKey: ["settings"] })
-              }
+              disabled={probeModelsMutation.isPending}
+              onClick={() => probeModelsMutation.mutate(baseUrl)}
             >
-              Rescan models
+              {probeModelsMutation.isPending
+                ? "Refreshing..."
+                : "Refresh models"}
             </Button>
           </CardAction>
         </CardHeader>
@@ -840,52 +876,73 @@ export function SettingsView({
               e.preventDefault()
               setLlmMessage(null)
               llmMutation.mutate({
-                llm_model_path: modelPath || null,
-                llm_context_size: contextSize || 8192,
+                llm_base_url: baseUrl,
+                llm_model: llmModel.trim() || null,
                 llm_timeout_ms: timeoutMs || 60000,
               })
             }}
           >
             <Field className="sm:col-span-3">
-              <FieldLabel>Selected .gguf model</FieldLabel>
-              <Select
-                items={modelItems}
-                value={modelPath || null}
-                onValueChange={(v) => setModelPathDraft(v ?? "")}
-              >
-                <SelectTrigger
-                  className="w-full"
-                  aria-label="Selected .gguf model"
-                >
-                  <SelectValue placeholder="Select a local GGUF model..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {modelItems.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>
-                      {item.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {(settings.data?.availableModels.length ?? 0) === 0 && (
+              <FieldLabel>Server URL</FieldLabel>
+              <Input
+                type="url"
+                placeholder={DEFAULT_LLM_BASE_URL}
+                value={baseUrl}
+                onChange={(e) => setBaseUrlDraft(e.target.value)}
+              />
+              {!serverReachable && serverError && (
                 <FieldDescription>
-                  Place a .gguf model file inside{" "}
-                  {settings.data?.modelsDir ?? "models"} and click Rescan
-                  models.
+                  Server unreachable: {serverError}
                 </FieldDescription>
               )}
             </Field>
 
-            <Field>
-              <FieldLabel>Context size</FieldLabel>
-              <Input
-                type="number"
-                min={512}
-                max={131072}
-                step={512}
-                value={contextSize}
-                onChange={(e) => setContextSizeDraft(Number(e.target.value))}
-              />
+            <Field className="sm:col-span-2">
+              <div className="flex items-center justify-between gap-2">
+                <FieldLabel>Model</FieldLabel>
+                {availableModels.length > 0 && (
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline hover:text-foreground"
+                    onClick={() => setCustomModelMode((prev) => !prev)}
+                  >
+                    {customModelMode
+                      ? "Choose from server list"
+                      : "Enter model ID manually"}
+                  </button>
+                )}
+              </div>
+              {availableModels.length > 0 && !customModelMode ? (
+                <Select
+                  items={modelItems}
+                  value={llmModel || null}
+                  onValueChange={(v) => setModelDraft(v ?? "")}
+                >
+                  <SelectTrigger className="w-full" aria-label="Selected model">
+                    <SelectValue placeholder="Select a model from your local server..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {modelItems.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  type="text"
+                  placeholder="Enter model ID (e.g. qwen2.5-3b-instruct)"
+                  value={llmModel}
+                  onChange={(e) => setModelDraft(e.target.value)}
+                />
+              )}
+              {!llmModel && (
+                <FieldDescription>
+                  Start llama.app (or your local server), click Refresh models,
+                  and select a model before syncing.
+                </FieldDescription>
+              )}
             </Field>
 
             <Field>
@@ -900,9 +957,9 @@ export function SettingsView({
               />
             </Field>
 
-            <div className="flex items-end gap-2">
+            <div className="flex items-end gap-2 sm:col-span-3">
               <Button type="submit" size="sm" disabled={llmMutation.isPending}>
-                Save model
+                Save server settings
               </Button>
               <Button
                 type="button"
@@ -911,14 +968,18 @@ export function SettingsView({
                 disabled={
                   syncStatus.data?.isRunning ||
                   testModelMutation.isPending ||
-                  !modelPath
+                  !llmModel.trim()
                 }
                 onClick={() => {
                   setModelTestResult(null)
-                  testModelMutation.mutate()
+                  testModelMutation.mutate({
+                    llm_base_url: baseUrl,
+                    llm_model: llmModel.trim(),
+                    llm_timeout_ms: timeoutMs || 60000,
+                  })
                 }}
               >
-                {testModelMutation.isPending ? "Testing..." : "Test load"}
+                {testModelMutation.isPending ? "Testing..." : "Test connection"}
               </Button>
             </div>
           </form>

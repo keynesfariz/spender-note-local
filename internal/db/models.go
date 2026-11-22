@@ -1,15 +1,15 @@
 package db
 
 type AppSetting struct {
-	ID              int     `gorm:"column:id;primaryKey" json:"id"`
-	CountryCode     *string `gorm:"column:country_code" json:"country_code"`
-	Timezone        *string `gorm:"column:timezone" json:"timezone"`
-	Currency        *string `gorm:"column:currency" json:"currency"`
-	LlmProvider     string  `gorm:"column:llm_provider;not null;default:gguf" json:"llm_provider"`
-	LlmModelPath    *string `gorm:"column:llm_model_path" json:"llm_model_path"`
-	LlmContextSize  int     `gorm:"column:llm_context_size;not null;default:8192" json:"llm_context_size"`
-	LlmTimeoutMs    int     `gorm:"column:llm_timeout_ms;not null;default:60000" json:"llm_timeout_ms"`
-	SyncBatchLimit  int     `gorm:"column:sync_batch_limit;not null;default:50" json:"sync_batch_limit"`
+	ID             int     `gorm:"column:id;primaryKey" json:"id"`
+	CountryCode    *string `gorm:"column:country_code" json:"country_code"`
+	Timezone       *string `gorm:"column:timezone" json:"timezone"`
+	Currency       *string `gorm:"column:currency" json:"currency"`
+	LlmProvider    string  `gorm:"column:llm_provider;not null;default:openai_compatible" json:"llm_provider"`
+	LlmBaseURL     string  `gorm:"column:llm_base_url;not null;default:http://localhost:9931/v1" json:"llm_base_url"`
+	LlmModel       *string `gorm:"column:llm_model" json:"llm_model"`
+	LlmTimeoutMs   int     `gorm:"column:llm_timeout_ms;not null;default:60000" json:"llm_timeout_ms"`
+	SyncBatchLimit int     `gorm:"column:sync_batch_limit;not null;default:50" json:"sync_batch_limit"`
 }
 
 func (AppSetting) TableName() string { return "app_settings" }

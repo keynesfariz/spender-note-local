@@ -524,6 +524,7 @@ export function AccountsView() {
           if (!open) setReconcilingAccount(null)
         }}
         account={reconcilingAccount}
+        timezone={settings.data?.timezone}
       />
 
       <MergeAccountDialog

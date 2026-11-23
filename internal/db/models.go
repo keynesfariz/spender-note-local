@@ -171,3 +171,32 @@ type TransactionSource struct {
 }
 
 func (TransactionSource) TableName() string { return "transaction_sources" }
+
+type Category struct {
+	ID             string `gorm:"column:id;primaryKey" json:"id"`
+	Name           string `gorm:"column:name;not null" json:"name"`
+	NormalizedName string `gorm:"column:normalized_name;not null;unique" json:"-"`
+	Icon           string `gorm:"column:icon;not null" json:"icon"`
+	IsSystem       int    `gorm:"column:is_system;not null;default:0" json:"is_system"`
+	SortOrder      int    `gorm:"column:sort_order;not null;default:0" json:"sort_order"`
+	CreatedAtUtc   string `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
+}
+
+func (Category) TableName() string { return "categories" }
+
+type Tag struct {
+	ID             string `gorm:"column:id;primaryKey" json:"id"`
+	Name           string `gorm:"column:name;not null" json:"name"`
+	NormalizedName string `gorm:"column:normalized_name;not null;unique" json:"-"`
+	CreatedAtUtc   string `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
+}
+
+func (Tag) TableName() string { return "tags" }
+
+type TransactionTag struct {
+	TransactionID string `gorm:"column:transaction_id;primaryKey" json:"transaction_id"`
+	TagID         string `gorm:"column:tag_id;primaryKey" json:"tag_id"`
+	CreatedAtUtc  string `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
+}
+
+func (TransactionTag) TableName() string { return "transaction_tags" }

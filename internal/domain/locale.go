@@ -5,15 +5,16 @@ import "strings"
 const DefaultCategory = "Other"
 
 var DefaultCategories = []string{
-	"Dining",
-	"Groceries",
-	"Transport",
-	"Shopping",
-	"Utilities & Bills",
+	"Housing",
+	"Food",
+	"Utilities",
+	"Transportation",
+	"Healthcare",
 	"Entertainment",
-	"Health",
-	"Travel",
-	"Subscriptions",
+	"Dining Out",
+	"Shopping",
+	"Education",
+	"Personal Care",
 	"Other",
 }
 

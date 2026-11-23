@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"portspendernote/internal/db"
+	"portspendernote/internal/domain"
 	"portspendernote/internal/gmail"
 	"portspendernote/internal/llm"
 )
@@ -511,7 +512,7 @@ func TestFullSync_PipelinesFetchAndExtractWithProvisionalAccountPropagation(t *t
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"email_kind":"card_charge","amount_decimal":"50000","currency":"IDR","transaction_date":"2026-11-22","transaction_time":"12:00:00","timezone_offset":"+07:00","merchant":"Cafe","category":"Dining","card_last4":"4321","payment_method":"NewBank Card","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"credit_card","reference_code":null}`}},
+				{"message": map[string]any{"content": `{"email_kind":"card_charge","amount_decimal":"50000","currency":"IDR","transaction_date":"2026-11-22","transaction_time":"12:00:00","timezone_offset":"+07:00","merchant":"Cafe","category":"Dining Out","card_last4":"4321","payment_method":"NewBank Card","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"credit_card","reference_code":null}`}},
 			},
 		})
 	}))
@@ -757,4 +758,99 @@ func waitForRunDone(t *testing.T, gdb *gorm.DB, runID string) {
 		time.Sleep(15 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for sync run %s to finish", runID)
+}
+
+func TestRunExtractionWorker_UsesCustomCategoriesFromDatabase(t *testing.T) {
+	gdb := openTestDB(t)
+	if _, err := domain.CreateCategory(gdb, domain.CreateCategoryInput{
+		Name: "Pet Supplies",
+		Icon: "PawPrint",
+	}); err != nil {
+		t.Fatalf("create custom category: %v", err)
+	}
+
+	var seenSystemPrompt string
+	var seenSchemaCategories bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+			ResponseFormat map[string]any `json:"response_format"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode llm request: %v", err)
+		}
+		for _, m := range body.Messages {
+			if m.Role == "system" {
+				seenSystemPrompt = m.Content
+			}
+		}
+		rawBytes, _ := json.Marshal(body.ResponseFormat)
+		if strings.Contains(string(rawBytes), "Pet Supplies") {
+			seenSchemaCategories = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": `{"email_kind":"receipt","amount_decimal":"120000","currency":"IDR","transaction_date":"2026-11-22","transaction_time":"11:00:00","timezone_offset":"+07:00","merchant":"Pet Kingdom","category":"Pet Supplies","card_last4":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	sender := seedSender(t, gdb, "sender-pet", "pet@example.com", nil)
+	if err := gdb.Create(&db.RawEmail{
+		ID:             "email-pet-1",
+		GmailMessageID: "gmail-pet-1",
+		SenderID:       &sender.ID,
+		FromAddress:    "pet@example.com",
+		Subject:        "Receipt from Pet Kingdom",
+		CleanedText:    "Paid Rp 120.000 at Pet Kingdom",
+		InternalDateMs: 1795278003000,
+		ReceivedAtUtc:  "2026-11-22T04:00:00Z",
+		Status:         "pending",
+	}).Error; err != nil {
+		t.Fatalf("create email: %v", err)
+	}
+	if err := gdb.Create(&db.SyncRun{
+		ID:           "run-pet-1",
+		Status:       "running",
+		Phase:        "extracting",
+		LlmProvider:  "openai_compatible",
+		LlmModel:     "qwen2.5",
+		StartedAtUtc: "2026-11-22T04:05:00Z",
+	}).Error; err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	cfg := &validatedConfig{
+		Timezone:     "Asia/Jakarta",
+		Currency:     "IDR",
+		LlmProvider:  "openai_compatible",
+		LlmBaseURL:   srv.URL + "/v1",
+		LlmModel:     "qwen2.5",
+		LlmTimeoutMs: 5000,
+	}
+	client, err := llm.NewClient(cfg.LlmBaseURL, 5*time.Second)
+	if err != nil {
+		t.Fatalf("new llm client: %v", err)
+	}
+	closedDone := make(chan struct{})
+	close(closedDone)
+	if err := runExtractionWorker(context.Background(), gdb, "run-pet-1", cfg, client, nil, closedDone, nil); err != nil {
+		t.Fatalf("runExtractionWorker: %v", err)
+	}
+
+	if !strings.Contains(seenSystemPrompt, "Pet Supplies") || !seenSchemaCategories {
+		t.Fatalf("expected custom category 'Pet Supplies' in LLM prompt and schema, got prompt=%q schemaHas=%v", seenSystemPrompt, seenSchemaCategories)
+	}
+	var tx db.Transaction
+	if err := gdb.First(&tx, "merchant = ?", "Pet Kingdom").Error; err != nil {
+		t.Fatalf("load created transaction: %v", err)
+	}
+	if tx.Category != "Pet Supplies" {
+		t.Fatalf("expected persisted transaction category 'Pet Supplies', got %q", tx.Category)
+	}
 }

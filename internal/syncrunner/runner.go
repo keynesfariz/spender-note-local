@@ -645,6 +645,7 @@ func runExtractionWorker(
 		}
 
 		userCurrency := cfg.Currency
+		categoryNames, _ := domain.ListCategoryNames(gdb)
 		extracted, err := llmClient.ExtractTransaction(runCtx, cfg.LlmModel, llm.ExtractInput{
 			EmailID:            email.ID,
 			FromAddress:        email.FromAddress,
@@ -655,6 +656,7 @@ func runExtractionWorker(
 			CountryPromptRules: countryPromptRules,
 			UserTimezone:       cfg.Timezone,
 			UserCurrency:       &userCurrency,
+			Categories:         categoryNames,
 			Accounts:           accountContexts,
 		})
 		if runCtx.Err() != nil {
@@ -696,6 +698,8 @@ func runExtractionWorker(
 				effectiveRole = *email.RoleHint
 			}
 
+			canonicalCategory := domain.ResolveKnownCategory(tx, extracted.Category)
+
 			if err := tx.Exec(`
 				INSERT OR REPLACE INTO email_extractions (
 					id, email_id, email_kind, amount_minor, currency, occurred_at_utc,
@@ -705,7 +709,7 @@ func runExtractionWorker(
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				uuid.NewString(), email.ID, effectiveRole, extracted.AmountMinor, extracted.Currency,
 				extracted.OccurredAtUtc, extracted.MerchantRaw, domain.NormalizeMerchant(extracted.MerchantRaw),
-				extracted.Category, extracted.CardLast4, extracted.PaymentMethodRaw, extracted.BankAccountHint,
+				canonicalCategory, extracted.CardLast4, extracted.PaymentMethodRaw, extracted.BankAccountHint,
 				extracted.MatchedAccountID, extracted.ReferenceCode, cfg.LlmModel, extracted.RawJSON,
 			).Error; err != nil {
 				return err
@@ -745,7 +749,7 @@ func runExtractionWorker(
 				Currency:          extracted.Currency,
 				OccurredAtUtc:     extracted.OccurredAtUtc,
 				MerchantRaw:       extracted.MerchantRaw,
-				Category:          extracted.Category,
+				Category:          canonicalCategory,
 				CardLast4:         extracted.CardLast4,
 				ReferenceCode:     extracted.ReferenceCode,
 				ResolvedAccountID: accountID,

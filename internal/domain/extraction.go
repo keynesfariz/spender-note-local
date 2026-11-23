@@ -121,9 +121,9 @@ func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc s
 
 	category := DefaultCategory
 	if receipt != nil && receipt.Category != nil && *receipt.Category != "" {
-		category = *receipt.Category
+		category = ResolveKnownCategory(tx, *receipt.Category)
 	} else if primary.Category != nil && *primary.Category != "" {
-		category = *primary.Category
+		category = ResolveKnownCategory(tx, *primary.Category)
 	}
 
 	var accountID *string
@@ -210,10 +210,7 @@ func SaveExtractedTransaction(gdb *gorm.DB, input ExtractedTransactionInput) (st
 		if merchant == "" {
 			merchant = "Unknown Merchant"
 		}
-		category := strings.TrimSpace(input.Category)
-		if category == "" {
-			category = DefaultCategory
-		}
+		category := ResolveKnownCategory(tx, input.Category)
 
 		txID = uuid.NewString()
 		if err := tx.Create(&db.Transaction{
@@ -322,7 +319,7 @@ func SplitTransactionSource(gdb *gorm.DB, transactionID, emailID string) (string
 		}
 		category := DefaultCategory
 		if ext.Category != nil && *ext.Category != "" {
-			category = *ext.Category
+			category = ResolveKnownCategory(tx, *ext.Category)
 		}
 
 		if err := tx.Create(&db.Transaction{

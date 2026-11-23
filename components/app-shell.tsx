@@ -13,6 +13,7 @@ import { gmailStatusQuery, syncStatusQuery, triggerSyncApi } from "@/lib/api"
 const NAV_ITEMS = [
   { href: "/transactions", label: "Transactions" },
   { href: "/accounts", label: "Accounts" },
+  { href: "/categories", label: "Categories & Tags" },
   { href: "/settings", label: "Settings" },
 ]
 

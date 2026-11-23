@@ -11,12 +11,51 @@ import (
 )
 
 type CreateManualTransactionInput struct {
-	AmountMinor   int64   `json:"amount_minor"`
-	OccurredAtUtc string  `json:"occurred_at_utc"`
-	Merchant      string  `json:"merchant"`
-	Category      *string `json:"category"`
-	AccountID     *string `json:"account_id"`
-	Note          *string `json:"note"`
+	AmountMinor   int64    `json:"amount_minor"`
+	OccurredAtUtc string   `json:"occurred_at_utc"`
+	Merchant      string   `json:"merchant"`
+	Category      *string  `json:"category"`
+	TagIDs        []string `json:"tag_ids"`
+	AccountID     *string  `json:"account_id"`
+	Note          *string  `json:"note"`
+}
+
+func validateTransactionCategory(tx *gorm.DB, rawCategory string) (string, error) {
+	cat, err := lookupCategoryByName(tx, rawCategory)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", errors.New("Selected category does not exist.")
+		}
+		return "", err
+	}
+	return cat.Name, nil
+}
+
+func replaceTransactionTags(tx *gorm.DB, transactionID string, rawTagIDs []string, nowUtc string) error {
+	tagIDs := normalizeTransactionIDs(rawTagIDs)
+	if len(tagIDs) > 0 {
+		var existingCount int64
+		if err := tx.Model(&db.Tag{}).Where("id IN ?", tagIDs).Count(&existingCount).Error; err != nil {
+			return err
+		}
+		if int(existingCount) != len(tagIDs) {
+			return errors.New("One or more selected tags do not exist.")
+		}
+	}
+
+	if err := tx.Where("transaction_id = ?", transactionID).Delete(&db.TransactionTag{}).Error; err != nil {
+		return err
+	}
+	for _, tagID := range tagIDs {
+		if err := tx.Create(&db.TransactionTag{
+			TransactionID: transactionID,
+			TagID:         tagID,
+			CreatedAtUtc:  nowUtc,
+		}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func CreateManualTransaction(gdb *gorm.DB, input CreateManualTransactionInput) (*TransactionListItem, error) {
@@ -42,56 +81,75 @@ func CreateManualTransaction(gdb *gorm.DB, input CreateManualTransactionInput) (
 	if input.Category != nil && strings.TrimSpace(*input.Category) != "" {
 		category = strings.TrimSpace(*input.Category)
 	}
-	var accountID *string
-	if input.AccountID != nil && strings.TrimSpace(*input.AccountID) != "" {
-		trimmed := strings.TrimSpace(*input.AccountID)
-		if err := AssertAccountExists(gdb, trimmed, ""); err != nil {
-			return nil, err
-		}
-		accountID = &trimmed
-	}
+
 	var note *string
 	if input.Note != nil && strings.TrimSpace(*input.Note) != "" {
 		trimmed := strings.TrimSpace(*input.Note)
 		note = &trimmed
 	}
 
-	id := uuid.NewString()
-	nowUtc := NowUtcIsoSeconds()
-	if err := gdb.Create(&db.Transaction{
-		ID:             id,
-		SourceType:     "manual",
-		AccountID:      accountID,
-		AmountMinor:    input.AmountMinor,
-		Currency:       *curPtr,
-		OccurredAtUtc:  occurred,
-		Merchant:       merchant,
-		Category:       category,
-		ManualOverride: 0,
-		Reviewed:       1,
-		Note:           note,
-		CreatedAtUtc:   nowUtc,
-		UpdatedAtUtc:   nowUtc,
-	}).Error; err != nil {
-		return nil, err
-	}
-	detail, err := GetTransactionDetail(gdb, id)
+	var created TransactionListItem
+	err = gdb.Transaction(func(tx *gorm.DB) error {
+		canonicalCategory, err := validateTransactionCategory(tx, category)
+		if err != nil {
+			return err
+		}
+		var accountID *string
+		if input.AccountID != nil && strings.TrimSpace(*input.AccountID) != "" {
+			trimmed := strings.TrimSpace(*input.AccountID)
+			if err := AssertAccountExists(tx, trimmed, ""); err != nil {
+				return err
+			}
+			accountID = &trimmed
+		}
+
+		id := uuid.NewString()
+		nowUtc := NowUtcIsoSeconds()
+		if err := tx.Create(&db.Transaction{
+			ID:             id,
+			SourceType:     "manual",
+			AccountID:      accountID,
+			AmountMinor:    input.AmountMinor,
+			Currency:       *curPtr,
+			OccurredAtUtc:  occurred,
+			Merchant:       merchant,
+			Category:       canonicalCategory,
+			ManualOverride: 0,
+			Reviewed:       1,
+			Note:           note,
+			CreatedAtUtc:   nowUtc,
+			UpdatedAtUtc:   nowUtc,
+		}).Error; err != nil {
+			return err
+		}
+		if err := replaceTransactionTags(tx, id, input.TagIDs, nowUtc); err != nil {
+			return err
+		}
+		detail, err := GetTransactionDetail(tx, id)
+		if err != nil {
+			return err
+		}
+		created = detail.Transaction
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	return &detail.Transaction, nil
+	return &created, nil
 }
 
 type UpdateTransactionInput struct {
-	AmountMinor            *int64  `json:"amount_minor"`
-	OccurredAtUtc          *string `json:"occurred_at_utc"`
-	Merchant               *string `json:"merchant"`
-	Category               *string `json:"category"`
-	HasAccountID           bool    `json:"-"`
-	AccountID              *string `json:"account_id"`
-	HasNote                bool    `json:"-"`
-	Note                   *string `json:"note"`
-	ConvertToLocalCurrency *bool   `json:"convertToLocalCurrency"`
+	AmountMinor            *int64   `json:"amount_minor"`
+	OccurredAtUtc          *string  `json:"occurred_at_utc"`
+	Merchant               *string  `json:"merchant"`
+	Category               *string  `json:"category"`
+	HasTagIDs              bool     `json:"-"`
+	TagIDs                 []string `json:"tag_ids"`
+	HasAccountID           bool     `json:"-"`
+	AccountID              *string  `json:"account_id"`
+	HasNote                bool     `json:"-"`
+	Note                   *string  `json:"note"`
+	ConvertToLocalCurrency *bool    `json:"convertToLocalCurrency"`
 }
 
 func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*TransactionListItem, error) {
@@ -132,10 +190,15 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 
 		category := current.Category
 		if patch.Category != nil {
-			category = strings.TrimSpace(*patch.Category)
-		}
-		if category == "" {
-			return errors.New("Category is required.")
+			rawCat := strings.TrimSpace(*patch.Category)
+			if rawCat == "" {
+				return errors.New("Category is required.")
+			}
+			canonicalCat, err := validateTransactionCategory(tx, rawCat)
+			if err != nil {
+				return err
+			}
+			category = canonicalCat
 		}
 
 		accountID := current.AccountID
@@ -173,6 +236,7 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 			manualOverride = 1
 		}
 
+		nowUtc := NowUtcIsoSeconds()
 		if err := tx.Model(&db.Transaction{}).Where("id = ?", id).Updates(map[string]any{
 			"account_id":      accountID,
 			"amount_minor":    amountMinor,
@@ -183,9 +247,15 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 			"manual_override": manualOverride,
 			"reviewed":        1,
 			"note":            note,
-			"updated_at_utc":  NowUtcIsoSeconds(),
+			"updated_at_utc":  nowUtc,
 		}).Error; err != nil {
 			return err
+		}
+
+		if patch.HasTagIDs {
+			if err := replaceTransactionTags(tx, id, patch.TagIDs, nowUtc); err != nil {
+				return err
+			}
 		}
 
 		detail, err := GetTransactionDetail(tx, id)
@@ -327,13 +397,23 @@ func DuplicateMergeTransactions(gdb *gorm.DB, keepID, dropID string) (*Transacti
 			return err
 		}
 
+		// Preserve deduplicated tag union on the kept transaction before dropping the duplicate.
+		nowUtc := NowUtcIsoSeconds()
+		if err := tx.Exec(`
+			INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id, created_at_utc)
+			SELECT ?, tag_id, ? FROM transaction_tags WHERE transaction_id = ?`,
+			keepID, nowUtc, dropID,
+		).Error; err != nil {
+			return err
+		}
+
 		if err := tx.Where("id = ?", dropID).Delete(&db.Transaction{}).Error; err != nil {
 			return err
 		}
 
 		if err := tx.Model(&db.Transaction{}).Where("id = ?", keepID).Updates(map[string]any{
 			"reviewed":       1,
-			"updated_at_utc": NowUtcIsoSeconds(),
+			"updated_at_utc": nowUtc,
 		}).Error; err != nil {
 			return err
 		}
@@ -422,8 +502,23 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 			}
 		}
 
+		canonicalCategory, err := validateTransactionCategory(tx, category)
+		if err != nil {
+			return err
+		}
+
 		survivorID := ids[0]
 		absorbedIDs := ids[1:]
+
+		// Preserve deduplicated tag union across all combined transactions before deleting absorbed rows.
+		nowUtc := NowUtcIsoSeconds()
+		if err := tx.Exec(`
+			INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id, created_at_utc)
+			SELECT ?, tag_id, ? FROM transaction_tags WHERE transaction_id IN ?`,
+			survivorID, nowUtc, absorbedIDs,
+		).Error; err != nil {
+			return err
+		}
 
 		// Re-point transaction_sources from absorbed transactions before deletion.
 		if err := tx.Model(&db.TransactionSource{}).Where("transaction_id IN ?", absorbedIDs).Updates(map[string]any{
@@ -445,11 +540,11 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 			"amount_minor":    totalAmount,
 			"occurred_at_utc": occurred,
 			"merchant":        merchant,
-			"category":        category,
+			"category":        canonicalCategory,
 			"manual_override": 1,
 			"reviewed":        1,
 			"note":            note,
-			"updated_at_utc":  NowUtcIsoSeconds(),
+			"updated_at_utc":  nowUtc,
 		}).Error; err != nil {
 			return err
 		}

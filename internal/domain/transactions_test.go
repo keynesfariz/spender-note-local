@@ -113,7 +113,7 @@ func TestCombineTransactions_SumsAmountsLocksOverrideTransfersEmailsAndMarksRevi
 		OccurredAtUtc: "2026-11-21T08:52:00Z", MerchantRaw: "Other", Category: "Food", ResolvedAccountID: &acctB,
 	})
 
-	cat := "Food & Dining"
+	cat := "Dining Out"
 	note := "Food + driver tip"
 	if _, err := CombineTransactions(gdb, CombineTransactionsInput{
 		TransactionIDs: []string{txFood, txOtherAcct},
@@ -449,5 +449,164 @@ func TestDeleteTransaction_DeletesSingleAndRejectsMissing(t *testing.T) {
 	}
 	if em.Status != "dismissed" {
 		t.Fatalf("expected e-single status to be 'dismissed', got %q", em.Status)
+	}
+}
+
+func TestTransactions_MultiTagCreateUpdateClearAndFilter(t *testing.T) {
+	gdb := openDomainTestDB(t)
+
+	tagJapan, err := CreateTag(gdb, CreateTagInput{Name: "Japan"})
+	if err != nil {
+		t.Fatalf("create tag Japan: %v", err)
+	}
+	tagWork, err := CreateTag(gdb, CreateTagInput{Name: "Reimbursable"})
+	if err != nil {
+		t.Fatalf("create tag Reimbursable: %v", err)
+	}
+	tagSnack, err := CreateTag(gdb, CreateTagInput{Name: "Snacks"})
+	if err != nil {
+		t.Fatalf("create tag Snacks: %v", err)
+	}
+
+	catFood := "Food"
+	tx1, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor:   25000,
+		OccurredAtUtc: "2026-11-21T08:00:00Z",
+		Merchant:      "Tokyo Ramen",
+		Category:      &catFood,
+		TagIDs:        []string{tagWork.ID, tagJapan.ID},
+	})
+	if err != nil {
+		t.Fatalf("CreateManualTransaction: %v", err)
+	}
+	if len(tx1.Tags) != 2 || tx1.Tags[0].Name != "Japan" || tx1.Tags[1].Name != "Reimbursable" {
+		t.Fatalf("expected sorted tags [Japan, Reimbursable], got %+v", tx1.Tags)
+	}
+
+	tx2, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor:   15000,
+		OccurredAtUtc: "2026-11-21T09:00:00Z",
+		Merchant:      "Local Cafe",
+		Category:      &catFood,
+		TagIDs:        []string{tagSnack.ID},
+	})
+	if err != nil {
+		t.Fatalf("CreateManualTransaction 2: %v", err)
+	}
+
+	filtered, err := ListTransactions(gdb, ListTransactionsParams{
+		Tag: "Japan",
+	})
+	if err != nil {
+		t.Fatalf("ListTransactions by tag: %v", err)
+	}
+	if filtered.TotalCount != 1 || filtered.TotalInRangeCount != 2 || len(filtered.Items) != 1 || filtered.Items[0].ID != tx1.ID {
+		t.Fatalf("unexpected tag-filtered result: %+v", filtered)
+	}
+	if len(filtered.Items[0].Tags) != 2 {
+		t.Fatalf("expected 2 hydrated tags on list item, got %+v", filtered.Items[0].Tags)
+	}
+
+	// Update replaces tags when HasTagIDs=true, and preserves tags when HasTagIDs=false.
+	newMerchant := "Tokyo Ramen Updated"
+	unchangedTags, err := UpdateTransaction(gdb, tx1.ID, UpdateTransactionInput{
+		Merchant: &newMerchant,
+	})
+	if err != nil {
+		t.Fatalf("UpdateTransaction without HasTagIDs: %v", err)
+	}
+	if len(unchangedTags.Tags) != 2 {
+		t.Fatalf("expected tags unchanged when HasTagIDs=false, got %+v", unchangedTags.Tags)
+	}
+
+	replaced, err := UpdateTransaction(gdb, tx1.ID, UpdateTransactionInput{
+		HasTagIDs: true,
+		TagIDs:    []string{tagSnack.ID},
+	})
+	if err != nil {
+		t.Fatalf("UpdateTransaction replacing tags: %v", err)
+	}
+	if len(replaced.Tags) != 1 || replaced.Tags[0].ID != tagSnack.ID {
+		t.Fatalf("expected tags replaced with [Snacks], got %+v", replaced.Tags)
+	}
+
+	cleared, err := UpdateTransaction(gdb, tx2.ID, UpdateTransactionInput{
+		HasTagIDs: true,
+		TagIDs:    []string{},
+	})
+	if err != nil {
+		t.Fatalf("UpdateTransaction clearing tags: %v", err)
+	}
+	if len(cleared.Tags) != 0 {
+		t.Fatalf("expected empty tags after clear, got %+v", cleared.Tags)
+	}
+}
+
+func TestTransactions_DuplicateMergeAndCombinePreserveTagUnion(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	acctA := seedTestAccount(t, gdb, "acct-a", "Card A", "IDR")
+
+	tagJapan, _ := CreateTag(gdb, CreateTagInput{Name: "Japan"})
+	tagFood, _ := CreateTag(gdb, CreateTagInput{Name: "Food"})
+	tagReimb, _ := CreateTag(gdb, CreateTagInput{Name: "Reimbursable"})
+
+	txA, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor:   50000,
+		OccurredAtUtc: "2026-11-21T08:00:00Z",
+		Merchant:      "Izakaya A",
+		AccountID:     &acctA,
+		TagIDs:        []string{tagJapan.ID, tagFood.ID},
+	})
+	if err != nil {
+		t.Fatalf("create txA: %v", err)
+	}
+	txB, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor:   50000,
+		OccurredAtUtc: "2026-11-21T08:05:00Z",
+		Merchant:      "Izakaya B",
+		AccountID:     &acctA,
+		TagIDs:        []string{tagJapan.ID, tagReimb.ID},
+	})
+	if err != nil {
+		t.Fatalf("create txB: %v", err)
+	}
+
+	dupMerged, err := DuplicateMergeTransactions(gdb, txA.ID, txB.ID)
+	if err != nil {
+		t.Fatalf("DuplicateMergeTransactions: %v", err)
+	}
+	if len(dupMerged.Tags) != 3 || dupMerged.Tags[0].Name != "Food" || dupMerged.Tags[1].Name != "Japan" || dupMerged.Tags[2].Name != "Reimbursable" {
+		t.Fatalf("expected union tags [Food, Japan, Reimbursable] on duplicate merge, got %+v", dupMerged.Tags)
+	}
+
+	txC, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor:   15000,
+		OccurredAtUtc: "2026-11-21T09:00:00Z",
+		Merchant:      "Dessert",
+		AccountID:     &acctA,
+		TagIDs:        []string{tagFood.ID},
+	})
+	txD, err2 := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor:   20000,
+		OccurredAtUtc: "2026-11-21T09:05:00Z",
+		Merchant:      "Tea",
+		AccountID:     &acctA,
+		TagIDs:        []string{tagJapan.ID, tagReimb.ID},
+	})
+	if err != nil || err2 != nil {
+		t.Fatalf("create txC/txD: %v %v", err, err2)
+	}
+	cat := "Dining Out"
+	combined, err := CombineTransactions(gdb, CombineTransactionsInput{
+		TransactionIDs: []string{txC.ID, txD.ID},
+		Merchant:       "Izakaya Evening",
+		Category:       &cat,
+		OccurredAtUtc:  "2026-11-21T09:05:00Z",
+	})
+	if err != nil {
+		t.Fatalf("CombineTransactions: %v", err)
+	}
+	if len(combined.Tags) != 3 || combined.Tags[0].Name != "Food" || combined.Tags[1].Name != "Japan" || combined.Tags[2].Name != "Reimbursable" {
+		t.Fatalf("expected union tags [Food, Japan, Reimbursable] on combine, got %+v", combined.Tags)
 	}
 }

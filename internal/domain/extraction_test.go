@@ -164,3 +164,75 @@ func TestSplitTransactionSource_DetachedTransactionStartsUnreviewedWithoutReject
 		t.Fatalf("expected split transaction amount 10000, got %d", splitTx.AmountMinor)
 	}
 }
+
+func TestSplitTransactionSource_PreservesParentTagsOnBothTransactions(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	acctID := seedTestAccount(t, gdb, "acct-1", "BCA Card", "IDR")
+	seedTestEmail(t, gdb, "email-s1", 1795251000000, "2026-11-21T08:50:00Z")
+	seedTestEmail(t, gdb, "email-s2", 1795251060000, "2026-11-21T08:51:00Z")
+
+	tag1, err := CreateTag(gdb, CreateTagInput{Name: "Japan"})
+	if err != nil {
+		t.Fatalf("create tag1: %v", err)
+	}
+	tag2, err := CreateTag(gdb, CreateTagInput{Name: "Reimbursable"})
+	if err != nil {
+		t.Fatalf("create tag2: %v", err)
+	}
+
+	txID, err := SaveExtractedTransaction(gdb, ExtractedTransactionInput{
+		EmailID:           "email-s1",
+		EmailKind:         "card_charge",
+		AmountMinor:       50000,
+		Currency:          "IDR",
+		OccurredAtUtc:     "2026-11-21T08:50:00Z",
+		MerchantRaw:       "GrabFood",
+		Category:          "Food",
+		ResolvedAccountID: &acctID,
+	})
+	if err != nil {
+		t.Fatalf("save first email: %v", err)
+	}
+	if _, err := UpdateTransaction(gdb, txID, UpdateTransactionInput{
+		HasTagIDs: true,
+		TagIDs:    []string{tag1.ID, tag2.ID},
+	}); err != nil {
+		t.Fatalf("tag parent tx: %v", err)
+	}
+	if err := gdb.Exec(`
+		INSERT INTO email_extractions (id, email_id, email_kind, amount_minor, currency, occurred_at_utc, merchant_raw, merchant_norm, category, extraction_model, raw_llm_json)
+		VALUES ('ext-s2', 'email-s2', 'receipt', 10000, 'IDR', '2026-11-21T08:51:00Z', 'GrabFood Tip', 'grabfood tip', 'Food', 'sync', '{}')
+	`).Error; err != nil {
+		t.Fatalf("insert extraction 2: %v", err)
+	}
+	if err := gdb.Create(&db.TransactionSource{
+		ID:            "src-s2",
+		TransactionID: txID,
+		EmailID:       "email-s2",
+		Role:          "receipt",
+		MatchScore:    1.0,
+		MatchState:    "confirmed",
+	}).Error; err != nil {
+		t.Fatalf("attach second source: %v", err)
+	}
+
+	splitTxID, err := SplitTransactionSource(gdb, txID, "email-s2")
+	if err != nil {
+		t.Fatalf("SplitTransactionSource: %v", err)
+	}
+
+	parentDetail, err := GetTransactionDetail(gdb, txID)
+	if err != nil {
+		t.Fatalf("load parent detail: %v", err)
+	}
+	splitDetail, err := GetTransactionDetail(gdb, splitTxID)
+	if err != nil {
+		t.Fatalf("load split detail: %v", err)
+	}
+	if len(parentDetail.Transaction.Tags) != 2 {
+		t.Fatalf("expected parent to keep 2 tags, got %+v", parentDetail.Transaction.Tags)
+	}
+	if len(splitDetail.Transaction.Tags) != 2 || splitDetail.Transaction.Tags[0].Name != "Japan" || splitDetail.Transaction.Tags[1].Name != "Reimbursable" {
+		t.Fatalf("expected split tx to inherit parent tags [Japan, Reimbursable], got %+v", splitDetail.Transaction.Tags)
+	}
+}

@@ -42,25 +42,31 @@ type MonthlySpendingSummary struct {
 	ByAccount            []SpendingGroupRow `json:"byAccount"`
 }
 
+type TransactionTagItem struct {
+	ID   string `gorm:"column:id" json:"id"`
+	Name string `gorm:"column:name" json:"name"`
+}
+
 type TransactionListItem struct {
-	ID                string   `json:"id"`
-	SourceType        string   `json:"source_type"`
-	AccountID         *string  `json:"account_id"`
-	AccountName       *string  `json:"account_name"`
-	PaymentMethodRaw  *string  `json:"payment_method_raw"`
-	AmountMinor       int64    `json:"amount_minor"`
-	Currency          string   `json:"currency"`
-	OccurredAtUtc     string   `json:"occurred_at_utc"`
-	Merchant          string   `json:"merchant"`
-	Category          string   `json:"category"`
-	ManualOverride    int      `json:"manual_override"`
-	Reviewed          int      `json:"reviewed"`
-	Note              *string  `json:"note"`
-	CreatedAtUtc      string   `json:"created_at_utc"`
-	UpdatedAtUtc      string   `json:"updated_at_utc"`
-	SourceCount       int      `json:"sourceCount"`
-	SourceRoles       []string `json:"sourceRoles"`
-	IsForeignCurrency bool     `json:"isForeignCurrency"`
+	ID                string               `json:"id"`
+	SourceType        string               `json:"source_type"`
+	AccountID         *string              `json:"account_id"`
+	AccountName       *string              `json:"account_name"`
+	PaymentMethodRaw  *string              `json:"payment_method_raw"`
+	AmountMinor       int64                `json:"amount_minor"`
+	Currency          string               `json:"currency"`
+	OccurredAtUtc     string               `json:"occurred_at_utc"`
+	Merchant          string               `json:"merchant"`
+	Category          string               `json:"category"`
+	Tags              []TransactionTagItem `json:"tags"`
+	ManualOverride    int                  `json:"manual_override"`
+	Reviewed          int                  `json:"reviewed"`
+	Note              *string              `json:"note"`
+	CreatedAtUtc      string               `json:"created_at_utc"`
+	UpdatedAtUtc      string               `json:"updated_at_utc"`
+	SourceCount       int                  `json:"sourceCount"`
+	SourceRoles       []string             `json:"sourceRoles"`
+	IsForeignCurrency bool                 `json:"isForeignCurrency"`
 }
 
 type TransactionSourceView struct {
@@ -217,6 +223,7 @@ type ListTransactionsParams struct {
 	StartDate      string
 	EndDate        string
 	Category       string
+	Tag            string
 	AccountID      string
 	Search         string
 	UnreviewedOnly bool
@@ -285,6 +292,16 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 	if params.Category != "" && params.Category != "all" {
 		conds = append(conds, "t.category = ?")
 		args = append(args, params.Category)
+	}
+	if t := strings.TrimSpace(params.Tag); t != "" && t != "all" {
+		conds = append(conds, `EXISTS (
+			SELECT 1
+			FROM transaction_tags tt
+			JOIN tags tg ON tg.id = tt.tag_id
+			WHERE tt.transaction_id = t.id
+			  AND (tg.name = ? OR tg.normalized_name = ? OR tg.id = ?)
+		)`)
+		args = append(args, t, strings.ToLower(t), t)
 	}
 	if params.AccountID != "" && params.AccountID != "all" {
 		if params.AccountID == "unassigned" {
@@ -372,6 +389,7 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 	rolesByTx := map[string][]string{}
 	pmByTx := map[string]*string{}
 	pmIsReceiptByTx := map[string]bool{}
+	tagsByTx := map[string][]TransactionTagItem{}
 	if len(rows) > 0 {
 		txIDs := make([]string, len(rows))
 		for i, r := range rows {
@@ -404,6 +422,27 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 				}
 			}
 		}
+
+		type pageTagRow struct {
+			TransactionID string `gorm:"column:transaction_id"`
+			TagID         string `gorm:"column:tag_id"`
+			TagName       string `gorm:"column:tag_name"`
+		}
+		var tagRows []pageTagRow
+		if err := gdb.Raw(`
+			SELECT tt.transaction_id, tg.id AS tag_id, tg.name AS tag_name
+			FROM transaction_tags tt
+			JOIN tags tg ON tg.id = tt.tag_id
+			WHERE tt.transaction_id IN ?
+			ORDER BY LOWER(tg.name) ASC, tg.id ASC`, txIDs).Scan(&tagRows).Error; err != nil {
+			return nil, err
+		}
+		for _, tr := range tagRows {
+			tagsByTx[tr.TransactionID] = append(tagsByTx[tr.TransactionID], TransactionTagItem{
+				ID:   tr.TagID,
+				Name: tr.TagName,
+			})
+		}
 	}
 
 	out := make([]TransactionListItem, 0, len(rows))
@@ -411,6 +450,10 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 		roles := rolesByTx[r.ID]
 		if roles == nil {
 			roles = []string{}
+		}
+		tags := tagsByTx[r.ID]
+		if tags == nil {
+			tags = []TransactionTagItem{}
 		}
 		out = append(out, TransactionListItem{
 			ID:                r.ID,
@@ -423,6 +466,7 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 			OccurredAtUtc:     r.OccurredAtUtc,
 			Merchant:          r.Merchant,
 			Category:          r.Category,
+			Tags:              tags,
 			ManualOverride:    r.ManualOverride,
 			Reviewed:          r.Reviewed,
 			Note:              r.Note,
@@ -497,6 +541,15 @@ func GetTransactionDetail(gdb *gorm.DB, id string) (*TransactionDetailView, erro
 	for _, s := range sources {
 		roles = append(roles, s.Role)
 	}
+	tags := []TransactionTagItem{}
+	if err := gdb.Raw(`
+		SELECT tg.id, tg.name
+		FROM transaction_tags tt
+		JOIN tags tg ON tg.id = tt.tag_id
+		WHERE tt.transaction_id = ?
+		ORDER BY LOWER(tg.name) ASC, tg.id ASC`, id).Scan(&tags).Error; err != nil {
+		return nil, err
+	}
 	isForeign := false
 	if curPtr != nil && *curPtr != "" {
 		isForeign = txRow.Currency != *curPtr
@@ -514,6 +567,7 @@ func GetTransactionDetail(gdb *gorm.DB, id string) (*TransactionDetailView, erro
 			OccurredAtUtc:     txRow.OccurredAtUtc,
 			Merchant:          txRow.Merchant,
 			Category:          txRow.Category,
+			Tags:              tags,
 			ManualOverride:    txRow.ManualOverride,
 			Reviewed:          txRow.Reviewed,
 			Note:              txRow.Note,

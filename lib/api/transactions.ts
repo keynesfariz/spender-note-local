@@ -21,6 +21,7 @@ export const transactionsQuery = (params?: {
   startDate?: string
   endDate?: string
   category?: string
+  tag?: string
   accountId?: string
   search?: string
   unreviewedOnly?: boolean
@@ -35,6 +36,7 @@ export const transactionsQuery = (params?: {
       if (params?.startDate) sp.set("startDate", params.startDate)
       if (params?.endDate) sp.set("endDate", params.endDate)
       if (params?.category) sp.set("category", params.category)
+      if (params?.tag) sp.set("tag", params.tag)
       if (params?.accountId) sp.set("accountId", params.accountId)
       if (params?.search) sp.set("search", params.search)
       if (params?.unreviewedOnly) sp.set("unreviewedOnly", "true")
@@ -61,6 +63,7 @@ export const addManualTransactionApi = (input: {
   occurred_at_utc: string
   merchant: string
   category?: string
+  tag_ids?: string[]
   account_id?: string | null
   note?: string | null
 }) =>
@@ -75,6 +78,7 @@ export const updateTransactionApi = (input: {
   occurred_at_utc?: string
   merchant?: string
   category?: string
+  tag_ids?: string[]
   account_id?: string | null
   note?: string | null
   convertToLocalCurrency?: boolean

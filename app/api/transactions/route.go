@@ -23,6 +23,7 @@ func GET(w http.ResponseWriter, r *http.Request) {
 		StartDate:      q.Get("startDate"),
 		EndDate:        q.Get("endDate"),
 		Category:       q.Get("category"),
+		Tag:            q.Get("tag"),
 		AccountID:      q.Get("accountId"),
 		Search:         q.Get("search"),
 		UnreviewedOnly: q.Get("unreviewedOnly") == "true" || q.Get("unreviewedOnly") == "1",

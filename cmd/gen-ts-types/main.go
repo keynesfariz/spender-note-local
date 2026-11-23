@@ -90,6 +90,21 @@ var typeSpecs = []structSpec{
 		goType: reflect.TypeOf(domain.MonthlySpendingSummary{}),
 	},
 	{
+		tsName: "CategorySummary",
+		goType: reflect.TypeOf(domain.CategorySummary{}),
+		overrides: map[string]string{
+			"is_system": `0 | 1`,
+		},
+	},
+	{
+		tsName: "TagSummary",
+		goType: reflect.TypeOf(domain.TagSummary{}),
+	},
+	{
+		tsName: "TransactionTagItem",
+		goType: reflect.TypeOf(domain.TransactionTagItem{}),
+	},
+	{
 		tsName: "TransactionListItem",
 		goType: reflect.TypeOf(domain.TransactionListItem{}),
 		overrides: map[string]string{

@@ -20,6 +20,11 @@ func TestGenerateTypeScript_ContainsExpectedContracts(t *testing.T) {
 		`  llm_provider: "openai_compatible"`,
 		"export interface SyncStatusView {",
 		"  latestRun: SyncRunRow | null",
+		"export interface CategorySummary {",
+		"  is_system: 0 | 1",
+		"export interface TagSummary {",
+		"export interface TransactionTagItem {",
+		"  tags: TransactionTagItem[]",
 		"export interface PaginatedTransactionsResponse {",
 	}
 	for _, needle := range mustContain {

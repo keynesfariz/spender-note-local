@@ -130,6 +130,28 @@ export interface MonthlySpendingSummary {
   byAccount: SpendingGroupRow[]
 }
 
+export interface CategorySummary {
+  id: string
+  name: string
+  icon: string
+  is_system: 0 | 1
+  sort_order: number
+  transaction_count: number
+  created_at_utc: string
+}
+
+export interface TagSummary {
+  id: string
+  name: string
+  transaction_count: number
+  created_at_utc: string
+}
+
+export interface TransactionTagItem {
+  id: string
+  name: string
+}
+
 export interface TransactionListItem {
   id: string
   source_type: "gmail" | "manual"
@@ -141,6 +163,7 @@ export interface TransactionListItem {
   occurred_at_utc: string
   merchant: string
   category: string
+  tags: TransactionTagItem[]
   manual_override: 0 | 1
   reviewed: 0 | 1
   note: string | null

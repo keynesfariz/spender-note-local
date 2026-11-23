@@ -1,5 +1,7 @@
 export * from "./types.generated"
 export * from "./accounts"
+export * from "./categories"
+export * from "./tags"
 export * from "./transactions"
 export * from "./settings"
 export * from "./sync"

@@ -97,7 +97,7 @@ export function CategoriesTagsView() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["categories"] }),
       queryClient.invalidateQueries({ queryKey: ["transactions"] }),
-      queryClient.invalidateQueries({ queryKey: ["transaction"] }),
+      queryClient.invalidateQueries({ queryKey: ["spending"] }),
     ])
   }
 
@@ -105,7 +105,6 @@ export function CategoriesTagsView() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["tags"] }),
       queryClient.invalidateQueries({ queryKey: ["transactions"] }),
-      queryClient.invalidateQueries({ queryKey: ["transaction"] }),
     ])
   }
 

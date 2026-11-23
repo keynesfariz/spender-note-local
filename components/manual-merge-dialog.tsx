@@ -1,9 +1,10 @@
 "use client"
 
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
+import { DynamicIcon } from "@/components/dynamic-icon"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -26,12 +27,13 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import {
+  categoriesQuery,
   combineTransactionsApi,
   duplicateMergeTransactionsApi,
   type AccountSummary,
   type TransactionListItem,
 } from "@/lib/api"
-import { DEFAULT_CATEGORIES } from "@/lib/categories"
+import { DEFAULT_CATEGORY_DEFINITIONS } from "@/lib/categories"
 import {
   dateTimeInputToUtcIso,
   formatMinorCurrency,
@@ -42,11 +44,6 @@ import {
 import { cn } from "@/lib/utils"
 
 const UNASSIGNED_ACCOUNT = "__unassigned__"
-
-const CATEGORY_OPTIONS = DEFAULT_CATEGORIES.map((cat) => ({
-  value: cat,
-  label: cat,
-}))
 
 export type ManualMergeMode = "duplicate" | "combine"
 
@@ -66,6 +63,7 @@ export function ManualMergeDialog({
   onSuccess: () => void
 }) {
   const queryClient = useQueryClient()
+  const catListQuery = useQuery(categoriesQuery())
 
   const [keepId, setKeepId] = useState<string>("")
   const [merchant, setMerchant] = useState("")
@@ -90,6 +88,29 @@ export function ManualMergeDialog({
     [transactions]
   )
   const sharedCurrency = transactions[0]?.currency ?? "USD"
+
+  const categoryIconMap = useMemo(() => {
+    const map = new Map<string, string>(
+      DEFAULT_CATEGORY_DEFINITIONS.map((c) => [c.name, c.icon])
+    )
+    for (const cat of catListQuery.data ?? []) {
+      map.set(cat.name, cat.icon)
+    }
+    return map
+  }, [catListQuery.data])
+
+  const categoryOptions = useMemo(() => {
+    const opts = (catListQuery.data ?? DEFAULT_CATEGORY_DEFINITIONS).map(
+      (c) => ({
+        value: c.name,
+        label: c.name,
+      })
+    )
+    if (category && !opts.some((opt) => opt.value === category)) {
+      opts.push({ value: category, label: category })
+    }
+    return opts
+  }, [catListQuery.data, category])
 
   const primaryAccountId = sortedByOccurred[0]?.account_id ?? null
   const primaryAccountName = sortedByOccurred[0]?.account_name ?? null
@@ -154,6 +175,8 @@ export function ManualMergeDialog({
     void queryClient.invalidateQueries({ queryKey: ["transactions"] })
     void queryClient.invalidateQueries({ queryKey: ["spending"] })
     void queryClient.invalidateQueries({ queryKey: ["accounts"] })
+    void queryClient.invalidateQueries({ queryKey: ["categories"] })
+    void queryClient.invalidateQueries({ queryKey: ["tags"] })
   }
 
   const duplicateMutation = useMutation({
@@ -349,17 +372,27 @@ export function ManualMergeDialog({
                 <Field>
                   <FieldLabel>Category</FieldLabel>
                   <Select
-                    items={CATEGORY_OPTIONS}
+                    items={categoryOptions}
                     value={category}
                     onValueChange={(v) => setCategory(v ?? "Other")}
                   >
                     <SelectTrigger className="w-full" aria-label="Category">
+                      <DynamicIcon
+                        name={categoryIconMap.get(category)}
+                        className="size-4 text-muted-foreground"
+                      />
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {CATEGORY_OPTIONS.map((opt) => (
+                      {categoryOptions.map((opt) => (
                         <SelectItem key={opt.value} value={opt.value}>
-                          {opt.label}
+                          <span className="flex items-center gap-2">
+                            <DynamicIcon
+                              name={categoryIconMap.get(opt.value)}
+                              className="size-4 text-muted-foreground"
+                            />
+                            <span>{opt.label}</span>
+                          </span>
                         </SelectItem>
                       ))}
                     </SelectContent>

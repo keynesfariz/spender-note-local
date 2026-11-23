@@ -1,7 +1,10 @@
 "use client"
 
+import { useQuery } from "@tanstack/react-query"
 import { CheckCircle2Icon } from "lucide-react"
 import { useMemo } from "react"
+
+import { DynamicIcon } from "@/components/dynamic-icon"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
@@ -30,14 +33,14 @@ import {
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { AccountSummary, TransactionListItem } from "@/lib/api"
-import { DEFAULT_CATEGORIES } from "@/lib/categories"
+import {
+  categoriesQuery,
+  tagsQuery,
+  type AccountSummary,
+  type TransactionListItem,
+} from "@/lib/api"
+import { DEFAULT_CATEGORY_DEFINITIONS } from "@/lib/categories"
 import { formatMinorCurrency, formatUtcInTimezone } from "@/lib/format"
-
-const CATEGORY_FILTER_ITEMS = [
-  { value: "all", label: "All categories" },
-  ...DEFAULT_CATEGORIES.map((cat) => ({ value: cat, label: cat })),
-]
 
 function sourceBadgeLabel(tx: TransactionListItem): string {
   if (tx.sourceCount > 1) return `${tx.sourceCount} emails`
@@ -113,6 +116,8 @@ export function TransactionList({
   onSearchChange,
   category,
   onCategoryChange,
+  tag,
+  onTagChange,
   accountId,
   onAccountIdChange,
   unreviewedOnly,
@@ -145,6 +150,8 @@ export function TransactionList({
   onSearchChange: (value: string) => void
   category: string
   onCategoryChange: (value: string) => void
+  tag: string
+  onTagChange: (value: string) => void
   accountId: string
   onAccountIdChange: (value: string) => void
   unreviewedOnly: boolean
@@ -168,6 +175,9 @@ export function TransactionList({
   totalCount: number
   onPageChange: (nextPage: number) => void
 }) {
+  const catListQuery = useQuery(categoriesQuery())
+  const tagListQuery = useQuery(tagsQuery())
+
   const selectedSet = new Set(selectedIds)
   const selectedTransactions = transactions.filter((tx) =>
     selectedSet.has(tx.id)
@@ -186,6 +196,44 @@ export function TransactionList({
       ? eligibility.combineReason
       : eligibility.duplicateReason
 
+  const categoryIconMap = useMemo(() => {
+    const map = new Map<string, string>(
+      DEFAULT_CATEGORY_DEFINITIONS.map((c) => [c.name, c.icon])
+    )
+    for (const cat of catListQuery.data ?? []) {
+      map.set(cat.name, cat.icon)
+    }
+    return map
+  }, [catListQuery.data])
+
+  const categoryFilterItems = useMemo(() => {
+    const names = (catListQuery.data ?? DEFAULT_CATEGORY_DEFINITIONS).map(
+      (c) => c.name
+    )
+    const items = [
+      { value: "all", label: "All categories" },
+      ...names.map((name) => ({ value: name, label: name })),
+    ]
+    if (category !== "all" && !items.some((item) => item.value === category)) {
+      items.push({ value: category, label: category })
+    }
+    return items
+  }, [catListQuery.data, category])
+
+  const tagFilterItems = useMemo(() => {
+    const items = [
+      { value: "all", label: "All tags" },
+      ...(tagListQuery.data ?? []).map((t) => ({
+        value: t.name,
+        label: t.name,
+      })),
+    ]
+    if (tag !== "all" && !items.some((item) => item.value === tag)) {
+      items.push({ value: tag, label: tag })
+    }
+    return items
+  }, [tagListQuery.data, tag])
+
   const accountFilterItems = useMemo(
     () => [
       { value: "all", label: "All accounts" },
@@ -198,7 +246,7 @@ export function TransactionList({
   return (
     <Card>
       <CardHeader className="space-y-3">
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-5">
           <Input
             type="search"
             aria-label="Search transactions"
@@ -208,7 +256,7 @@ export function TransactionList({
           />
 
           <Select
-            items={CATEGORY_FILTER_ITEMS}
+            items={categoryFilterItems}
             value={category}
             onValueChange={(value) => onCategoryChange(value ?? "all")}
           >
@@ -216,7 +264,34 @@ export function TransactionList({
               <SelectValue placeholder="All categories" />
             </SelectTrigger>
             <SelectContent>
-              {CATEGORY_FILTER_ITEMS.map((item) => (
+              {categoryFilterItems.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.value === "all" ? (
+                    item.label
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <DynamicIcon
+                        name={categoryIconMap.get(item.value)}
+                        className="size-3.5 text-muted-foreground"
+                      />
+                      <span>{item.label}</span>
+                    </span>
+                  )}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            items={tagFilterItems}
+            value={tag}
+            onValueChange={(value) => onTagChange(value ?? "all")}
+          >
+            <SelectTrigger className="w-full" aria-label="Filter by tag">
+              <SelectValue placeholder="All tags" />
+            </SelectTrigger>
+            <SelectContent>
+              {tagFilterItems.map((item) => (
                 <SelectItem key={item.value} value={item.value}>
                   {item.label}
                 </SelectItem>
@@ -437,7 +512,18 @@ export function TransactionList({
                           <span className="truncate font-medium">
                             {tx.merchant}
                           </span>
-                          <Badge variant="secondary">{tx.category}</Badge>
+                          <Badge variant="secondary" className="gap-1">
+                            <DynamicIcon
+                              name={categoryIconMap.get(tx.category)}
+                              className="size-3"
+                            />
+                            {tx.category}
+                          </Badge>
+                          {(tx.tags ?? []).map((t) => (
+                            <Badge key={t.id} variant="outline">
+                              {t.name}
+                            </Badge>
+                          ))}
                           <Badge variant="outline">
                             {sourceBadgeLabel(tx)}
                           </Badge>

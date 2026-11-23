@@ -7,6 +7,13 @@ import {
   ChevronRightIcon,
 } from "lucide-react"
 import Link from "next/link"
+import {
+  parseAsBoolean,
+  parseAsInteger,
+  parseAsString,
+  parseAsStringLiteral,
+  useQueryStates,
+} from "nuqs"
 import { useEffect, useMemo, useState } from "react"
 
 import { AddTransactionDialog } from "@/components/add-transaction-dialog"
@@ -42,15 +49,17 @@ export function TransactionsView() {
     settingsDataQuery.data?.timezone && settingsDataQuery.data?.currency
   )
 
-  const [dateRange, setDateRange] = useState<{
-    from: string
-    to: string
-  } | null>(null)
-  const [search, setSearch] = useState("")
-  const [category, setCategory] = useState("all")
-  const [accountId, setAccountId] = useState("all")
-  const [unreviewedOnly, setUnreviewedOnly] = useState(false)
-  const [page, setPage] = useState(1)
+  const [filters, setFilters] = useQueryStates({
+    from: parseAsString,
+    to: parseAsString,
+    range: parseAsStringLiteral(["all"] as const),
+    search: parseAsString.withDefault(""),
+    category: parseAsString.withDefault("all"),
+    tag: parseAsString.withDefault("all"),
+    accountId: parseAsString.withDefault("all"),
+    unreviewed: parseAsBoolean.withDefault(false),
+    page: parseAsInteger.withDefault(1),
+  })
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [selectedTransactionId, setSelectedTransactionId] = useState<
     string | null
@@ -61,17 +70,23 @@ export function TransactionsView() {
   const [reviewError, setReviewError] = useState<string | null>(null)
 
   const todayStr = useMemo(() => getTodayDateString(timezone), [timezone])
-  const activeRange = dateRange ?? { from: todayStr, to: todayStr }
+  const isAllDates = filters.range === "all"
+  const activeRange = {
+    from: filters.from ?? todayStr,
+    to: filters.to ?? filters.from ?? todayStr,
+  }
+  const activePage = Math.max(1, filters.page)
 
   const txQuery = useQuery({
     ...transactionsQuery({
-      startDate: activeRange.from,
-      endDate: activeRange.to,
-      category: category === "all" ? undefined : category,
-      accountId: accountId === "all" ? undefined : accountId,
-      search: search.trim() || undefined,
-      unreviewedOnly: unreviewedOnly || undefined,
-      page,
+      startDate: isAllDates ? undefined : activeRange.from,
+      endDate: isAllDates ? undefined : activeRange.to,
+      category: filters.category === "all" ? undefined : filters.category,
+      tag: filters.tag === "all" ? undefined : filters.tag,
+      accountId: filters.accountId === "all" ? undefined : filters.accountId,
+      search: filters.search.trim() || undefined,
+      unreviewedOnly: filters.unreviewed || undefined,
+      page: activePage,
       pageSize: DEFAULT_PAGE_SIZE,
     }),
     enabled: isConfigured,
@@ -85,11 +100,11 @@ export function TransactionsView() {
 
   // Clamp page if items shrink after filtering, merging, or reviewing.
   useEffect(() => {
-    if (txQuery.isSuccess && page > totalPages) {
-      setPage(totalPages)
+    if (txQuery.isSuccess && activePage > totalPages) {
+      void setFilters({ page: totalPages })
       setSelectedIds([])
     }
-  }, [txQuery.isSuccess, page, totalPages])
+  }, [txQuery.isSuccess, activePage, totalPages, setFilters])
 
   // Prune stale selected IDs if background sync shifts page contents.
   useEffect(() => {
@@ -124,6 +139,8 @@ export function TransactionsView() {
       void queryClient.invalidateQueries({ queryKey: ["transactions"] })
       void queryClient.invalidateQueries({ queryKey: ["spending"] })
       void queryClient.invalidateQueries({ queryKey: ["accounts"] })
+      void queryClient.invalidateQueries({ queryKey: ["categories"] })
+      void queryClient.invalidateQueries({ queryKey: ["tags"] })
     },
     onSettled: () => {
       setDeleteDialogOpen(false)
@@ -131,8 +148,17 @@ export function TransactionsView() {
   })
 
   const updateRange = (next: { from: string; to: string }) => {
-    setDateRange(next)
-    setPage(1)
+    void setFilters({ range: null, from: next.from, to: next.to, page: 1 })
+    setSelectedIds([])
+    deleteTransactionsMutation.reset()
+  }
+
+  const handleToggleAllDates = () => {
+    if (isAllDates) {
+      void setFilters({ range: null, from: null, to: null, page: 1 })
+    } else {
+      void setFilters({ range: "all", from: null, to: null, page: 1 })
+    }
     setSelectedIds([])
     deleteTransactionsMutation.reset()
   }
@@ -142,35 +168,37 @@ export function TransactionsView() {
   }
 
   const handleSearchChange = (value: string) => {
-    setSearch(value)
-    setPage(1)
+    void setFilters({ search: value, page: 1 })
     setSelectedIds([])
     deleteTransactionsMutation.reset()
   }
 
   const handleCategoryChange = (value: string) => {
-    setCategory(value)
-    setPage(1)
+    void setFilters({ category: value, page: 1 })
+    setSelectedIds([])
+    deleteTransactionsMutation.reset()
+  }
+
+  const handleTagChange = (value: string) => {
+    void setFilters({ tag: value, page: 1 })
     setSelectedIds([])
     deleteTransactionsMutation.reset()
   }
 
   const handleAccountIdChange = (value: string) => {
-    setAccountId(value)
-    setPage(1)
+    void setFilters({ accountId: value, page: 1 })
     setSelectedIds([])
     deleteTransactionsMutation.reset()
   }
 
   const handleUnreviewedOnlyChange = (value: boolean) => {
-    setUnreviewedOnly(value)
-    setPage(1)
+    void setFilters({ unreviewed: value, page: 1 })
     setSelectedIds([])
     deleteTransactionsMutation.reset()
   }
 
   const handlePageChange = (nextPage: number) => {
-    setPage(nextPage)
+    void setFilters({ page: Math.max(1, nextPage) })
     setSelectedIds([])
     deleteTransactionsMutation.reset()
   }
@@ -225,7 +253,7 @@ export function TransactionsView() {
             type="button"
             variant="outline"
             size="sm"
-            disabled={!isConfigured}
+            disabled={!isConfigured || isAllDates}
             onClick={() => handleShiftRange(-1)}
           >
             <ChevronLeftIcon className="mr-1 size-4" />
@@ -243,11 +271,21 @@ export function TransactionsView() {
             type="button"
             variant="outline"
             size="sm"
-            disabled={!isConfigured}
+            disabled={!isConfigured || isAllDates}
             onClick={() => handleShiftRange(1)}
           >
             Next
             <ChevronRightIcon className="ml-1 size-4" />
+          </Button>
+
+          <Button
+            type="button"
+            variant={isAllDates ? "default" : "outline"}
+            size="sm"
+            disabled={!isConfigured}
+            onClick={handleToggleAllDates}
+          >
+            All dates
           </Button>
 
           <Button
@@ -326,12 +364,12 @@ export function TransactionsView() {
                   {unreviewedInRangeCount} unreviewed remaining in this date
                   range).
                 </span>
-                {page < totalPages && (
+                {activePage < totalPages && (
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => handlePageChange(page + 1)}
+                    onClick={() => handlePageChange(activePage + 1)}
                   >
                     Next page
                   </Button>
@@ -352,13 +390,15 @@ export function TransactionsView() {
                   : "Failed to load transactions."
                 : null
             }
-            search={search}
+            search={filters.search}
             onSearchChange={handleSearchChange}
-            category={category}
+            category={filters.category}
             onCategoryChange={handleCategoryChange}
-            accountId={accountId}
+            tag={filters.tag}
+            onTagChange={handleTagChange}
+            accountId={filters.accountId}
             onAccountIdChange={handleAccountIdChange}
-            unreviewedOnly={unreviewedOnly}
+            unreviewedOnly={filters.unreviewed}
             onUnreviewedOnlyChange={handleUnreviewedOnlyChange}
             selectedIds={selectedIds}
             onToggleRow={handleToggleRow}
@@ -383,7 +423,7 @@ export function TransactionsView() {
                   : "Failed to delete transactions."
                 : null
             }
-            page={page}
+            page={activePage}
             pageSize={DEFAULT_PAGE_SIZE}
             totalCount={totalCount}
             onPageChange={handlePageChange}

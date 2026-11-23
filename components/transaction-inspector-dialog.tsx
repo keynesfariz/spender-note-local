@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useMemo, useState, type FormEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
+import { DynamicIcon } from "@/components/dynamic-icon"
+import { TagMultiSelect } from "@/components/tag-multi-select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -40,14 +42,16 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
+  categoriesQuery,
   deleteTransactionApi,
   markTransactionsReviewedApi,
   splitTransactionSourceApi,
+  tagsQuery,
   transactionDetailQuery,
   updateTransactionApi,
   type AccountSummary,
 } from "@/lib/api"
-import { DEFAULT_CATEGORIES } from "@/lib/categories"
+import { DEFAULT_CATEGORY_DEFINITIONS } from "@/lib/categories"
 import {
   dateTimeInputToUtcIso,
   formatMinorCurrency,
@@ -59,11 +63,6 @@ import {
 } from "@/lib/format"
 
 const UNASSIGNED_ACCOUNT = "__unassigned__"
-
-const CATEGORY_OPTIONS = DEFAULT_CATEGORIES.map((cat) => ({
-  value: cat,
-  label: cat,
-}))
 
 function InspectorBody({
   transactionId,
@@ -80,10 +79,13 @@ function InspectorBody({
 }) {
   const queryClient = useQueryClient()
   const detailQuery = useQuery(transactionDetailQuery(transactionId))
+  const catListQuery = useQuery(categoriesQuery())
+  const tagListQuery = useQuery(tagsQuery())
 
   const [merchant, setMerchant] = useState("")
   const [amount, setAmount] = useState("")
   const [category, setCategory] = useState("Other")
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT)
   const [date, setDate] = useState("")
   const [time, setTime] = useState("")
@@ -98,6 +100,7 @@ function InspectorBody({
     setMerchant(tx.merchant)
     setAmount(minorToDecimalInput(tx.amount_minor, tx.currency))
     setCategory(tx.category)
+    setSelectedTagIds((tx.tags ?? []).map((t) => t.id))
     setAccountId(tx.account_id ?? UNASSIGNED_ACCOUNT)
     setDate(utcToDateInputValue(tx.occurred_at_utc, timezone))
     setTime(utcToTimeInputValue(tx.occurred_at_utc, timezone))
@@ -109,6 +112,8 @@ function InspectorBody({
     void queryClient.invalidateQueries({ queryKey: ["spending"] })
     void queryClient.invalidateQueries({ queryKey: ["transactions"] })
     void queryClient.invalidateQueries({ queryKey: ["accounts"] })
+    void queryClient.invalidateQueries({ queryKey: ["categories"] })
+    void queryClient.invalidateQueries({ queryKey: ["tags"] })
   }
 
   const updateMutation = useMutation({
@@ -169,6 +174,29 @@ function InspectorBody({
   })
 
   const detailTx = detailQuery.data?.transaction
+
+  const categoryIconMap = useMemo(() => {
+    const map = new Map<string, string>(
+      DEFAULT_CATEGORY_DEFINITIONS.map((c) => [c.name, c.icon])
+    )
+    for (const cat of catListQuery.data ?? []) {
+      map.set(cat.name, cat.icon)
+    }
+    return map
+  }, [catListQuery.data])
+
+  const categoryOptions = useMemo(() => {
+    const opts = (catListQuery.data ?? DEFAULT_CATEGORY_DEFINITIONS).map(
+      (c) => ({
+        value: c.name,
+        label: c.name,
+      })
+    )
+    if (category && !opts.some((opt) => opt.value === category)) {
+      opts.push({ value: category, label: category })
+    }
+    return opts
+  }, [catListQuery.data, category])
 
   const accountItems = useMemo(() => {
     const base = [
@@ -241,6 +269,7 @@ function InspectorBody({
         merchant: merchant.trim(),
         amount_minor: parsedAmountMinor,
         category,
+        tag_ids: selectedTagIds,
         account_id: accountId !== UNASSIGNED_ACCOUNT ? accountId : null,
         occurred_at_utc: occurredAtUtc,
         note: note.trim() || null,
@@ -298,21 +327,40 @@ function InspectorBody({
           <Field>
             <FieldLabel>Category</FieldLabel>
             <Select
-              items={CATEGORY_OPTIONS}
+              items={categoryOptions}
               value={category}
               onValueChange={(v) => setCategory(v ?? "Other")}
             >
               <SelectTrigger className="w-full" aria-label="Category">
+                <DynamicIcon
+                  name={categoryIconMap.get(category)}
+                  className="size-4 text-muted-foreground"
+                />
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {CATEGORY_OPTIONS.map((opt) => (
+                {categoryOptions.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
+                    <span className="flex items-center gap-2">
+                      <DynamicIcon
+                        name={categoryIconMap.get(opt.value)}
+                        className="size-4 text-muted-foreground"
+                      />
+                      <span>{opt.label}</span>
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+          </Field>
+
+          <Field className="sm:col-span-2">
+            <FieldLabel>Tags</FieldLabel>
+            <TagMultiSelect
+              tags={tagListQuery.data ?? []}
+              selectedTagIds={selectedTagIds}
+              onChange={setSelectedTagIds}
+            />
           </Field>
 
           <Field>

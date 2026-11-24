@@ -160,7 +160,7 @@ export function AccountFormDialog({
       name: string
       type: AccountType
       initial_balance_minor: number | null
-      initial_balance_as_of_utc: string
+      initial_balance_as_of_utc?: string
       statement_day: number | null
       identifiers: AccountIdentifierInput[]
     }) => {
@@ -231,9 +231,15 @@ export function AccountFormDialog({
       }
     }
 
-    let asOfUtc: string
+    let asOfUtc: string | undefined
     try {
-      asOfUtc = dateInputToUtcIso(initialBalanceAsOf, timezone)
+      if (
+        !account ||
+        initialBalanceAsOf !==
+          utcToDateInputValue(account.initial_balance_as_of_utc, timezone)
+      ) {
+        asOfUtc = dateInputToUtcIso(initialBalanceAsOf, timezone)
+      }
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Invalid date.")
       return

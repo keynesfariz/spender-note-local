@@ -222,7 +222,7 @@ export function TransactionList({
 
   const categoryFilterItems = useMemo(
     () => [
-      { value: "all", label: "All categories" },
+      { value: "", label: "All categories" },
       ...buildCategorySelectOptions(catListQuery.data, category),
     ],
     [catListQuery.data, category]
@@ -230,13 +230,13 @@ export function TransactionList({
 
   const tagFilterItems = useMemo(() => {
     const items = [
-      { value: "all", label: "All tags" },
+      { value: "", label: "All tags" },
       ...(tagListQuery.data ?? []).map((t) => ({
         value: t.name,
         label: t.name,
       })),
     ]
-    if (tag !== "all" && !items.some((item) => item.value === tag)) {
+    if (tag && !items.some((item) => item.value === tag)) {
       items.push({ value: tag, label: tag })
     }
     return items
@@ -276,7 +276,7 @@ export function TransactionList({
           <Select
             items={categoryFilterItems}
             value={category}
-            onValueChange={(value) => onCategoryChange(value ?? "all")}
+            onValueChange={(value) => onCategoryChange(value ?? "")}
           >
             <SelectTrigger className="w-full" aria-label="Filter by category">
               <SelectValue placeholder="All categories" />
@@ -284,7 +284,7 @@ export function TransactionList({
             <SelectContent>
               {categoryFilterItems.map((item) => (
                 <SelectItem key={item.value} value={item.value}>
-                  {item.value === "all" ? (
+                  {item.value === "" ? (
                     item.label
                   ) : (
                     <span className="flex items-center gap-2">
@@ -303,7 +303,7 @@ export function TransactionList({
           <Select
             items={tagFilterItems}
             value={tag}
-            onValueChange={(value) => onTagChange(value ?? "all")}
+            onValueChange={(value) => onTagChange(value ?? "")}
           >
             <SelectTrigger className="w-full" aria-label="Filter by tag">
               <SelectValue placeholder="All tags" />
@@ -352,8 +352,8 @@ export function TransactionList({
               onClick={onResetFilters}
               disabled={
                 !search &&
-                category === "all" &&
-                tag === "all" &&
+                !category &&
+                !tag &&
                 accountId === "all" &&
                 !unreviewedOnly
               }

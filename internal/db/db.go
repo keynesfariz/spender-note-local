@@ -5,12 +5,12 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/golang-migrate/migrate/v4"
@@ -30,27 +30,44 @@ var (
 	singletonErr  error
 )
 
-func isMemoryDB(dbPath string) bool {
-	return dbPath == ":memory:" || strings.HasPrefix(dbPath, "file::memory:")
+func databaseFile(dsn string) (string, error) {
+	name, _, _ := strings.Cut(dsn, "?")
+	if name == ":memory:" || name == "file::memory:" {
+		return "", nil
+	}
+	if !strings.HasPrefix(dsn, "file:") {
+		return name, nil
+	}
+	uri, err := url.Parse(dsn)
+	if err != nil {
+		return "", fmt.Errorf("parse database URI: %w", err)
+	}
+	if uri.Host != "" && uri.Host != "localhost" {
+		return "", errors.New("database URI must refer to a local file")
+	}
+	if uri.Query().Get("mode") == "memory" {
+		return "", nil
+	}
+	if uri.Opaque != "" {
+		return url.PathUnescape(uri.Opaque)
+	}
+	return uri.Path, nil
 }
 
-func enforceOwnerPermissions(dbPath string) {
-	if isMemoryDB(dbPath) {
-		return
+func enforceOwnerPermissions(dbPath string) error {
+	if dbPath == "" {
+		return nil
 	}
-	dir := filepath.Dir(dbPath)
-	_ = os.MkdirAll(dir, 0o700)
-	_ = os.Chmod(dir, 0o700)
 	for _, suffix := range []string{"", "-wal", "-shm", ".migrate.lock"} {
-		filePath := dbPath + suffix
-		if _, err := os.Stat(filePath); err == nil {
-			_ = os.Chmod(filePath, 0o600)
+		if err := os.Chmod(dbPath+suffix, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("secure database file: %w", err)
 		}
 	}
+	return nil
 }
 
 func withMigrationLock(dbPath string, fn func() error) error {
-	if isMemoryDB(dbPath) {
+	if dbPath == "" {
 		return fn()
 	}
 	lockPath := dbPath + ".migrate.lock"
@@ -124,14 +141,33 @@ func runMigrations(sqlDB *sql.DB) error {
 	return nil
 }
 
-func OpenDatabase(dbPath string, recoverStaleRuns bool) (*gorm.DB, error) {
-	enforceOwnerPermissions(dbPath)
+func OpenDatabase(dsn string, recoverStaleRuns bool) (*gorm.DB, error) {
+	dbPath, err := databaseFile(dsn)
+	if err != nil {
+		return nil, err
+	}
+	if dbPath != "" {
+		if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+			return nil, fmt.Errorf("create database directory: %w", err)
+		}
+	}
 
 	var gdb *gorm.DB
-	err := withMigrationLock(dbPath, func() error {
-		dsn := dbPath
-		if !isMemoryDB(dbPath) && !strings.Contains(dbPath, "?") {
-			dsn = dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)"
+	err = withMigrationLock(dbPath, func() error {
+		if dbPath != "" {
+			file, err := os.OpenFile(dbPath, os.O_CREATE|os.O_RDONLY, 0o600)
+			if err != nil {
+				return fmt.Errorf("prepare database file: %w", err)
+			}
+			if err := file.Close(); err != nil {
+				return err
+			}
+			if err := enforceOwnerPermissions(dbPath); err != nil {
+				return err
+			}
+			if !strings.Contains(dsn, "?") {
+				dsn += "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)"
+			}
 		}
 
 		opened, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
@@ -168,17 +204,16 @@ func OpenDatabase(dbPath string, recoverStaleRuns bool) (*gorm.DB, error) {
 		}
 
 		if recoverStaleRuns {
-			nowUtc := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-			_ = opened.Exec(`
-				UPDATE sync_runs
-				SET status = 'interrupted',
-				    phase = 'done',
-				    error_message = COALESCE(error_message, 'Server restarted while sync was running'),
-				    finished_at_utc = COALESCE(finished_at_utc, ?)
-				WHERE status = 'running'`, nowUtc).Error
+			if err := recoverInterruptedSyncRuns(opened); err != nil {
+				_ = sqlDB.Close()
+				return err
+			}
 		}
 
-		enforceOwnerPermissions(dbPath)
+		if err := enforceOwnerPermissions(dbPath); err != nil {
+			_ = sqlDB.Close()
+			return err
+		}
 
 		gdb = opened
 		return nil

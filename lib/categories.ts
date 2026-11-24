@@ -41,11 +41,7 @@ export function buildCategorySelectOptions(
     value: c.name,
     label: c.name,
   }))
-  if (
-    activeCategory &&
-    activeCategory !== "all" &&
-    !opts.some((opt) => opt.value === activeCategory)
-  ) {
+  if (activeCategory && !opts.some((opt) => opt.value === activeCategory)) {
     opts.push({ value: activeCategory, label: activeCategory })
   }
   return opts

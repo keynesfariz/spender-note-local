@@ -213,13 +213,7 @@ export interface TransactionEnrichmentPreview {
 
 export interface SyncRunRow {
   id: string
-  status:
-    | "running"
-    | "completed"
-    | "partial_error"
-    | "failed"
-    | "cancelled"
-    | "interrupted"
+  status: "running" | "completed" | "partial_error" | "failed" | "cancelled" | "interrupted"
   phase: "preflight" | "fetching" | "syncing" | "extracting" | "done"
   llm_provider: string
   llm_model: string

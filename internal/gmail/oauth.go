@@ -21,13 +21,13 @@ import (
 )
 
 const (
-	GmailReadonlyScope         = "https://www.googleapis.com/auth/gmail.readonly"
-	googleAuthURL              = "https://accounts.google.com/o/oauth2/v2/auth"
-	googleTokenURL             = "https://oauth2.googleapis.com/token"
-	googleRevokeURL            = "https://oauth2.googleapis.com/revoke"
-	gmailProfileURL            = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
-	oauthStateTTL              = 10 * time.Minute
-	accessTokenRefreshBuffer   = 60 * time.Second
+	GmailReadonlyScope       = "https://www.googleapis.com/auth/gmail.readonly"
+	googleAuthURL            = "https://accounts.google.com/o/oauth2/v2/auth"
+	googleTokenURL           = "https://oauth2.googleapis.com/token"
+	googleRevokeURL          = "https://oauth2.googleapis.com/revoke"
+	gmailProfileURL          = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+	oauthStateTTL            = 10 * time.Minute
+	accessTokenRefreshBuffer = 60 * time.Second
 )
 
 type AuthExpiredError struct {
@@ -35,6 +35,36 @@ type AuthExpiredError struct {
 }
 
 func (e *AuthExpiredError) Error() string { return e.Message }
+
+var errGmailConnectionChanged = errors.New("Gmail connection changed while the request was in progress; try again")
+
+func updateOAuthSnapshot(gdb *gorm.DB, row db.GmailOAuth, updates map[string]any) error {
+	result := gdb.Model(&db.GmailOAuth{}).
+		Where("id = ? AND status = ? AND email_address IS ? AND access_token IS ? AND refresh_token IS ? AND expires_at_utc IS ? AND scope IS ?",
+			row.ID, row.Status, row.EmailAddress, row.AccessToken, row.RefreshToken, row.ExpiresAtUtc, row.Scope).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errGmailConnectionChanged
+	}
+	return nil
+}
+
+// MarkAccessTokenExpired handles a Gmail API rejection of a specific token.
+func MarkAccessTokenExpired(gdb *gorm.DB, accessToken string) error {
+	result := gdb.Model(&db.GmailOAuth{}).
+		Where("id = 1 AND status = 'connected' AND access_token = ?", accessToken).
+		Update("status", "expired")
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errGmailConnectionChanged
+	}
+	return nil
+}
 
 type googleTokenResponse struct {
 	AccessToken      string `json:"access_token"`
@@ -275,7 +305,10 @@ func HandleGmailCallback(ctx context.Context, gdb *gorm.DB, r *http.Request, cod
 
 func GetValidAccessToken(ctx context.Context, gdb *gorm.DB, forceRefresh bool) (string, error) {
 	var row db.GmailOAuth
-	if err := gdb.First(&row, 1).Error; err != nil || row.Status == "disconnected" {
+	if err := gdb.First(&row, 1).Error; err != nil {
+		return "", err
+	}
+	if row.Status == "disconnected" {
 		return "", errors.New("Gmail is not connected")
 	}
 
@@ -289,7 +322,9 @@ func GetValidAccessToken(ctx context.Context, gdb *gorm.DB, forceRefresh bool) (
 	}
 
 	if row.RefreshToken == nil || *row.RefreshToken == "" {
-		gdb.Model(&db.GmailOAuth{}).Where("id = 1").Update("status", "expired")
+		if err := updateOAuthSnapshot(gdb, row, map[string]any{"status": "expired"}); err != nil {
+			return "", err
+		}
 		return "", &AuthExpiredError{Message: "No Gmail refresh token available; please reconnect Gmail in Settings."}
 	}
 
@@ -318,7 +353,9 @@ func GetValidAccessToken(ctx context.Context, gdb *gorm.DB, forceRefresh bool) (
 	_ = json.NewDecoder(res.Body).Decode(&data)
 	if res.StatusCode < 200 || res.StatusCode >= 300 || data.AccessToken == "" {
 		if res.StatusCode == 400 && data.Error == "invalid_grant" {
-			gdb.Model(&db.GmailOAuth{}).Where("id = 1").Update("status", "expired")
+			if err := updateOAuthSnapshot(gdb, row, map[string]any{"status": "expired"}); err != nil {
+				return "", err
+			}
 			return "", &AuthExpiredError{Message: "Gmail refresh token was revoked or expired (invalid_grant). Please reconnect Gmail in Settings."}
 		}
 		detail := data.ErrorDescription
@@ -347,20 +384,24 @@ func GetValidAccessToken(ctx context.Context, gdb *gorm.DB, forceRefresh bool) (
 		nextScope = *row.Scope
 	}
 
-	gdb.Model(&db.GmailOAuth{}).Where("id = 1").Updates(map[string]any{
+	if err := updateOAuthSnapshot(gdb, row, map[string]any{
 		"status":         "connected",
 		"access_token":   data.AccessToken,
 		"refresh_token":  nextRefresh,
 		"expires_at_utc": expiresAtUtc,
 		"scope":          nextScope,
-	})
+	}); err != nil {
+		return "", err
+	}
 
 	return data.AccessToken, nil
 }
 
 func DisconnectGmail(ctx context.Context, gdb *gorm.DB) error {
 	var row db.GmailOAuth
-	_ = gdb.Select("access_token, refresh_token").First(&row, 1).Error
+	if err := gdb.First(&row, 1).Error; err != nil {
+		return err
+	}
 	tokenToRevoke := ""
 	if row.RefreshToken != nil && *row.RefreshToken != "" {
 		tokenToRevoke = *row.RefreshToken
@@ -368,14 +409,14 @@ func DisconnectGmail(ctx context.Context, gdb *gorm.DB) error {
 		tokenToRevoke = *row.AccessToken
 	}
 
-	if err := gdb.Model(&db.GmailOAuth{}).Where("id = 1").Updates(map[string]any{
+	if err := updateOAuthSnapshot(gdb, row, map[string]any{
 		"status":         "disconnected",
 		"email_address":  nil,
 		"access_token":   nil,
 		"refresh_token":  nil,
 		"expires_at_utc": nil,
 		"scope":          nil,
-	}).Error; err != nil {
+	}); err != nil {
 		return err
 	}
 

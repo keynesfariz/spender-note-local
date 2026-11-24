@@ -14,6 +14,8 @@ Most expense trackers either require manual entry for every purchase or ask you 
 - **Local LLM Extraction:** Direct OpenAI-compatible local server (defaults to `llama.app` at `http://localhost:9931/v1`)
 - **Runtime:** Bun (`bun run dev`, `bun run build`, `bun run typecheck`)
 
+The dev and production commands listen at `http://127.0.0.1:3000` by default.
+
 ## TODO
 
 Ordered by priority.

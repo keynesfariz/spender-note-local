@@ -221,7 +221,7 @@ func ListAccounts(gdb *gorm.DB) ([]AccountSummary, error) {
 }
 
 func listAccountsAt(gdb *gorm.DB, now time.Time) ([]AccountSummary, error) {
-	targetCurrency, targetTimezone, err := resolveAppCurrencyAndTimezone(gdb, "", "")
+	targetTimezone, err := resolveAccountTimezone(gdb, "")
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +244,7 @@ func listAccountsAt(gdb *gorm.DB, now time.Time) ([]AccountSummary, error) {
 		return []AccountSummary{}, nil
 	}
 
-	return buildAccountSummariesAt(gdb, rows, byAcct, targetCurrency, targetTimezone, now)
+	return buildAccountSummariesAt(gdb, rows, byAcct, targetTimezone, now)
 }
 
 type CreateAccountInput struct {
@@ -325,7 +325,7 @@ func CreateAccount(gdb *gorm.DB, input CreateAccountInput) (*AccountSummary, err
 			}
 		}
 
-		built, err := buildAccountSummary(tx, acct, currency, nil)
+		built, err := buildAccountSummary(tx, acct, nil)
 		if err != nil {
 			return err
 		}
@@ -377,7 +377,7 @@ func UpdateAccount(gdb *gorm.DB, id string, patch UpdateAccountInput) (*AccountS
 			return fmt.Errorf("Invalid account type: %s", nextType)
 		}
 
-		bal, err := computeAccountBalance(tx, current, "")
+		bal, err := computeAccountBalance(tx, current)
 		if err != nil {
 			return err
 		}
@@ -462,7 +462,7 @@ func UpdateAccount(gdb *gorm.DB, id string, patch UpdateAccountInput) (*AccountS
 		if err := tx.Where("id = ?", id).First(&updated).Error; err != nil {
 			return err
 		}
-		built, err := buildAccountSummary(tx, updated, "", nil)
+		built, err := buildAccountSummary(tx, updated, nil)
 		if err != nil {
 			return err
 		}
@@ -488,7 +488,7 @@ func ConfirmAccount(gdb *gorm.DB, id string) (*AccountSummary, error) {
 			}
 			current.Status = "confirmed"
 		}
-		built, err := buildAccountSummary(tx, current, "", nil)
+		built, err := buildAccountSummary(tx, current, nil)
 		if err != nil {
 			return err
 		}

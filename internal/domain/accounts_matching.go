@@ -376,7 +376,7 @@ func MergeAccounts(gdb *gorm.DB, sourceAccountID, targetAccountID string) (map[s
 			return err
 		}
 
-		built, err := buildAccountSummary(tx, updatedTarget, updatedTarget.Currency, nil)
+		built, err := buildAccountSummary(tx, updatedTarget, nil)
 		if err != nil {
 			return err
 		}

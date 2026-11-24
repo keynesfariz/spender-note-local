@@ -79,15 +79,23 @@ import {
   dateTimeInputToUtcIso,
   formatMinorCurrency,
   formatUtcInTimezone,
-  getCurrencyExponentClient,
   minorToDecimalInput,
-  normalizeDecimalAmountString,
   parseDecimalToMinorClient,
   utcToDateInputValue,
   utcToTimeInputValue,
 } from "@/lib/format"
 
 const UNASSIGNED_ACCOUNT = "__unassigned__"
+
+type DraftField =
+  | "merchant"
+  | "amount"
+  | "category"
+  | "tags"
+  | "account"
+  | "date"
+  | "note"
+  | "conversion"
 
 function groupAmountInput(value: string): string {
   const match = /^(-?\d+)(\.\d*)?$/.exec(value.trim())
@@ -128,12 +136,30 @@ function InspectorBody({
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
 
   const { isEnriching, abortEnrichment, runEnrichment } = useMagicEnrich()
-  const lastLoadedTxRef = useRef<{ id: string; key: string } | null>(null)
+  const lastLoadedTxRef = useRef<{
+    id: string
+    key: string
+    currency: string
+    date: string
+    time: string
+    timezone: string | null | undefined
+  } | null>(null)
+  const editedFields = useRef(new Set<DraftField>())
 
   const syncFormFromTransaction = useCallback(
     (tx: TransactionListItem) => {
       const nextKey = `${tx.id}:${tx.updated_at_utc}|${timezone ?? ""}`
-      lastLoadedTxRef.current = { id: tx.id, key: nextKey }
+      const date = utcToDateInputValue(tx.occurred_at_utc, timezone)
+      const time = utcToTimeInputValue(tx.occurred_at_utc, timezone)
+      lastLoadedTxRef.current = {
+        id: tx.id,
+        key: nextKey,
+        currency: tx.currency,
+        date,
+        time,
+        timezone,
+      }
+      editedFields.current.clear()
       setMerchant(tx.merchant)
       setAmount(
         groupAmountInput(minorToDecimalInput(tx.amount_minor, tx.currency))
@@ -143,8 +169,8 @@ function InspectorBody({
       setDraftTagNames([])
       setHasUnsavedMagicEdits(false)
       setAccountId(tx.account_id ?? UNASSIGNED_ACCOUNT)
-      setDate(utcToDateInputValue(tx.occurred_at_utc, timezone))
-      setTime(utcToTimeInputValue(tx.occurred_at_utc, timezone))
+      setDate(date)
+      setTime(time)
       setNote(tx.note ?? "")
       setConvertToLocalCurrency(false)
     },
@@ -158,7 +184,7 @@ function InspectorBody({
     const isSameTx = lastLoadedTxRef.current?.id === tx.id
     if (
       isSameTx &&
-      (hasUnsavedMagicEdits ||
+      (editedFields.current.size > 0 ||
         isEnriching ||
         lastLoadedTxRef.current?.key === nextKey)
     ) {
@@ -171,7 +197,6 @@ function InspectorBody({
   }, [
     detailQuery.data?.transaction,
     timezone,
-    hasUnsavedMagicEdits,
     isEnriching,
     abortEnrichment,
     syncFormFromTransaction,
@@ -305,47 +330,54 @@ function InspectorBody({
 
   const tx = detail.transaction
 
+  function editDraft<Value>(
+    field: DraftField,
+    setter: (value: Value) => void,
+    value: Value
+  ) {
+    editedFields.current.add(field)
+    setter(value)
+  }
+
   function handleSave(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
     if (isEnriching) return
     setFormError(null)
     setStatusMessage(null)
     try {
-      const targetCurrency =
-        tx.isForeignCurrency && !convertToLocalCurrency
-          ? tx.currency
-          : localCurrency
-      const initialAmountStr = minorToDecimalInput(tx.amount_minor, tx.currency)
-      const amountChanged =
-        normalizeDecimalAmountString(
-          amount,
-          getCurrencyExponentClient(tx.currency)
-        ) !== initialAmountStr
-      const parsedAmountMinor =
-        !tx.isForeignCurrency || convertToLocalCurrency || amountChanged
-          ? parseDecimalToMinorClient(amount, targetCurrency)
-          : undefined
-
-      const initialDateStr = utcToDateInputValue(tx.occurred_at_utc, timezone)
-      const initialTimeStr = utcToTimeInputValue(tx.occurred_at_utc, timezone)
-      const occurredAtUtc =
-        date.trim() !== initialDateStr || time.trim() !== initialTimeStr
-          ? dateTimeInputToUtcIso(date, time || "00:00", timezone)
-          : undefined
+      const edits = editedFields.current
+      const loaded = lastLoadedTxRef.current
+      const saveAmount = edits.has("amount") || convertToLocalCurrency
+      if (saveAmount && loaded?.currency !== tx.currency) {
+        throw new Error(
+          "The transaction currency changed. Reopen it before editing the amount."
+        )
+      }
+      const targetCurrency = convertToLocalCurrency
+        ? localCurrency
+        : tx.currency
+      const saveDate =
+        edits.has("date") && (date !== loaded?.date || time !== loaded?.time)
 
       updateMutation.mutate({
         id: tx.id,
-        merchant: merchant.trim(),
-        amount_minor: parsedAmountMinor,
-        category,
-        tag_ids: selectedTagIds,
-        tag_names: draftTagNames,
-        account_id: accountId !== UNASSIGNED_ACCOUNT ? accountId : null,
-        occurred_at_utc: occurredAtUtc,
-        note: note.trim() || null,
-        convertToLocalCurrency: tx.isForeignCurrency
-          ? convertToLocalCurrency
+        merchant: edits.has("merchant") ? merchant.trim() : undefined,
+        amount_minor: saveAmount
+          ? parseDecimalToMinorClient(amount, targetCurrency)
           : undefined,
+        category: edits.has("category") ? category : undefined,
+        tag_ids: edits.has("tags") ? selectedTagIds : undefined,
+        tag_names: edits.has("tags") ? draftTagNames : undefined,
+        account_id: edits.has("account")
+          ? accountId !== UNASSIGNED_ACCOUNT
+            ? accountId
+            : null
+          : undefined,
+        occurred_at_utc: saveDate
+          ? dateTimeInputToUtcIso(date, time || "00:00", loaded?.timezone)
+          : undefined,
+        note: edits.has("note") ? note.trim() || null : undefined,
+        convertToLocalCurrency: saveAmount ? convertToLocalCurrency : undefined,
       })
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Invalid input.")
@@ -360,16 +392,16 @@ function InspectorBody({
         setStatusMessage(null)
       },
       onSuccess: (preview) => {
-        setMerchant(preview.merchant)
-        setCategory(preview.category)
-        setNote(preview.note ?? "")
+        editDraft("merchant", setMerchant, preview.merchant)
+        editDraft("category", setCategory, preview.category)
+        editDraft("note", setNote, preview.note ?? "")
         const nextDateTime = resolveEnrichedDateTimeInputs(
           preview.occurred_at_utc,
-          timezone
+          lastLoadedTxRef.current?.timezone
         )
         if (nextDateTime) {
-          setDate(nextDateTime.date)
-          setTime(nextDateTime.time)
+          editDraft("date", setDate, nextDateTime.date)
+          editDraft("date", setTime, nextDateTime.time)
         }
         const { nextSelectedTagIds, nextDraftTagNames } =
           syncAndMergeEnrichedTags({
@@ -378,8 +410,8 @@ function InspectorBody({
             currentSelectedTagIds: selectedTagIds,
             fallbackKnownTags: tagListQuery.data ?? [],
           })
-        setSelectedTagIds(nextSelectedTagIds)
-        setDraftTagNames(nextDraftTagNames)
+        editDraft("tags", setSelectedTagIds, nextSelectedTagIds)
+        editDraft("tags", setDraftTagNames, nextDraftTagNames)
         setHasUnsavedMagicEdits(true)
         setStatusMessage(
           "Suggested fields populated from attached emails. Review and save changes."
@@ -409,11 +441,13 @@ function InspectorBody({
           <AlertDescription>{formError}</AlertDescription>
         </Alert>
       )}
-      {statusMessage && (
-        <Alert>
-          <AlertDescription>{statusMessage}</AlertDescription>
-        </Alert>
-      )}
+      <div role="status" className="empty:absolute">
+        {statusMessage && (
+          <Alert role="presentation">
+            <AlertDescription>{statusMessage}</AlertDescription>
+          </Alert>
+        )}
+      </div>
 
       <Tabs defaultValue="details">
         <TabsList aria-label="Transaction detail sections">
@@ -452,7 +486,9 @@ function InspectorBody({
                   type="text"
                   required
                   value={merchant}
-                  onChange={(e) => setMerchant(e.target.value)}
+                  onChange={(e) =>
+                    editDraft("merchant", setMerchant, e.target.value)
+                  }
                 />
               </Field>
 
@@ -471,7 +507,9 @@ function InspectorBody({
                   value={amount}
                   onBlur={() => setAmount(groupAmountInput(amount))}
                   className="tabular-nums"
-                  onChange={(e) => setAmount(e.target.value)}
+                  onChange={(e) =>
+                    editDraft("amount", setAmount, e.target.value)
+                  }
                 />
               </Field>
 
@@ -480,7 +518,9 @@ function InspectorBody({
                 <Select
                   items={categoryOptions}
                   value={category}
-                  onValueChange={(v) => setCategory(v ?? DEFAULT_CATEGORY)}
+                  onValueChange={(v) =>
+                    editDraft("category", setCategory, v ?? DEFAULT_CATEGORY)
+                  }
                 >
                   <SelectTrigger className="w-full" aria-label="Category">
                     <DynamicIcon
@@ -510,9 +550,11 @@ function InspectorBody({
                 <TagMultiSelect
                   tags={tagListQuery.data ?? []}
                   selectedTagIds={selectedTagIds}
-                  onChange={setSelectedTagIds}
+                  onChange={(ids) => editDraft("tags", setSelectedTagIds, ids)}
                   draftTagNames={draftTagNames}
-                  onDraftTagNamesChange={setDraftTagNames}
+                  onDraftTagNamesChange={(names) =>
+                    editDraft("tags", setDraftTagNames, names)
+                  }
                   disabled={isEnriching || updateMutation.isPending}
                 />
               </Field>
@@ -522,7 +564,9 @@ function InspectorBody({
                 <Select
                   items={accountItems}
                   value={accountId}
-                  onValueChange={(v) => setAccountId(v ?? UNASSIGNED_ACCOUNT)}
+                  onValueChange={(v) =>
+                    editDraft("account", setAccountId, v ?? UNASSIGNED_ACCOUNT)
+                  }
                 >
                   <SelectTrigger className="w-full" aria-label="Account">
                     <SelectValue />
@@ -546,7 +590,7 @@ function InspectorBody({
                 <FieldLabel>Occurred date</FieldLabel>
                 <DatePicker
                   value={date}
-                  onChange={setDate}
+                  onChange={(value) => editDraft("date", setDate, value)}
                   ariaLabel="Occurred date"
                 />
               </Field>
@@ -557,7 +601,7 @@ function InspectorBody({
                   type="time"
                   required
                   value={time}
-                  onChange={(e) => setTime(e.target.value)}
+                  onChange={(e) => editDraft("date", setTime, e.target.value)}
                 />
               </Field>
 
@@ -566,7 +610,7 @@ function InspectorBody({
                 <Input
                   type="text"
                   value={note}
-                  onChange={(e) => setNote(e.target.value)}
+                  onChange={(e) => editDraft("note", setNote, e.target.value)}
                 />
               </Field>
             </div>
@@ -577,7 +621,11 @@ function InspectorBody({
                   id="convert-local"
                   checked={convertToLocalCurrency}
                   onCheckedChange={(checked) =>
-                    setConvertToLocalCurrency(Boolean(checked))
+                    editDraft(
+                      "conversion",
+                      setConvertToLocalCurrency,
+                      Boolean(checked)
+                    )
                   }
                 />
                 <Label htmlFor="convert-local">

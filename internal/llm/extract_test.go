@@ -6,6 +6,38 @@ import (
 	"testing"
 )
 
+func TestParseAmountToMinor(t *testing.T) {
+	for _, tc := range []struct {
+		raw      string
+		currency string
+		want     int64
+	}{
+		{"Rp 10000,00", "IDR", 10000},
+		{"10.000,00", "IDR", 10000},
+		{"10,000.00", "IDR", 10000},
+		{"10,000", "IDR", 10000},
+		{"12,34", "EUR", 1234},
+		{"1.234,56", "EUR", 123456},
+		{"1,234.56", "USD", 123456},
+		{"100", "CLP", 100},
+		{"1.234", "LYD", 1234},
+		{"1.2345", "CLF", 12345},
+		{"1,2,3", "USD", 0},
+		{"12,34.50", "USD", 0},
+		{"10000,01", "IDR", 0},
+	} {
+		t.Run(tc.currency+" "+tc.raw, func(t *testing.T) {
+			got, err := parseAmountToMinor(tc.raw, tc.currency)
+			if tc.want == 0 && err != nil {
+				return
+			}
+			if err != nil || tc.want == 0 || got != tc.want {
+				t.Fatalf("parseAmountToMinor(%q, %q) = %d, %v; want %d (zero means invalid)", tc.raw, tc.currency, got, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeExtractedResult_IDRZeroDecimalRecovery(t *testing.T) {
 	raw, cleaned, err := ParseAndValidateExtraction(`{
 		"email_kind": "card_charge",
@@ -44,6 +76,24 @@ func TestNormalizeExtractedResult_IDRZeroDecimalRecovery(t *testing.T) {
 	}
 	if res.CardLast4 == nil || *res.CardLast4 != "9876" {
 		t.Fatalf("expected card_last4=9876, got %v", res.CardLast4)
+	}
+}
+
+func TestNormalizeExtractedResult_CLPDoesNotUseReferenceNumberAsAmount(t *testing.T) {
+	raw := &RawExtraction{
+		EmailKind:     "receipt",
+		AmountDecimal: strPtr("100.00"),
+		Currency:      strPtr("CLP"),
+	}
+	result, err := NormalizeExtractedResult(raw, "{}", ExtractInput{
+		CleanedText:   "Total CLP 100.00. Order 100000",
+		ReceivedAtUtc: "2026-11-22T03:20:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Currency != "CLP" || result.AmountMinor != 100 {
+		t.Fatalf("expected CLP 100, got %s %d", result.Currency, result.AmountMinor)
 	}
 }
 
@@ -211,9 +261,9 @@ func TestParseStrictExtractedDateTimeToUtc(t *testing.T) {
 	}
 
 	nilCases := []struct {
-		name           string
-		d, tm, tzOff   *string
-		userTz         string
+		name         string
+		d, tm, tzOff *string
+		userTz       string
 	}{
 		{"nil time", strPtr("2026-11-23"), nil, nil, "Asia/Jakarta"},
 		{"blank time", strPtr("2026-11-23"), strPtr("  "), nil, "Asia/Jakarta"},

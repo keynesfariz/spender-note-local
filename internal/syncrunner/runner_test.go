@@ -3,8 +3,10 @@ package syncrunner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -65,8 +67,9 @@ func TestUpdateSenderSyncState_PartialBatchUpdatesSyncTimestampWithoutAdvancingC
 	gdb := openTestDB(t)
 	sender := seedSender(t, gdb, "sender-1", "bca@bca.co.id", nil)
 
-	newestMs := int64(1795251063000)
-	updateSenderSyncState(gdb, sender, &newestMs, true)
+	if err := updateSenderSyncState(gdb, sender, true); err != nil {
+		t.Fatal(err)
+	}
 
 	var got db.Sender
 	if err := gdb.First(&got, "id = ?", sender.ID).Error; err != nil {
@@ -90,7 +93,9 @@ func TestUpdateSenderSyncState_FinalBatchAdvancesCursorToHighWaterMarkAcrossPrio
 	finalBatchOlderMs := int64(1794273898000)
 	seedRawEmail(t, gdb, "email-old", "gmail-old", sender.ID, finalBatchOlderMs, "2026-11-10T01:24:58Z")
 
-	updateSenderSyncState(gdb, sender, &finalBatchOlderMs, false)
+	if err := updateSenderSyncState(gdb, sender, false); err != nil {
+		t.Fatal(err)
+	}
 
 	var got db.Sender
 	if err := gdb.First(&got, "id = ?", sender.ID).Error; err != nil {
@@ -114,7 +119,9 @@ func TestUpdateSenderSyncState_FinalBatchWithZeroNewEmailsUsesStoredHighWaterMar
 	earlierNewestMs := int64(1795251063000)
 	seedRawEmail(t, gdb, "email-new", "gmail-new", sender.ID, earlierNewestMs, "2026-11-21T08:51:03Z")
 
-	updateSenderSyncState(gdb, sender, nil, false)
+	if err := updateSenderSyncState(gdb, sender, false); err != nil {
+		t.Fatal(err)
+	}
 
 	var got db.Sender
 	if err := gdb.First(&got, "id = ?", sender.ID).Error; err != nil {
@@ -132,7 +139,9 @@ func TestUpdateSenderSyncState_NoEmailsAtAllLeavesCursorNullAndSetsSyncTimestamp
 	gdb := openTestDB(t)
 	sender := seedSender(t, gdb, "sender-empty", "empty@example.com", nil)
 
-	updateSenderSyncState(gdb, sender, nil, false)
+	if err := updateSenderSyncState(gdb, sender, false); err != nil {
+		t.Fatal(err)
+	}
 
 	var got db.Sender
 	if err := gdb.First(&got, "id = ?", sender.ID).Error; err != nil {
@@ -143,6 +152,157 @@ func TestUpdateSenderSyncState_NoEmailsAtAllLeavesCursorNullAndSetsSyncTimestamp
 	}
 	if got.LastInternalDateMs != nil {
 		t.Fatalf("expected last_internal_date_ms to stay NULL when no emails exist, got %d", *got.LastInternalDateMs)
+	}
+}
+
+func TestSenderAddressChangeDiscardsOldCursorAndRejectsStaleUpdates(t *testing.T) {
+	gdb := openTestDB(t)
+	oldCursor := int64(1795251063000)
+	original := seedSender(t, gdb, "sender-1", "bca@bca.co.id", &oldCursor)
+	seedRawEmail(t, gdb, "email-old-address", "gmail-old-address", original.ID, oldCursor, "2026-11-21T08:51:03Z")
+	if err := updateSenderSyncState(gdb, original, false); err != nil {
+		t.Fatal(err)
+	}
+
+	newAddress := "receipts@example.com"
+	current, err := domain.UpdateSender(gdb, original.ID, domain.UpdateSenderInput{Email: &newAddress})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.LastInternalDateMs != nil || current.LastSyncAtUtc != nil {
+		t.Fatalf("expected address edit to clear cursor and last sync: %+v", current)
+	}
+
+	if err := updateSenderSyncState(gdb, original, false); err != nil {
+		t.Fatal(err)
+	}
+	var got db.Sender
+	if err := gdb.First(&got, "id = ?", original.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.LastInternalDateMs != nil || got.LastSyncAtUtc != nil {
+		t.Fatalf("stale fetch updated sender state: %+v", got)
+	}
+
+	if err := updateSenderSyncState(gdb, *current, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.First(&got, "id = ?", original.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.LastInternalDateMs != nil || got.LastSyncAtUtc == nil {
+		t.Fatalf("current fetch included old address's mail or did not update timestamp: %+v", got)
+	}
+}
+
+func TestFetchWriteFailureLeavesEmailAndCursorRetryable(t *testing.T) {
+	gdb := openTestDB(t)
+	sender := seedSender(t, gdb, "sender-1", "bca@bca.co.id", nil)
+	run := db.SyncRun{
+		ID: "run", Status: "running", Phase: "syncing", LlmProvider: "openai_compatible",
+		LlmModel: "qwen2.5", StartedAtUtc: "2026-11-22T00:00:00Z",
+	}
+	if err := gdb.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Exec(`
+		CREATE TRIGGER reject_fetch_counter BEFORE UPDATE OF fetched_count ON sync_runs
+		BEGIN SELECT RAISE(ABORT, 'test counter write rejected'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	originalToken, originalFetch := getValidAccessTokenFn, fetchSenderMessagesFn
+	t.Cleanup(func() {
+		getValidAccessTokenFn, fetchSenderMessagesFn = originalToken, originalFetch
+	})
+	getValidAccessTokenFn = func(context.Context, *gorm.DB, bool) (string, error) {
+		return "test-token", nil
+	}
+	msg := gmail.FetchedMessage{
+		GmailMessageID: "gmail-test", FromAddress: sender.Email, Subject: "Receipt",
+		InternalDateMs: 1795251063000, ReceivedAtUtc: "2026-11-21T08:51:03Z",
+	}
+	fetchSenderMessagesFn = func(_ context.Context, params gmail.FetchSenderMessagesParams) (*gmail.FetchSenderMessagesResult, error) {
+		if _, exists := params.KnownMessageIDs[msg.GmailMessageID]; exists {
+			t.Fatal("rolled-back Gmail message was marked as known")
+		}
+		params.OnMessage(msg)
+		return &gmail.FetchSenderMessagesResult{Messages: []gmail.FetchedMessage{msg}}, nil
+	}
+
+	config := &validatedConfig{SyncBatchLimit: 1}
+	err := runFetchWorker(context.Background(), gdb, run.ID, config, nil)
+	if err == nil || !strings.Contains(err.Error(), "test counter write rejected") {
+		t.Fatalf("expected persistence error, got %v", err)
+	}
+	var got db.Sender
+	if err := gdb.First(&got, "id = ?", sender.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.LastSyncAtUtc != nil || got.LastInternalDateMs != nil {
+		t.Fatalf("failed write advanced sender state: %+v", got)
+	}
+	if err := gdb.Exec("DROP TRIGGER reject_fetch_counter").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := runFetchWorker(context.Background(), gdb, run.ID, config, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.First(&got, "id = ?", sender.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.LastInternalDateMs == nil || *got.LastInternalDateMs != msg.InternalDateMs {
+		t.Fatalf("successful retry did not advance cursor: %+v", got)
+	}
+}
+
+func TestSyncLockPreventsOtherHandlesFromTakingOverLiveRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spender.db")
+	open := func(recoverStaleRuns bool) *gorm.DB {
+		t.Helper()
+		gdb, err := db.OpenDatabase(path, recoverStaleRuns)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sqlDB, err := gdb.DB()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = sqlDB.Close() })
+		return gdb
+	}
+	owner := open(false)
+	release, err := db.TryLockSync(owner)
+	if err != nil || release == nil {
+		t.Fatalf("acquire sync lock: %v", err)
+	}
+	t.Cleanup(release)
+	run := db.SyncRun{
+		ID: "owned-run", Status: "running", Phase: "syncing", LlmProvider: "openai_compatible",
+		LlmModel: "qwen2.5", StartedAtUtc: "2026-11-22T00:00:00Z",
+	}
+	if err := owner.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	other := open(true)
+	if _, err := RetryPendingAndFailedExtractions(other); !errors.Is(err, errAlreadySyncing) {
+		t.Fatalf("expected concurrent retry to be rejected, got %v", err)
+	}
+	if _, err := DismissPendingQueue(other); !errors.Is(err, errAlreadySyncing) {
+		t.Fatalf("expected dismiss during sync to be rejected, got %v", err)
+	}
+	if CancelSync(other) {
+		t.Fatal("cancel must not clear a run this worker does not own")
+	}
+	if err := other.First(&run, "id = ?", run.ID).Error; err != nil || run.Status != "running" {
+		t.Fatalf("live run changed during startup recovery: %s, %v", run.Status, err)
+	}
+
+	release()
+	recovered := open(true)
+	if err := recovered.First(&run, "id = ?", run.ID).Error; err != nil || run.Status != "interrupted" {
+		t.Fatalf("abandoned run was not recovered: %s, %v", run.Status, err)
 	}
 }
 

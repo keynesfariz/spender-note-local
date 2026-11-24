@@ -168,13 +168,60 @@ func TestListAccountsAt_MatchesSingleAccountSummary(t *testing.T) {
 		t.Fatalf("expected 3 accounts, got %d", len(batched))
 	}
 	for _, got := range batched {
-		single, err := buildAccountSummaryAt(gdb, got.Account, "IDR", "Asia/Jakarta", got.Identifiers, now)
+		single, err := buildAccountSummaryAt(gdb, got.Account, "Asia/Jakarta", got.Identifiers, now)
 		if err != nil {
 			t.Fatalf("buildAccountSummaryAt(%s): %v", got.Name, err)
 		}
 		if !reflect.DeepEqual(got, single) {
 			t.Fatalf("account %s mismatch:\nbatched=%+v\nsingle =%+v", got.Name, got, single)
 		}
+	}
+}
+
+func TestForeignAccountUsesItsCurrencyForBalancesBillingAndReconciliation(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	configureTestLocale(t, gdb, "Asia/Jakarta", "IDR")
+	accountID := seedTestAccount(t, gdb, "foreign-card", "USD card", "USD")
+	if err := gdb.Model(&db.Account{}).Where("id = ?", accountID).Updates(map[string]any{
+		"initial_balance_minor":     10000,
+		"initial_balance_as_of_utc": "2026-11-01T00:00:00Z",
+		"statement_day":             20,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	seedAccountTx(t, gdb, "usd-charge", accountID, 1250, "USD", "2026-11-22T05:00:00Z")
+	seedAccountTx(t, gdb, "idr-charge", accountID, 20000, "IDR", "2026-11-22T06:00:00Z")
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+
+	accounts, err := listAccountsAt(gdb, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := accounts[0]
+	if account.ComputedBalanceMinor == nil || *account.ComputedBalanceMinor != 11250 ||
+		account.NetFlowMinor != 1250 || account.UncountedForeignCount != 1 {
+		t.Fatalf("unexpected USD account totals: %+v", account)
+	}
+	if account.BillingCycle == nil || account.BillingCycle.CurrentCycle.SpentMinor != 1250 ||
+		account.BillingCycle.CurrentCycle.TransactionCount != 1 {
+		t.Fatalf("unexpected USD billing cycle: %+v", account.BillingCycle)
+	}
+
+	result, err := reconcileAccountAt(gdb, ReconcileAccountInput{
+		AccountID: accountID, ActualBalanceMinor: 11000,
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := result["reconciliation"].(db.AccountReconciliation)
+	if rec.Currency != "USD" || rec.ComputedBalanceMinor != 11250 ||
+		rec.ActualBalanceMinor != 11000 || rec.AdjustmentMinor != -250 {
+		t.Fatalf("unexpected USD reconciliation: %+v", rec)
+	}
+	summary := result["account"].(AccountSummary)
+	if summary.ComputedBalanceMinor == nil || *summary.ComputedBalanceMinor != 11000 ||
+		summary.BillingCycle == nil || summary.BillingCycle.CurrentCycle.SpentMinor != 1250 {
+		t.Fatalf("unexpected USD reconciled account: %+v", summary)
 	}
 }
 
@@ -364,7 +411,7 @@ func TestFutureDatedTransactions_ExcludedFromBalanceAndCounted(t *testing.T) {
 	seedAccountTx(t, gdb, "tx-prov-past", prov.ID, 100000, "IDR", "2026-11-20T10:00:00Z")
 	seedAccountTx(t, gdb, "tx-prov-future", prov.ID, 999999, "IDR", "2026-12-08T10:00:00Z")
 
-	bal, err := computeAccountBalanceAsOf(gdb, prov, "IDR", ToUtcIsoSeconds(now), ToUtcIsoSeconds(now))
+	bal, err := computeAccountBalanceAsOf(gdb, prov, ToUtcIsoSeconds(now), ToUtcIsoSeconds(now))
 	if err != nil {
 		t.Fatalf("computeAccountBalanceAsOf: %v", err)
 	}
@@ -386,7 +433,7 @@ func TestDomainDBErrorPropagation(t *testing.T) {
 		t.Fatalf("close sql.DB: %v", err)
 	}
 
-	if _, err := computeAccountBalanceAsOf(gdb, db.Account{ID: "acct-1", Currency: "USD"}, "USD", "2026-11-20T00:00:00Z", "2026-11-20T00:00:00Z"); err == nil {
+	if _, err := computeAccountBalanceAsOf(gdb, db.Account{ID: "acct-1", Currency: "USD"}, "2026-11-20T00:00:00Z", "2026-11-20T00:00:00Z"); err == nil {
 		t.Fatalf("expected error from computeAccountBalanceAsOf on closed DB")
 	}
 	if err := RecomputeTransactionFromSources(gdb, "tx-1", "2026-11-20T00:00:00Z"); err == nil {

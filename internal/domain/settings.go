@@ -389,11 +389,13 @@ func UpdateSender(gdb *gorm.DB, id string, patch UpdateSenderInput) (*db.Sender,
 			return errors.New("Backfill date must be a valid UTC ISO-8601 timestamp.")
 		}
 
-		newT, _ := time.Parse("2006-01-02T15:04:05Z", backfillFromUtc)
-		curT, _ := time.Parse("2006-01-02T15:04:05Z", current.BackfillFromUtc)
 		nextCursorMs := current.LastInternalDateMs
-		if newT.Before(curT) {
+		lastSyncAtUtc := current.LastSyncAtUtc
+		if email != current.Email || backfillFromUtc < current.BackfillFromUtc {
 			nextCursorMs = nil
+		}
+		if email != current.Email {
+			lastSyncAtUtc = nil
 		}
 
 		if err := tx.Model(&db.Sender{}).Where("id = ?", id).Updates(map[string]any{
@@ -403,6 +405,7 @@ func UpdateSender(gdb *gorm.DB, id string, patch UpdateSenderInput) (*db.Sender,
 			"enabled":               enabled,
 			"backfill_from_utc":     backfillFromUtc,
 			"last_internal_date_ms": nextCursorMs,
+			"last_sync_at_utc":      lastSyncAtUtc,
 		}).Error; err != nil {
 			return err
 		}

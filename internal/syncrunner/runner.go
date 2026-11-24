@@ -44,20 +44,18 @@ func getActive() *activeHandle {
 	return active
 }
 
-func setActive(h *activeHandle) {
-	activeMu.Lock()
-	defer activeMu.Unlock()
-	active = h
-}
+var errAlreadySyncing = errors.New("A background sync is already running.")
 
 func assertNotSyncing(gdb *gorm.DB) error {
 	if getActive() != nil {
-		return errors.New("A background sync is already running.")
+		return errAlreadySyncing
 	}
-	var cnt int64
-	gdb.Model(&db.SyncRun{}).Where("status = 'running'").Count(&cnt)
-	if cnt > 0 {
-		return errors.New("A background sync is already running.")
+	var count int64
+	if err := gdb.Model(&db.SyncRun{}).Where("status = 'running'").Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return errAlreadySyncing
 	}
 	return nil
 }
@@ -145,93 +143,84 @@ func loadValidatedSettings(gdb *gorm.DB, requireCountryAndGmail bool) (*validate
 }
 
 func TriggerSync(gdb *gorm.DB) (string, error) {
-	if err := assertNotSyncing(gdb); err != nil {
-		return "", err
-	}
-	cfg, err := loadValidatedSettings(gdb, true)
-	if err != nil {
-		return "", err
-	}
-
-	runID := uuid.NewString()
-	nowUtc := domain.NowUtcIsoSeconds()
-	if err := gdb.Create(&db.SyncRun{
-		ID:           runID,
-		Status:       "running",
-		Phase:        "preflight",
-		LlmProvider:  cfg.LlmProvider,
-		LlmModel:     cfg.LlmModel,
-		StartedAtUtc: nowUtc,
-	}).Error; err != nil {
-		return "", err
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	setActive(&activeHandle{runID: runID, cancel: cancel, done: done})
-
-	go func() {
-		defer func() {
-			activeMu.Lock()
-			if active != nil && active.runID == runID {
-				active = nil
-			}
-			activeMu.Unlock()
-			close(done)
-		}()
-		runFullSyncJob(ctx, gdb, runID, cfg)
-	}()
-
-	return runID, nil
+	return startSyncJob(gdb, false)
 }
 
 func RetryPendingAndFailedExtractions(gdb *gorm.DB) (string, error) {
+	return startSyncJob(gdb, true)
+}
+
+func startSyncJob(gdb *gorm.DB, retry bool) (string, error) {
+	release, err := db.TryLockSync(gdb)
+	if err != nil {
+		return "", err
+	}
+	if release == nil {
+		return "", errAlreadySyncing
+	}
+	started := false
+	defer func() {
+		if !started {
+			release()
+		}
+	}()
+
 	if err := assertNotSyncing(gdb); err != nil {
 		return "", err
 	}
-	cfg, err := loadValidatedSettings(gdb, false)
+	cfg, err := loadValidatedSettings(gdb, !retry)
 	if err != nil {
 		return "", err
 	}
 
 	runID := uuid.NewString()
-	nowUtc := domain.NowUtcIsoSeconds()
-	err = gdb.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&db.RawEmail{}).Where("status = 'failed'").Updates(map[string]any{
-			"status":        "pending",
-			"error_message": nil,
-		}).Error; err != nil {
-			return err
+	if err := gdb.Transaction(func(tx *gorm.DB) error {
+		result := tx.Exec(`
+			INSERT INTO sync_runs (id, status, phase, llm_provider, llm_model, started_at_utc)
+			SELECT ?, 'running', 'preflight', ?, ?, ?
+			WHERE NOT EXISTS (SELECT 1 FROM sync_runs WHERE status = 'running')`,
+			runID, cfg.LlmProvider, cfg.LlmModel, domain.NowUtcIsoSeconds())
+		if result.Error != nil {
+			return result.Error
 		}
-		return tx.Create(&db.SyncRun{
-			ID:           runID,
-			Status:       "running",
-			Phase:        "preflight",
-			LlmProvider:  cfg.LlmProvider,
-			LlmModel:     cfg.LlmModel,
-			StartedAtUtc: nowUtc,
-		}).Error
-	})
-	if err != nil {
+		if result.RowsAffected == 0 {
+			return errAlreadySyncing
+		}
+		if retry {
+			return tx.Model(&db.RawEmail{}).Where("status = 'failed'").Updates(map[string]any{
+				"status":        "pending",
+				"error_message": nil,
+			}).Error
+		}
+		return nil
+	}); err != nil {
 		return "", err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	setActive(&activeHandle{runID: runID, cancel: cancel, done: done})
+	activeMu.Lock()
+	active = &activeHandle{runID: runID, cancel: cancel, done: done}
+	activeMu.Unlock()
 
+	started = true
 	go func() {
 		defer func() {
+			cancel()
 			activeMu.Lock()
 			if active != nil && active.runID == runID {
 				active = nil
 			}
 			activeMu.Unlock()
+			release()
 			close(done)
 		}()
-		runRetryJob(ctx, gdb, runID, cfg)
+		if retry {
+			runRetryJob(ctx, gdb, runID, cfg)
+		} else {
+			runFullSyncJob(ctx, gdb, runID, cfg)
+		}
 	}()
-
 	return runID, nil
 }
 
@@ -245,6 +234,11 @@ func CancelSync(gdb *gorm.DB) bool {
 		}
 		return true
 	}
+	release, err := db.TryLockSync(gdb)
+	if err != nil || release == nil {
+		return false
+	}
+	defer release()
 	nowUtc := domain.NowUtcIsoSeconds()
 	res := gdb.Exec(`
 		UPDATE sync_runs
@@ -254,10 +248,20 @@ func CancelSync(gdb *gorm.DB) bool {
 }
 
 func DismissPendingQueue(gdb *gorm.DB) (int64, error) {
+	release, err := db.TryLockSync(gdb)
+	if err != nil {
+		return 0, err
+	}
+	if release == nil {
+		return 0, errAlreadySyncing
+	}
+	defer release()
 	if err := assertNotSyncing(gdb); err != nil {
 		return 0, err
 	}
-	res := gdb.Model(&db.RawEmail{}).Where("status IN ?", []string{"pending", "failed"}).Update("status", "dismissed")
+	res := gdb.Model(&db.RawEmail{}).
+		Where("status IN ? AND NOT EXISTS (SELECT 1 FROM sync_runs WHERE status = 'running')", []string{"pending", "failed"}).
+		Update("status", "dismissed")
 	return res.RowsAffected, res.Error
 }
 
@@ -369,10 +373,14 @@ func runFullSyncJob(runCtx context.Context, gdb *gorm.DB, runID string, cfg *val
 
 func runFetchWorker(ctx context.Context, gdb *gorm.DB, runID string, cfg *validatedConfig, notifyCh chan<- struct{}) error {
 	var senders []db.Sender
-	gdb.Where("enabled = 1").Order("email ASC").Find(&senders)
+	if err := gdb.Where("enabled = 1").Order("email ASC").Find(&senders).Error; err != nil {
+		return err
+	}
 
 	var knownRows []string
-	gdb.Model(&db.RawEmail{}).Pluck("gmail_message_id", &knownRows)
+	if err := gdb.Model(&db.RawEmail{}).Pluck("gmail_message_id", &knownRows).Error; err != nil {
+		return err
+	}
 	knownIDs := map[string]struct{}{}
 	for _, id := range knownRows {
 		knownIDs[id] = struct{}{}
@@ -391,62 +399,56 @@ func runFetchWorker(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 			break
 		}
 
-		var overlapStartMs int64
+		backfillMs, err := domain.UtcIsoToEpochMs(sender.BackfillFromUtc)
+		if err != nil {
+			return err
+		}
+		overlapStartMs := max(0, backfillMs)
 		if sender.LastInternalDateMs != nil {
-			overlapStartMs = max(0, *sender.LastInternalDateMs-cursorOverlapMs)
-		} else {
-			ms, _ := domain.UtcIsoToEpochMs(sender.BackfillFromUtc)
-			overlapStartMs = max(0, ms)
+			overlapStartMs = max(overlapStartMs, *sender.LastInternalDateMs-cursorOverlapMs)
 		}
 		afterEpochSec := overlapStartMs / 1000
 
 		var persistMu sync.Mutex
-		persistedIDs := map[string]struct{}{}
-		var maxInternalDateMs *int64
+		var persistErr error
 		senderFetchedCount := 0
 
 		persistMessage := func(msg gmail.FetchedMessage) {
 			persistMu.Lock()
 			defer persistMu.Unlock()
-			if ctx.Err() != nil {
+			if ctx.Err() != nil || persistErr != nil {
 				return
 			}
-			if _, ok := persistedIDs[msg.GmailMessageID]; ok {
+			if _, ok := knownIDs[msg.GmailMessageID]; ok {
 				return
-			}
-			persistedIDs[msg.GmailMessageID] = struct{}{}
-			knownIDs[msg.GmailMessageID] = struct{}{}
-			if maxInternalDateMs == nil || msg.InternalDateMs > *maxInternalDateMs {
-				v := msg.InternalDateMs
-				maxInternalDateMs = &v
 			}
 			insertedNew := false
-			_ = gdb.Transaction(func(tx *gorm.DB) error {
+			persistErr = gdb.Transaction(func(tx *gorm.DB) error {
 				res := tx.Exec(`
-					INSERT OR IGNORE INTO raw_emails (
+					INSERT INTO raw_emails (
 						id, gmail_message_id, sender_id, from_address, subject, cleaned_text,
 						internal_date_ms, received_at_utc, status
-					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+					ON CONFLICT(gmail_message_id) DO NOTHING`,
 					uuid.NewString(), msg.GmailMessageID, sender.ID, msg.FromAddress,
 					msg.Subject, msg.CleanedText, msg.InternalDateMs, msg.ReceivedAtUtc,
 				)
 				if res.Error != nil {
 					return res.Error
 				}
-				if res.RowsAffected > 0 {
-					insertedNew = true
-					senderFetchedCount++
-					if err := tx.Exec(`UPDATE sync_runs SET fetched_count = fetched_count + 1, cleaned_count = cleaned_count + 1 WHERE id = ?`, runID).Error; err != nil {
-						return err
-					}
-				} else {
-					if err := tx.Exec(`UPDATE sync_runs SET skipped_count = skipped_count + 1 WHERE id = ?`, runID).Error; err != nil {
-						return err
-					}
+				insertedNew = res.RowsAffected > 0
+				if insertedNew {
+					return tx.Exec(`UPDATE sync_runs SET fetched_count = fetched_count + 1, cleaned_count = cleaned_count + 1 WHERE id = ?`, runID).Error
 				}
-				return nil
+				return tx.Exec(`UPDATE sync_runs SET skipped_count = skipped_count + 1 WHERE id = ?`, runID).Error
 			})
-			if insertedNew && notifyCh != nil {
+			if persistErr != nil {
+				persistErr = fmt.Errorf("store Gmail message: %w", persistErr)
+				return
+			}
+			knownIDs[msg.GmailMessageID] = struct{}{}
+			if insertedNew {
+				senderFetchedCount++
 				select {
 				case notifyCh <- struct{}{}:
 				default:
@@ -462,14 +464,18 @@ func runFetchWorker(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 			return err
 		}
 
-		result, err := fetchSenderMessagesFn(ctx, gmail.FetchSenderMessagesParams{
+		fetchParams := gmail.FetchSenderMessagesParams{
 			AccessToken:     accessToken,
 			SenderEmail:     sender.Email,
 			AfterEpochSec:   afterEpochSec,
 			KnownMessageIDs: knownIDs,
 			MaxMessages:     remainingBudget,
 			OnMessage:       persistMessage,
-		})
+		}
+		result, err := fetchSenderMessagesFn(ctx, fetchParams)
+		if persistErr != nil {
+			return persistErr
+		}
 		if err != nil {
 			var unauth gmail.UnauthorizedError
 			if errors.As(err, &unauth) {
@@ -480,20 +486,19 @@ func runFetchWorker(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 					}
 					return err
 				}
-				result, err = fetchSenderMessagesFn(ctx, gmail.FetchSenderMessagesParams{
-					AccessToken:     accessToken,
-					SenderEmail:     sender.Email,
-					AfterEpochSec:   afterEpochSec,
-					KnownMessageIDs: knownIDs,
-					MaxMessages:     remainingBudget,
-					OnMessage:       persistMessage,
-				})
+				fetchParams.AccessToken = accessToken
+				result, err = fetchSenderMessagesFn(ctx, fetchParams)
+				if persistErr != nil {
+					return persistErr
+				}
 				if err != nil {
 					if ctx.Err() != nil {
 						return nil
 					}
 					if errors.As(err, &unauth) {
-						gdb.Model(&db.GmailOAuth{}).Where("id = 1").Update("status", "expired")
+						if err := gmail.MarkAccessTokenExpired(gdb, accessToken); err != nil {
+							return err
+						}
 						return &gmail.AuthExpiredError{Message: "Gmail authorization expired or was revoked. Reconnect Gmail in Settings."}
 					}
 					return err
@@ -510,6 +515,9 @@ func runFetchWorker(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 			persistMessage(msg)
 		}
 
+		if persistErr != nil {
+			return persistErr
+		}
 		remainingBudget = max(0, remainingBudget-senderFetchedCount)
 		if result.HasMore {
 			hasMoreEmails = true
@@ -518,40 +526,40 @@ func runFetchWorker(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 			break
 		}
 
-		updateSenderSyncState(gdb, sender, maxInternalDateMs, result.HasMore)
+		if err := updateSenderSyncState(gdb, sender, result.HasMore); err != nil {
+			return err
+		}
 	}
 
 	if hasMoreEmails && ctx.Err() == nil {
-		gdb.Model(&db.SyncRun{}).Where("id = ? AND status = 'running'", runID).Update("has_more_emails", 1)
+		return gdb.Model(&db.SyncRun{}).Where("id = ? AND status = 'running'", runID).Update("has_more_emails", 1).Error
 	}
 	return nil
 }
 
-func updateSenderSyncState(gdb *gorm.DB, sender db.Sender, maxInternalDateMs *int64, hasMore bool) {
+func updateSenderSyncState(gdb *gorm.DB, sender db.Sender, hasMore bool) error {
 	updates := map[string]any{
 		"last_sync_at_utc": domain.NowUtcIsoSeconds(),
 	}
 	if !hasMore {
-		nextCursor := sender.LastInternalDateMs
-		if maxInternalDateMs != nil {
-			v := *maxInternalDateMs
-			if nextCursor == nil || v > *nextCursor {
-				nextCursor = &v
-			}
+		var highWaterMark struct {
+			MaxMs *int64
 		}
-		var maxRow struct {
-			MaxMs *int64 `gorm:"column:max_ms"`
+		if err := gdb.Raw(`
+			SELECT MAX(internal_date_ms) AS max_ms
+			FROM raw_emails
+			WHERE sender_id = ? AND from_address = ? COLLATE NOCASE AND received_at_utc >= ?`,
+			sender.ID, sender.Email, sender.BackfillFromUtc).Scan(&highWaterMark).Error; err != nil {
+			return err
 		}
-		gdb.Raw(`SELECT MAX(internal_date_ms) AS max_ms FROM raw_emails WHERE sender_id = ?`, sender.ID).Scan(&maxRow)
-		if maxRow.MaxMs != nil {
-			v := *maxRow.MaxMs
-			if nextCursor == nil || v > *nextCursor {
-				nextCursor = &v
-			}
+		if highWaterMark.MaxMs != nil &&
+			(sender.LastInternalDateMs == nil || *highWaterMark.MaxMs > *sender.LastInternalDateMs) {
+			updates["last_internal_date_ms"] = *highWaterMark.MaxMs
 		}
-		updates["last_internal_date_ms"] = nextCursor
 	}
-	gdb.Model(&db.Sender{}).Where("id = ?", sender.ID).Updates(updates)
+	return gdb.Model(&db.Sender{}).
+		Where("id = ? AND email = ? AND backfill_from_utc = ? AND enabled = 1", sender.ID, sender.Email, sender.BackfillFromUtc).
+		Updates(updates).Error
 }
 
 type pendingEmailRow struct {

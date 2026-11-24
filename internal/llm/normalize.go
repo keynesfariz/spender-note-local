@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"portspendernote/internal/money"
 )
 
 type RuntimeError struct {
@@ -72,42 +74,24 @@ type ExtractResult struct {
 }
 
 var (
-	thinkBlockRe      = regexp.MustCompile(`(?is)<think>.*?</think>`)
-	codeFenceStartRe  = regexp.MustCompile("^```(?:json)?\\s*")
-	codeFenceEndRe    = regexp.MustCompile("\\s*```$")
-	isoCurrencyRe     = regexp.MustCompile(`^[A-Z]{3}$`)
-	isoDateOnlyRe     = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
-	isoTimeOnlyRe     = regexp.MustCompile(`^\d{2}:\d{2}(:\d{2})?$`)
-	tzOffsetRe        = regexp.MustCompile(`^(Z|[+-]\d{2}:\d{2})$`)
-	nonDigitRe        = regexp.MustCompile(`\D`)
-	leadingCurRe      = regexp.MustCompile(`^(?:[A-Za-z]{1,4}|\$|€|£|¥|₩|₫|₱|₹|฿)\s*`)
-	trailingCurRe     = regexp.MustCompile(`\s*(?:[A-Za-z]{2,4})$`)
-	dotGroupedRe      = regexp.MustCompile(`^(-)?(\d{1,3}(?:\.\d{3})+)(?:,(0+))?$`)
-	commaGroupedRe    = regexp.MustCompile(`^(-)?(\d[\d,]*)(?:\.(0+))?$`)
-	commaZeroCentsRe  = regexp.MustCompile(`^(-)?(\d+),(0+)$`)
-	plainDecimalRe    = regexp.MustCompile(`^(-)?(\d+)(?:\.(\d+))?$`)
-	truncZeroDecRe    = regexp.MustCompile(`^(\d{1,3}(?:[.,]\d{3})*)\.(\d{1,2})$`)
+	thinkBlockRe     = regexp.MustCompile(`(?is)<think>.*?</think>`)
+	codeFenceStartRe = regexp.MustCompile("^```(?:json)?\\s*")
+	codeFenceEndRe   = regexp.MustCompile("\\s*```$")
+	isoCurrencyRe    = regexp.MustCompile(`^[A-Z]{3}$`)
+	isoDateOnlyRe    = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+	isoTimeOnlyRe    = regexp.MustCompile(`^\d{2}:\d{2}(:\d{2})?$`)
+	tzOffsetRe       = regexp.MustCompile(`^(Z|[+-]\d{2}:\d{2})$`)
+	nonDigitRe       = regexp.MustCompile(`\D`)
+	leadingCurRe     = regexp.MustCompile(`^(?:[A-Za-z]{1,4}|\$|€|£|¥|₩|₫|₱|₹|฿)\s*`)
+	trailingCurRe    = regexp.MustCompile(`\s*(?:[A-Za-z]{2,4})$`)
+	dotGroupedRe     = regexp.MustCompile(`^(-)?(\d{1,3}(?:\.\d{3})+)(?:,(\d+))?$`)
+	commaGroupedRe   = regexp.MustCompile(`^(-)?(\d{1,3}(?:,\d{3})+)(?:\.(\d+))?$`)
+	commaDecimalRe   = regexp.MustCompile(`^(-?\d+),(\d+)$`)
+	zeroFractionRe   = regexp.MustCompile(`^(-?\d+)\.0+$`)
+	plainDecimalRe   = regexp.MustCompile(`^(-)?(\d+)(?:\.(\d+))?$`)
+	truncZeroDecRe   = regexp.MustCompile(`^(\d{1,3}(?:[.,]\d{3})*)\.(\d{1,2})$`)
+	stripGrouping    = strings.NewReplacer(".", "", ",", "")
 )
-
-var currencyExponents = map[string]int{
-	"JPY": 0,
-	"KRW": 0,
-	"IDR": 0,
-	"VND": 0,
-	"KWD": 3,
-	"BHD": 3,
-	"OMR": 3,
-	"JOD": 3,
-	"TND": 3,
-}
-
-func getCurrencyExponent(currency string) int {
-	code := strings.ToUpper(strings.TrimSpace(currency))
-	if exp, ok := currencyExponents[code]; ok {
-		return exp
-	}
-	return 2
-}
 
 func StripThinkBlocks(text string) string {
 	cleaned := strings.TrimSpace(thinkBlockRe.ReplaceAllString(text, ""))
@@ -157,22 +141,33 @@ func normalizeDecimalAmountString(raw string, exponent int) string {
 	trimmed = trailingCurRe.ReplaceAllString(trimmed, "")
 	trimmed = strings.TrimSpace(trimmed)
 
-	if exponent == 0 {
-		if m := dotGroupedRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1] + strings.ReplaceAll(m[2], ".", "")
-		}
-		if m := commaGroupedRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1] + strings.ReplaceAll(m[2], ",", "")
-		}
-		if m := commaZeroCentsRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1] + m[2]
-		}
+	// Keep dot decimals for currencies with fractional units. For zero-decimal
+	// currencies, a correctly grouped value like 10.000 means ten thousand.
+	if exponent > 0 && plainDecimalRe.MatchString(trimmed) {
+		return trimmed
 	}
-	return strings.ReplaceAll(trimmed, ",", "")
+	grouped := dotGroupedRe.FindStringSubmatch(trimmed)
+	if grouped == nil {
+		grouped = commaGroupedRe.FindStringSubmatch(trimmed)
+	}
+	if grouped != nil {
+		trimmed = grouped[1] + stripGrouping.Replace(grouped[2])
+		if grouped[3] != "" {
+			trimmed += "." + grouped[3]
+		}
+	} else if m := commaDecimalRe.FindStringSubmatch(trimmed); m != nil {
+		trimmed = m[1] + "." + m[2]
+	}
+	if exponent == 0 {
+		trimmed = zeroFractionRe.ReplaceAllString(trimmed, "$1")
+	}
+	return trimmed
 }
 
 func recoverTruncatedZeroDecimalAmount(rawAmountDecimal string, currency string, cleanedText string) string {
-	if getCurrencyExponent(currency) != 0 {
+	switch strings.ToUpper(strings.TrimSpace(currency)) {
+	case "IDR", "JPY", "KRW", "VND":
+	default:
 		return rawAmountDecimal
 	}
 	trimmed := strings.TrimSpace(rawAmountDecimal)
@@ -180,7 +175,7 @@ func recoverTruncatedZeroDecimalAmount(rawAmountDecimal string, currency string,
 	if m == nil {
 		return rawAmountDecimal
 	}
-	intDigits := strings.NewReplacer(".", "", ",", "").Replace(m[1])
+	intDigits := stripGrouping.Replace(m[1])
 	fracThree := m[2]
 	for len(fracThree) < 3 {
 		fracThree += "0"
@@ -199,7 +194,7 @@ func recoverTruncatedZeroDecimalAmount(rawAmountDecimal string, currency string,
 }
 
 func parseAmountToMinor(rawInput string, currency string) (int64, error) {
-	exponent := getCurrencyExponent(currency)
+	exponent := money.CurrencyExponent(currency)
 	raw := strings.TrimSpace(rawInput)
 	if raw == "" {
 		return 0, errors.New("amount cannot be empty")

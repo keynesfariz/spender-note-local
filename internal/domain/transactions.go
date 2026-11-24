@@ -289,11 +289,11 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 	conds := append([]string{}, rangeConds...)
 	args := append([]any{}, rangeArgs...)
 
-	if params.Category != "" && params.Category != "all" {
+	if params.Category != "" {
 		conds = append(conds, "t.category = ?")
 		args = append(args, params.Category)
 	}
-	if t := strings.TrimSpace(params.Tag); t != "" && t != "all" {
+	if t := strings.TrimSpace(params.Tag); t != "" {
 		conds = append(conds, `EXISTS (
 			SELECT 1
 			FROM transaction_tags tt

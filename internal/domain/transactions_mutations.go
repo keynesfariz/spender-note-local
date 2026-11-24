@@ -325,10 +325,12 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 			}
 		}
 
-		shouldConvert := appCurrency != nil && *appCurrency != "" && current.Currency != *appCurrency &&
-			((patch.ConvertToLocalCurrency != nil && *patch.ConvertToLocalCurrency) || patch.AmountMinor != nil)
+		convertToLocal := patch.AmountMinor != nil
+		if patch.ConvertToLocalCurrency != nil {
+			convertToLocal = *patch.ConvertToLocalCurrency
+		}
 		nextCurrency := current.Currency
-		if shouldConvert {
+		if convertToLocal && appCurrency != nil && *appCurrency != "" {
 			nextCurrency = *appCurrency
 		}
 

@@ -15,6 +15,43 @@ import (
 	"portspendernote/internal/db"
 )
 
+func TestUpdateTransaction_RespectsExplicitCurrencyConversion(t *testing.T) {
+	disabled, enabled := false, true
+	for _, tc := range []struct {
+		name     string
+		convert  *bool
+		currency string
+	}{
+		{name: "explicitly disabled", convert: &disabled, currency: "USD"},
+		{name: "explicitly enabled", convert: &enabled, currency: "IDR"},
+		{name: "omitted for legacy callers", currency: "IDR"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gdb := openDomainTestDB(t)
+			configureTestLocale(t, gdb, "Asia/Jakarta", "IDR")
+			seedTestEmail(t, gdb, "foreign-email", 1795251000000, "2026-11-21T08:50:00Z")
+			txID, err := SaveExtractedTransaction(gdb, ExtractedTransactionInput{
+				EmailID: "foreign-email", EmailKind: "receipt", AmountMinor: 1200, Currency: "USD",
+				OccurredAtUtc: "2026-11-21T08:50:00Z", MerchantRaw: "Coffee", Category: "Food",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			amount := int64(1235)
+			item, err := UpdateTransaction(gdb, txID, UpdateTransactionInput{
+				AmountMinor:            &amount,
+				ConvertToLocalCurrency: tc.convert,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if item.Currency != tc.currency || item.AmountMinor != amount {
+				t.Fatalf("updated amount = %d %s, want %d %s", item.AmountMinor, item.Currency, amount, tc.currency)
+			}
+		})
+	}
+}
+
 func TestDuplicateMergeTransactions_RejectsMismatchedAmountAndAccount(t *testing.T) {
 	gdb := openDomainTestDB(t)
 	acctA := seedTestAccount(t, gdb, "acct-a", "Card A", "IDR")

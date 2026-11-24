@@ -9,22 +9,12 @@ import {
   parseISO,
 } from "date-fns"
 
-export const CURRENCY_EXPONENTS: Record<string, number> = {
-  JPY: 0,
-  KRW: 0,
-  IDR: 0,
-  VND: 0,
-  KWD: 3,
-  BHD: 3,
-  OMR: 3,
-  JOD: 3,
-  TND: 3,
-}
+import currencyExponents from "../internal/money/currency-exponents.json"
 
-const currencyFormatterCache = new Map<
-  string,
-  { formatter: Intl.NumberFormat; exponent: number }
->()
+export const CURRENCY_EXPONENTS: Readonly<Record<string, number>> =
+  currencyExponents
+
+const currencyFormatterCache = new Map<string, Intl.NumberFormat>()
 const dateTimeFormatterCache = new Map<string, Intl.DateTimeFormat>()
 
 export function getCurrencyExponentClient(currency: string): number {
@@ -32,31 +22,24 @@ export function getCurrencyExponentClient(currency: string): number {
   if (Object.hasOwn(CURRENCY_EXPONENTS, code)) {
     return CURRENCY_EXPONENTS[code]
   }
-  return getCurrencyFormatterEntry(code)?.exponent ?? 2
+  return currencyExponents.DEFAULT
 }
 
-function getCurrencyFormatterEntry(
-  currency: string
-): { formatter: Intl.NumberFormat; exponent: number } | null {
-  const code = currency.trim().toUpperCase()
-  const cached = currencyFormatterCache.get(code)
+function getCurrencyFormatter(
+  currency: string,
+  exponent: number
+): Intl.NumberFormat | null {
+  const cached = currencyFormatterCache.get(currency)
   if (cached) return cached
   try {
-    const exponent = Object.hasOwn(CURRENCY_EXPONENTS, code)
-      ? CURRENCY_EXPONENTS[code]
-      : (new Intl.NumberFormat("en-US", {
-          style: "currency",
-          currency: code,
-        }).resolvedOptions().maximumFractionDigits ?? 2)
     const formatter = new Intl.NumberFormat("en-US", {
       style: "currency",
-      currency: code,
+      currency,
       minimumFractionDigits: exponent,
       maximumFractionDigits: exponent,
     })
-    const entry = { formatter, exponent }
-    currencyFormatterCache.set(code, entry)
-    return entry
+    currencyFormatterCache.set(currency, formatter)
+    return formatter
   } catch {
     return null
   }
@@ -81,11 +64,11 @@ export function formatMinorCurrency(
   currency: string
 ): string {
   const code = currency.trim().toUpperCase()
-  const entry = getCurrencyFormatterEntry(code)
-  const exponent = entry?.exponent ?? getCurrencyExponentClient(code)
+  const exponent = getCurrencyExponentClient(code)
+  const formatter = getCurrencyFormatter(code, exponent)
   const value = amountMinor / 10 ** exponent
-  if (entry) {
-    return entry.formatter.format(value)
+  if (formatter) {
+    return formatter.format(value)
   }
   return `${code} ${value.toFixed(exponent)}`
 }
@@ -102,28 +85,29 @@ export function normalizeDecimalAmountString(
   raw: string,
   exponent: number
 ): string {
-  const trimmed = raw
+  let trimmed = raw
     .trim()
     .replace(/^(?:[A-Za-z]{1,4}|\$|€|£|¥|₩|₫|₱|₹|฿)\s*/u, "")
     .replace(/\s*(?:[A-Za-z]{2,4})$/u, "")
     .trim()
 
-  if (exponent === 0) {
-    const dotGrouped = /^(-)?(\d{1,3}(?:\.\d{3})+)(?:,(0+))?$/.exec(trimmed)
-    if (dotGrouped) {
-      return `${dotGrouped[1] ?? ""}${dotGrouped[2].replaceAll(".", "")}`
-    }
-    const commaGrouped = /^(-)?(\d[\d,]*)(?:\.(0+))?$/.exec(trimmed)
-    if (commaGrouped) {
-      return `${commaGrouped[1] ?? ""}${commaGrouped[2].replaceAll(",", "")}`
-    }
-    const commaZeroCents = /^(-)?(\d+),(0+)$/.exec(trimmed)
-    if (commaZeroCents) {
-      return `${commaZeroCents[1] ?? ""}${commaZeroCents[2]}`
-    }
+  // Keep dot decimals for currencies with fractional units. For zero-decimal
+  // currencies, a correctly grouped value like 10.000 means ten thousand.
+  if (exponent > 0 && /^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+    return trimmed
   }
 
-  return trimmed.replaceAll(",", "")
+  const grouped =
+    /^(-?)(\d{1,3}(?:\.\d{3})+)(?:,(\d+))?$/.exec(trimmed) ??
+    /^(-?)(\d{1,3}(?:,\d{3})+)(?:\.(\d+))?$/.exec(trimmed)
+  if (grouped) {
+    const [, sign, whole, fraction] = grouped
+    trimmed = `${sign}${whole.replace(/[.,]/g, "")}${fraction ? `.${fraction}` : ""}`
+  } else {
+    trimmed = trimmed.replace(/^(-?\d+),(\d+)$/, "$1.$2")
+  }
+
+  return exponent === 0 ? trimmed.replace(/^(-?\d+)\.0+$/, "$1") : trimmed
 }
 
 export function parseDecimalToMinorClient(

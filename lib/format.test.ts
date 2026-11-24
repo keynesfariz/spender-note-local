@@ -8,6 +8,8 @@ test("amount entry accepts valid separators without inflating decimal IDR", () =
   assert.equal(parseDecimalToMinorClient("10.000,00", "IDR"), 10000)
   assert.equal(parseDecimalToMinorClient("10,000.00", "IDR"), 10000)
   assert.equal(parseDecimalToMinorClient("10,000", "IDR"), 10000)
+  assert.equal(parseDecimalToMinorClient("1.234", "IDR"), 1234)
+  assert.throws(() => parseDecimalToMinorClient("1.234", "USD"), /at most 2/)
   assert.equal(parseDecimalToMinorClient("12,34", "EUR"), 1234)
   assert.equal(parseDecimalToMinorClient("1.234,56", "EUR"), 123456)
   assert.equal(parseDecimalToMinorClient("-1,234.56", "USD"), -123456)

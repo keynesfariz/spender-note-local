@@ -11,14 +11,12 @@ import {
 
 import currencyExponents from "../internal/money/currency-exponents.json"
 
-export const CURRENCY_EXPONENTS: Readonly<Record<string, number>> =
-  currencyExponents
+const CURRENCY_EXPONENTS: Readonly<Record<string, number>> = currencyExponents
 
 const currencyFormatterCache = new Map<string, Intl.NumberFormat>()
 const dateTimeFormatterCache = new Map<string, Intl.DateTimeFormat>()
 
-export function getCurrencyExponentClient(currency: string): number {
-  const code = currency.trim().toUpperCase()
+function getCurrencyExponent(code: string): number {
   if (Object.hasOwn(CURRENCY_EXPONENTS, code)) {
     return CURRENCY_EXPONENTS[code]
   }
@@ -64,7 +62,7 @@ export function formatMinorCurrency(
   currency: string
 ): string {
   const code = currency.trim().toUpperCase()
-  const exponent = getCurrencyExponentClient(code)
+  const exponent = getCurrencyExponent(code)
   const formatter = getCurrencyFormatter(code, exponent)
   const value = amountMinor / 10 ** exponent
   if (formatter) {
@@ -81,18 +79,13 @@ export function formatSignedMinor(
   return amountMinor > 0 ? `+${formatted}` : formatted
 }
 
-export function normalizeDecimalAmountString(
-  raw: string,
-  exponent: number
-): string {
+function normalizeDecimalAmountString(raw: string, exponent: number): string {
   let trimmed = raw
     .trim()
     .replace(/^(?:[A-Za-z]{1,4}|\$|€|£|¥|₩|₫|₱|₹|฿)\s*/u, "")
     .replace(/\s*(?:[A-Za-z]{2,4})$/u, "")
     .trim()
 
-  // Keep dot decimals for currencies with fractional units. For zero-decimal
-  // currencies, a correctly grouped value like 10.000 means ten thousand.
   if (exponent > 0 && /^-?\d+(?:\.\d+)?$/.test(trimmed)) {
     return trimmed
   }
@@ -114,7 +107,7 @@ export function parseDecimalToMinorClient(
   raw: string,
   currency: string
 ): number {
-  const exponent = getCurrencyExponentClient(currency)
+  const exponent = getCurrencyExponent(currency.trim().toUpperCase())
   const cleaned = normalizeDecimalAmountString(raw, exponent)
   if (!/^-?\d+(?:\.\d+)?$/.test(cleaned)) {
     throw new Error("Enter a valid numeric amount.")
@@ -139,7 +132,7 @@ export function minorToDecimalInput(
   amountMinor: number,
   currency: string
 ): string {
-  const exponent = getCurrencyExponentClient(currency)
+  const exponent = getCurrencyExponent(currency.trim().toUpperCase())
   const divisor = 10 ** exponent
   return (amountMinor / divisor).toFixed(exponent)
 }

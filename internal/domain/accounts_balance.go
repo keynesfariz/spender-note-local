@@ -68,56 +68,30 @@ func computeAccountBalanceAsOf(gdb *gorm.DB, account db.Account, asOfUtc, nowUtc
 	}
 
 	var anchorBalance *int64
-	var anchorTime string
-	strictAfterAnchor := false
+	query := `
+		SELECT
+			COALESCE(SUM(CASE WHEN currency = ? THEN amount_minor ELSE 0 END), 0) AS local_total,
+			COALESCE(SUM(CASE WHEN currency != ? THEN 1 ELSE 0 END), 0) AS foreign_cnt
+		FROM transactions
+		WHERE account_id = ? AND occurred_at_utc <= ?`
+	args := []any{account.Currency, account.Currency, account.ID, asOfUtc}
 	if latestRecPtr != nil {
 		b := latestRecPtr.ActualBalanceMinor
 		anchorBalance = &b
-		anchorTime = latestRecPtr.RecordedAtUtc
-		strictAfterAnchor = true
+		query += " AND occurred_at_utc > ?"
+		args = append(args, latestRecPtr.RecordedAtUtc)
 	} else if account.InitialBalanceMinor != nil && account.InitialBalanceAsOfUtc <= asOfUtc {
 		anchorBalance = account.InitialBalanceMinor
-		anchorTime = account.InitialBalanceAsOfUtc
+		query += " AND occurred_at_utc >= ?"
+		args = append(args, account.InitialBalanceAsOfUtc)
 	}
 
-	type aggResult struct {
+	var agg struct {
 		LocalTotal int64 `gorm:"column:local_total"`
 		ForeignCnt int64 `gorm:"column:foreign_cnt"`
 	}
-	var agg aggResult
-	if anchorBalance == nil {
-		if err := gdb.Raw(`
-			SELECT
-				COALESCE(SUM(CASE WHEN currency = ? THEN amount_minor ELSE 0 END), 0) AS local_total,
-				COALESCE(SUM(CASE WHEN currency != ? THEN 1 ELSE 0 END), 0) AS foreign_cnt
-			FROM transactions
-			WHERE account_id = ? AND occurred_at_utc <= ?`,
-			account.Currency, account.Currency, account.ID, asOfUtc,
-		).Scan(&agg).Error; err != nil {
-			return accountBalanceInfo{}, err
-		}
-	} else if strictAfterAnchor {
-		if err := gdb.Raw(`
-			SELECT
-				COALESCE(SUM(CASE WHEN currency = ? THEN amount_minor ELSE 0 END), 0) AS local_total,
-				COALESCE(SUM(CASE WHEN currency != ? THEN 1 ELSE 0 END), 0) AS foreign_cnt
-			FROM transactions
-			WHERE account_id = ? AND occurred_at_utc > ? AND occurred_at_utc <= ?`,
-			account.Currency, account.Currency, account.ID, anchorTime, asOfUtc,
-		).Scan(&agg).Error; err != nil {
-			return accountBalanceInfo{}, err
-		}
-	} else {
-		if err := gdb.Raw(`
-			SELECT
-				COALESCE(SUM(CASE WHEN currency = ? THEN amount_minor ELSE 0 END), 0) AS local_total,
-				COALESCE(SUM(CASE WHEN currency != ? THEN 1 ELSE 0 END), 0) AS foreign_cnt
-			FROM transactions
-			WHERE account_id = ? AND occurred_at_utc >= ? AND occurred_at_utc <= ?`,
-			account.Currency, account.Currency, account.ID, anchorTime, asOfUtc,
-		).Scan(&agg).Error; err != nil {
-			return accountBalanceInfo{}, err
-		}
+	if err := gdb.Raw(query, args...).Scan(&agg).Error; err != nil {
+		return accountBalanceInfo{}, err
 	}
 
 	var futureCnt int64
@@ -298,20 +272,19 @@ func buildAccountSummariesAt(
 	}
 
 	type acctState struct {
-		account           db.Account
-		latestRec         *db.AccountReconciliation
-		anchorBalance     *int64
-		anchorTime        string
-		strictAfterAnchor bool
-		localTotal        int64
-		foreignCnt        int64
-		futureCnt         int64
-		hasTx             bool
-		cycleBounds       *CreditCardCycleBounds
-		curCycleSpent     int64
-		curCycleCount     int64
-		lastCycleSpent    int64
-		lastCycleCount    int64
+		account        db.Account
+		latestRec      *db.AccountReconciliation
+		anchorBalance  *int64
+		anchorTime     string
+		localTotal     int64
+		foreignCnt     int64
+		futureCnt      int64
+		hasTx          bool
+		cycleBounds    *CreditCardCycleBounds
+		curCycleSpent  int64
+		curCycleCount  int64
+		lastCycleSpent int64
+		lastCycleCount int64
 	}
 
 	states := make([]*acctState, len(accounts))
@@ -325,7 +298,6 @@ func buildAccountSummariesAt(
 			b := st.latestRec.ActualBalanceMinor
 			st.anchorBalance = &b
 			st.anchorTime = st.latestRec.RecordedAtUtc
-			st.strictAfterAnchor = true
 		} else if acct.InitialBalanceMinor != nil && acct.InitialBalanceAsOfUtc <= nowUtc {
 			st.anchorBalance = acct.InitialBalanceMinor
 			st.anchorTime = acct.InitialBalanceAsOfUtc
@@ -351,7 +323,7 @@ func buildAccountSummariesAt(
 			inAnchorWindow := false
 			if st.anchorBalance == nil {
 				inAnchorWindow = true
-			} else if st.strictAfterAnchor {
+			} else if st.latestRec != nil {
 				inAnchorWindow = tx.OccurredAtUtc > st.anchorTime
 			} else {
 				inAnchorWindow = tx.OccurredAtUtc >= st.anchorTime

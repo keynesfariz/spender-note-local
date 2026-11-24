@@ -476,47 +476,33 @@ func runFetchWorker(ctx context.Context, gdb *gorm.DB, runID string, cfg *valida
 		if persistErr != nil {
 			return persistErr
 		}
-		if err != nil {
-			var unauth gmail.UnauthorizedError
-			if errors.As(err, &unauth) {
-				accessToken, err = getValidAccessTokenFn(ctx, gdb, true)
-				if err != nil {
-					if ctx.Err() != nil {
-						return nil
-					}
-					return err
-				}
-				fetchParams.AccessToken = accessToken
-				result, err = fetchSenderMessagesFn(ctx, fetchParams)
-				if persistErr != nil {
-					return persistErr
-				}
-				if err != nil {
-					if ctx.Err() != nil {
-						return nil
-					}
-					if errors.As(err, &unauth) {
-						if err := gmail.MarkAccessTokenExpired(gdb, accessToken); err != nil {
-							return err
-						}
-						return &gmail.AuthExpiredError{Message: "Gmail authorization expired or was revoked. Reconnect Gmail in Settings."}
-					}
-					return err
-				}
-			} else {
+		var unauth gmail.UnauthorizedError
+		retried := errors.As(err, &unauth)
+		if retried {
+			accessToken, err = getValidAccessTokenFn(ctx, gdb, true)
+			if err != nil {
 				if ctx.Err() != nil {
 					return nil
 				}
 				return err
 			}
+			fetchParams.AccessToken = accessToken
+			result, err = fetchSenderMessagesFn(ctx, fetchParams)
+			if persistErr != nil {
+				return persistErr
+			}
 		}
-
-		for _, msg := range result.Messages {
-			persistMessage(msg)
-		}
-
-		if persistErr != nil {
-			return persistErr
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if retried && errors.As(err, &unauth) {
+				if err := gmail.MarkAccessTokenExpired(gdb, accessToken); err != nil {
+					return err
+				}
+				return &gmail.AuthExpiredError{Message: "Gmail authorization expired or was revoked. Reconnect Gmail in Settings."}
+			}
+			return err
 		}
 		remainingBudget = max(0, remainingBudget-senderFetchedCount)
 		if result.HasMore {
@@ -545,15 +531,19 @@ func updateSenderSyncState(gdb *gorm.DB, sender db.Sender, hasMore bool) error {
 		var highWaterMark struct {
 			MaxMs *int64
 		}
-		if err := gdb.Raw(`
+		query := `
 			SELECT MAX(internal_date_ms) AS max_ms
 			FROM raw_emails
-			WHERE sender_id = ? AND from_address = ? COLLATE NOCASE AND received_at_utc >= ?`,
-			sender.ID, sender.Email, sender.BackfillFromUtc).Scan(&highWaterMark).Error; err != nil {
+			WHERE sender_id = ? AND from_address = ? COLLATE NOCASE AND received_at_utc >= ?`
+		args := []any{sender.ID, sender.Email, sender.BackfillFromUtc}
+		if sender.LastInternalDateMs != nil {
+			query += " AND internal_date_ms > ?"
+			args = append(args, *sender.LastInternalDateMs)
+		}
+		if err := gdb.Raw(query, args...).Scan(&highWaterMark).Error; err != nil {
 			return err
 		}
-		if highWaterMark.MaxMs != nil &&
-			(sender.LastInternalDateMs == nil || *highWaterMark.MaxMs > *sender.LastInternalDateMs) {
+		if highWaterMark.MaxMs != nil {
 			updates["last_internal_date_ms"] = *highWaterMark.MaxMs
 		}
 	}

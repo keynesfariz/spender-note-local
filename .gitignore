@@ -44,4 +44,4 @@ next-env.d.ts
 /models/
 
 # Local Skills
-/.agents/skill/modern-web-guidance
+/.agents/skills/modern-web-guidance

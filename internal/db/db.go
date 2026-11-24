@@ -153,7 +153,7 @@ func OpenDatabase(dsn string, recoverStaleRuns bool) (*gorm.DB, error) {
 	}
 
 	var gdb *gorm.DB
-	err = withMigrationLock(dbPath, func() error {
+	err = withMigrationLock(dbPath, func() (err error) {
 		if dbPath != "" {
 			file, err := os.OpenFile(dbPath, os.O_CREATE|os.O_RDONLY, 0o600)
 			if err != nil {
@@ -181,37 +181,36 @@ func OpenDatabase(dsn string, recoverStaleRuns bool) (*gorm.DB, error) {
 		if err != nil {
 			return fmt.Errorf("get underlying sql.DB: %w", err)
 		}
+		defer func() {
+			if err != nil {
+				_ = sqlDB.Close()
+			}
+		}()
 		// SQLite works best with a single writer connection in WAL mode.
 		sqlDB.SetMaxOpenConns(1)
 
 		if err := opened.Exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;").Error; err != nil {
-			_ = sqlDB.Close()
 			return fmt.Errorf("configure sqlite pragmas: %w", err)
 		}
 
 		if err := runMigrations(sqlDB); err != nil {
-			_ = sqlDB.Close()
 			return fmt.Errorf("migrate schema: %w", err)
 		}
 
 		if err := opened.Exec("INSERT OR IGNORE INTO app_settings (id) VALUES (1)").Error; err != nil {
-			_ = sqlDB.Close()
 			return fmt.Errorf("seed app_settings: %w", err)
 		}
 		if err := opened.Exec("INSERT OR IGNORE INTO gmail_oauth (id, status) VALUES (1, 'disconnected')").Error; err != nil {
-			_ = sqlDB.Close()
 			return fmt.Errorf("seed gmail_oauth: %w", err)
 		}
 
 		if recoverStaleRuns {
 			if err := recoverInterruptedSyncRuns(opened); err != nil {
-				_ = sqlDB.Close()
 				return err
 			}
 		}
 
 		if err := enforceOwnerPermissions(dbPath); err != nil {
-			_ = sqlDB.Close()
 			return err
 		}
 

@@ -141,8 +141,6 @@ func normalizeDecimalAmountString(raw string, exponent int) string {
 	trimmed = trailingCurRe.ReplaceAllString(trimmed, "")
 	trimmed = strings.TrimSpace(trimmed)
 
-	// Keep dot decimals for currencies with fractional units. For zero-decimal
-	// currencies, a correctly grouped value like 10.000 means ten thousand.
 	if exponent > 0 && plainDecimalRe.MatchString(trimmed) {
 		return trimmed
 	}

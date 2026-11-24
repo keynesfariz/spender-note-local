@@ -66,6 +66,7 @@ func seedRawEmail(t *testing.T, gdb *gorm.DB, id, gmailID, senderID string, inte
 func TestUpdateSenderSyncState_PartialBatchUpdatesSyncTimestampWithoutAdvancingCursor(t *testing.T) {
 	gdb := openTestDB(t)
 	sender := seedSender(t, gdb, "sender-1", "bca@bca.co.id", nil)
+	seedRawEmail(t, gdb, "email-new", "gmail-new", sender.ID, 1795251063000, "2026-11-21T08:51:03Z")
 
 	if err := updateSenderSyncState(gdb, sender, true); err != nil {
 		t.Fatal(err)
@@ -83,75 +84,47 @@ func TestUpdateSenderSyncState_PartialBatchUpdatesSyncTimestampWithoutAdvancingC
 	}
 }
 
-func TestUpdateSenderSyncState_FinalBatchAdvancesCursorToHighWaterMarkAcrossPriorBatches(t *testing.T) {
-	gdb := openTestDB(t)
-	sender := seedSender(t, gdb, "sender-1", "bca@bca.co.id", nil)
+func TestUpdateSenderSyncState_CompletedBatch(t *testing.T) {
+	newest := int64(1795251063000)
+	older := int64(1794273898000)
+	for _, tc := range []struct {
+		name   string
+		stored []int64
+		want   *int64
+	}{
+		{name: "high-water mark across batches", stored: []int64{newest, older}, want: &newest},
+		{name: "only prior batch messages", stored: []int64{newest}, want: &newest},
+		{name: "no messages"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gdb := openTestDB(t)
+			sender := seedSender(t, gdb, "sender-1", "bca@bca.co.id", nil)
+			for _, date := range tc.stored {
+				receivedAt := time.UnixMilli(date).UTC().Format(time.RFC3339)
+				seedRawEmail(t, gdb, receivedAt, "gmail-"+receivedAt, sender.ID, date, receivedAt)
+			}
 
-	earlierNewestMs := int64(1795251063000)
-	seedRawEmail(t, gdb, "email-new", "gmail-new", sender.ID, earlierNewestMs, "2026-11-21T08:51:03Z")
+			if err := updateSenderSyncState(gdb, sender, false); err != nil {
+				t.Fatal(err)
+			}
 
-	finalBatchOlderMs := int64(1794273898000)
-	seedRawEmail(t, gdb, "email-old", "gmail-old", sender.ID, finalBatchOlderMs, "2026-11-10T01:24:58Z")
-
-	if err := updateSenderSyncState(gdb, sender, false); err != nil {
-		t.Fatal(err)
-	}
-
-	var got db.Sender
-	if err := gdb.First(&got, "id = ?", sender.ID).Error; err != nil {
-		t.Fatalf("load sender: %v", err)
-	}
-	if got.LastSyncAtUtc == nil || *got.LastSyncAtUtc == "" {
-		t.Fatalf("expected last_sync_at_utc to be populated, got nil")
-	}
-	if got.LastInternalDateMs == nil {
-		t.Fatalf("expected last_internal_date_ms to be populated after final batch, got nil")
-	}
-	if *got.LastInternalDateMs != earlierNewestMs {
-		t.Fatalf("expected last_internal_date_ms=%d (high-water mark from earlier batch), got %d", earlierNewestMs, *got.LastInternalDateMs)
-	}
-}
-
-func TestUpdateSenderSyncState_FinalBatchWithZeroNewEmailsUsesStoredHighWaterMark(t *testing.T) {
-	gdb := openTestDB(t)
-	sender := seedSender(t, gdb, "sender-1", "bca@bca.co.id", nil)
-
-	earlierNewestMs := int64(1795251063000)
-	seedRawEmail(t, gdb, "email-new", "gmail-new", sender.ID, earlierNewestMs, "2026-11-21T08:51:03Z")
-
-	if err := updateSenderSyncState(gdb, sender, false); err != nil {
-		t.Fatal(err)
-	}
-
-	var got db.Sender
-	if err := gdb.First(&got, "id = ?", sender.ID).Error; err != nil {
-		t.Fatalf("load sender: %v", err)
-	}
-	if got.LastSyncAtUtc == nil || *got.LastSyncAtUtc == "" {
-		t.Fatalf("expected last_sync_at_utc to be populated, got nil")
-	}
-	if got.LastInternalDateMs == nil || *got.LastInternalDateMs != earlierNewestMs {
-		t.Fatalf("expected last_internal_date_ms=%d, got %v", earlierNewestMs, got.LastInternalDateMs)
-	}
-}
-
-func TestUpdateSenderSyncState_NoEmailsAtAllLeavesCursorNullAndSetsSyncTimestamp(t *testing.T) {
-	gdb := openTestDB(t)
-	sender := seedSender(t, gdb, "sender-empty", "empty@example.com", nil)
-
-	if err := updateSenderSyncState(gdb, sender, false); err != nil {
-		t.Fatal(err)
-	}
-
-	var got db.Sender
-	if err := gdb.First(&got, "id = ?", sender.ID).Error; err != nil {
-		t.Fatalf("load sender: %v", err)
-	}
-	if got.LastSyncAtUtc == nil || *got.LastSyncAtUtc == "" {
-		t.Fatalf("expected last_sync_at_utc to be populated, got nil")
-	}
-	if got.LastInternalDateMs != nil {
-		t.Fatalf("expected last_internal_date_ms to stay NULL when no emails exist, got %d", *got.LastInternalDateMs)
+			var got db.Sender
+			if err := gdb.First(&got, "id = ?", sender.ID).Error; err != nil {
+				t.Fatalf("load sender: %v", err)
+			}
+			if got.LastSyncAtUtc == nil || *got.LastSyncAtUtc == "" {
+				t.Fatal("expected last_sync_at_utc to be populated")
+			}
+			if tc.want == nil {
+				if got.LastInternalDateMs != nil {
+					t.Fatalf("expected an empty cursor, got %d", *got.LastInternalDateMs)
+				}
+			} else if got.LastInternalDateMs == nil {
+				t.Fatalf("expected cursor %d, got nil", *tc.want)
+			} else if *got.LastInternalDateMs != *tc.want {
+				t.Fatalf("expected cursor %d, got %d", *tc.want, *got.LastInternalDateMs)
+			}
+		})
 	}
 }
 
@@ -277,6 +250,15 @@ func TestSyncLockPreventsOtherHandlesFromTakingOverLiveRun(t *testing.T) {
 		t.Fatalf("acquire sync lock: %v", err)
 	}
 	t.Cleanup(release)
+
+	other := open(false)
+	if _, err := RetryPendingAndFailedExtractions(other); !errors.Is(err, errAlreadySyncing) {
+		t.Fatalf("expected concurrent retry to be rejected, got %v", err)
+	}
+	if _, err := DismissPendingQueue(other); !errors.Is(err, errAlreadySyncing) {
+		t.Fatalf("expected dismiss during sync to be rejected, got %v", err)
+	}
+
 	run := db.SyncRun{
 		ID: "owned-run", Status: "running", Phase: "syncing", LlmProvider: "openai_compatible",
 		LlmModel: "qwen2.5", StartedAtUtc: "2026-11-22T00:00:00Z",
@@ -285,13 +267,7 @@ func TestSyncLockPreventsOtherHandlesFromTakingOverLiveRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	other := open(true)
-	if _, err := RetryPendingAndFailedExtractions(other); !errors.Is(err, errAlreadySyncing) {
-		t.Fatalf("expected concurrent retry to be rejected, got %v", err)
-	}
-	if _, err := DismissPendingQueue(other); !errors.Is(err, errAlreadySyncing) {
-		t.Fatalf("expected dismiss during sync to be rejected, got %v", err)
-	}
+	other = open(true)
 	if CancelSync(other) {
 		t.Fatal("cancel must not clear a run this worker does not own")
 	}

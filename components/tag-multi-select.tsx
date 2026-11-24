@@ -19,17 +19,22 @@ export function TagMultiSelect({
   tags,
   selectedTagIds,
   onChange,
+  draftTagNames = [],
+  onDraftTagNamesChange,
   disabled = false,
 }: {
   tags: TagSummary[]
   selectedTagIds: string[]
   onChange: (nextIds: string[]) => void
+  draftTagNames?: string[]
+  onDraftTagNamesChange?: (nextDrafts: string[]) => void
   disabled?: boolean
 }) {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
   const [createError, setCreateError] = useState<string | null>(null)
+  const [sessionDraftNames, setSessionDraftNames] = useState<string[]>([])
 
   const trimmedSearch = search.trim()
   const selectedSet = useMemo(() => new Set(selectedTagIds), [selectedTagIds])
@@ -42,17 +47,63 @@ export function TagMultiSelect({
     [selectedTagIds, tags]
   )
 
+  const persistedNamesLower = useMemo(
+    () => new Set(tags.map((t) => t.name.trim().toLowerCase())),
+    [tags]
+  )
+
+  const activeDraftNames = useMemo(() => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const raw of draftTagNames) {
+      const trimmed = raw.trim()
+      if (!trimmed) continue
+      const lower = trimmed.toLowerCase()
+      if (persistedNamesLower.has(lower) || seen.has(lower)) continue
+      seen.add(lower)
+      out.push(trimmed)
+    }
+    return out
+  }, [draftTagNames, persistedNamesLower])
+
+  const activeDraftSet = useMemo(
+    () => new Set(activeDraftNames.map((n) => n.toLowerCase())),
+    [activeDraftNames]
+  )
+
+  const popoverDraftNames = useMemo(() => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const raw of [...sessionDraftNames, ...activeDraftNames]) {
+      const trimmed = raw.trim()
+      if (!trimmed) continue
+      const lower = trimmed.toLowerCase()
+      if (persistedNamesLower.has(lower) || seen.has(lower)) continue
+      seen.add(lower)
+      out.push(trimmed)
+    }
+    return out
+  }, [sessionDraftNames, activeDraftNames, persistedNamesLower])
+
   const filteredTags = useMemo(() => {
     if (!trimmedSearch) return tags
     const needle = trimmedSearch.toLowerCase()
     return tags.filter((t) => t.name.toLowerCase().includes(needle))
   }, [tags, trimmedSearch])
 
+  const filteredDraftNames = useMemo(() => {
+    if (!trimmedSearch) return popoverDraftNames
+    const needle = trimmedSearch.toLowerCase()
+    return popoverDraftNames.filter((name) =>
+      name.toLowerCase().includes(needle)
+    )
+  }, [popoverDraftNames, trimmedSearch])
+
   const hasExactMatch = useMemo(() => {
     if (!trimmedSearch) return true
     const needle = trimmedSearch.toLowerCase()
-    return tags.some((t) => t.name.toLowerCase() === needle)
-  }, [tags, trimmedSearch])
+    return persistedNamesLower.has(needle) || activeDraftSet.has(needle)
+  }, [persistedNamesLower, activeDraftSet, trimmedSearch])
 
   const createTagMutation = useMutation({
     mutationFn: (name: string) => createTagApi({ name }),
@@ -84,9 +135,23 @@ export function TagMultiSelect({
     }
   }
 
+  const toggleDraftTag = (name: string) => {
+    if (!onDraftTagNamesChange) return
+    const needle = name.trim().toLowerCase()
+    if (activeDraftSet.has(needle)) {
+      onDraftTagNamesChange(
+        activeDraftNames.filter((n) => n.toLowerCase() !== needle)
+      )
+    } else {
+      onDraftTagNamesChange([...activeDraftNames, name])
+    }
+  }
+
+  const totalSelectedCount = selectedTags.length + activeDraftNames.length
+
   return (
     <div className="space-y-2">
-      {selectedTags.length > 0 ? (
+      {totalSelectedCount > 0 ? (
         <div className="flex flex-wrap gap-1.5">
           {selectedTags.map((tag) => (
             <Badge key={tag.id} variant="secondary" className="gap-1 pr-1">
@@ -102,6 +167,25 @@ export function TagMultiSelect({
               </button>
             </Badge>
           ))}
+          {activeDraftNames.map((name) => (
+            <Badge
+              key={`draft:${name.toLowerCase()}`}
+              variant="outline"
+              className="gap-1 border-dashed pr-1"
+            >
+              <span>{name}</span>
+              <span className="text-[10px] text-muted-foreground">New</span>
+              <button
+                type="button"
+                disabled={disabled}
+                aria-label={`Remove draft tag ${name}`}
+                onClick={() => toggleDraftTag(name)}
+                className="rounded-xs p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+              >
+                <XIcon className="size-3" />
+              </button>
+            </Badge>
+          ))}
         </div>
       ) : null}
 
@@ -109,7 +193,10 @@ export function TagMultiSelect({
         open={open}
         onOpenChange={(next) => {
           setOpen(next)
-          if (!next) {
+          if (next) {
+            setSessionDraftNames(activeDraftNames)
+          } else {
+            setSessionDraftNames([])
             setSearch("")
             setCreateError(null)
           }
@@ -127,8 +214,8 @@ export function TagMultiSelect({
           }
         >
           <TagIcon className="mr-1.5 size-3.5" />
-          {selectedTags.length > 0
-            ? `Tags (${selectedTags.length} selected)`
+          {totalSelectedCount > 0
+            ? `Tags (${totalSelectedCount} selected)`
             : "Add tags..."}
         </PopoverTrigger>
 
@@ -151,30 +238,55 @@ export function TagMultiSelect({
             ) : null}
 
             <div className="max-h-48 space-y-1 overflow-y-auto">
-              {filteredTags.length === 0 && !trimmedSearch ? (
+              {filteredTags.length === 0 &&
+              filteredDraftNames.length === 0 &&
+              !trimmedSearch ? (
                 <p className="py-2 text-center text-xs text-muted-foreground">
                   No tags yet. Type a name above to create one.
                 </p>
-              ) : filteredTags.length === 0 ? (
+              ) : filteredTags.length === 0 && filteredDraftNames.length === 0 ? (
                 <p className="py-1.5 text-center text-xs text-muted-foreground">
                   No matching tags.
                 </p>
               ) : (
-                filteredTags.map((tag) => {
-                  const checked = selectedSet.has(tag.id)
-                  return (
-                    <label
-                      key={tag.id}
-                      className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-muted"
-                    >
-                      <Checkbox
-                        checked={checked}
-                        onCheckedChange={() => toggleTag(tag.id)}
-                      />
-                      <span className="truncate">{tag.name}</span>
-                    </label>
-                  )
-                })
+                <>
+                  {filteredDraftNames.map((name) => {
+                    const lower = name.toLowerCase()
+                    const checked = activeDraftSet.has(lower)
+                    return (
+                      <label
+                        key={`draft-opt:${lower}`}
+                        className="flex cursor-pointer items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-muted"
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={() => toggleDraftTag(name)}
+                          />
+                          <span className="truncate">{name}</span>
+                        </span>
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          New
+                        </span>
+                      </label>
+                    )
+                  })}
+                  {filteredTags.map((tag) => {
+                    const checked = selectedSet.has(tag.id)
+                    return (
+                      <label
+                        key={tag.id}
+                        className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-muted"
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={() => toggleTag(tag.id)}
+                        />
+                        <span className="truncate">{tag.name}</span>
+                      </label>
+                    )
+                  })}
+                </>
               )}
             </div>
 

@@ -5,6 +5,14 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
 import { DynamicIcon } from "@/components/dynamic-icon"
+import {
+  MagicEnrichButton,
+  mergeEnrichedPreviewTags,
+  patchTagsQueryCache,
+  resolveEnrichedDateTimeInputs,
+  useMagicEnrich,
+} from "@/components/magic-enrich"
+import { TagMultiSelect } from "@/components/tag-multi-select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -31,7 +39,9 @@ import {
   combineTransactionsApi,
   duplicateMergeTransactionsApi,
   invalidateTransactionRelatedQueries,
+  tagsQuery,
   type AccountSummary,
+  type TagSummary,
   type TransactionListItem,
 } from "@/lib/api"
 import {
@@ -69,22 +79,32 @@ export function ManualMergeDialog({
 }) {
   const queryClient = useQueryClient()
   const catListQuery = useQuery(categoriesQuery())
+  const tagListQuery = useQuery(tagsQuery())
 
   const [keepId, setKeepId] = useState<string>("")
   const [merchant, setMerchant] = useState("")
   const [category, setCategory] = useState<string>(DEFAULT_CATEGORY)
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+  const [draftTagNames, setDraftTagNames] = useState<string[]>([])
   const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT)
   const [date, setDate] = useState("")
-  const [initialDate, setInitialDate] = useState("")
-  const [initialTime, setInitialTime] = useState("00:00")
+  const [time, setTime] = useState("00:00")
   const [note, setNote] = useState("")
   const [formError, setFormError] = useState<string | null>(null)
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
+
+  const { isEnriching, abortEnrichment, runEnrichment } = useMagicEnrich()
 
   const sortedByOccurred = useMemo(
     () =>
       [...transactions].sort((a, b) =>
         b.occurred_at_utc.localeCompare(a.occurred_at_utc)
       ),
+    [transactions]
+  )
+
+  const hasSourceEmails = useMemo(
+    () => transactions.some((tx) => tx.sourceCount > 0),
     [transactions]
   )
 
@@ -124,6 +144,7 @@ export function ManualMergeDialog({
     return base
   }, [accounts, accountId, primaryAccountId, primaryAccountName])
 
+  const prevSelectionKeyRef = useRef<string | null>(null)
   const lastInitKeyRef = useRef<string | null>(null)
   const selectionKey =
     mode && transactions.length >= 2
@@ -134,34 +155,52 @@ export function ManualMergeDialog({
       : null
 
   useEffect(() => {
+    if (prevSelectionKeyRef.current !== selectionKey) {
+      abortEnrichment()
+      prevSelectionKeyRef.current = selectionKey
+    }
     if (!selectionKey) {
       lastInitKeyRef.current = null
+      setSelectedTagIds([])
+      setDraftTagNames([])
+      setFormError(null)
+      setStatusMessage(null)
       return
     }
     if (lastInitKeyRef.current === selectionKey) return
     lastInitKeyRef.current = selectionKey
 
     setFormError(null)
+    setStatusMessage(null)
     setKeepId("")
+    setDraftTagNames([])
+
+    const seenTagIds = new Set<string>()
+    const unionTagIds: string[] = []
+    for (const tx of sortedByOccurred) {
+      for (const tag of tx.tags ?? []) {
+        if (!seenTagIds.has(tag.id)) {
+          seenTagIds.add(tag.id)
+          unionTagIds.push(tag.id)
+        }
+      }
+    }
+    setSelectedTagIds(unionTagIds)
 
     const primary = sortedByOccurred[0]
     if (primary) {
-      const d = utcToDateInputValue(primary.occurred_at_utc, timezone)
-      const t =
-        utcToTimeInputValue(primary.occurred_at_utc, timezone) || "00:00"
       setMerchant(primary.merchant)
       setCategory(primary.category)
       setAccountId(primary.account_id ?? UNASSIGNED_ACCOUNT)
-      setDate(d)
-      setInitialDate(d)
-      setInitialTime(t)
+      setDate(utcToDateInputValue(primary.occurred_at_utc, timezone))
+      setTime(utcToTimeInputValue(primary.occurred_at_utc, timezone) || "00:00")
       const combinedNotes = sortedByOccurred
         .map((tx) => tx.note?.trim())
         .filter((n): n is string => Boolean(n))
         .join(" / ")
       setNote(combinedNotes)
     }
-  }, [selectionKey, sortedByOccurred, timezone])
+  }, [selectionKey, sortedByOccurred, timezone, abortEnrichment])
 
   const invalidateAll = () => {
     invalidateTransactionRelatedQueries(queryClient)
@@ -199,9 +238,62 @@ export function ManualMergeDialog({
 
   const isPending = duplicateMutation.isPending || combineMutation.isPending
 
+  const handleMagicEnrich = () => {
+    if (mode !== "combine" || !hasSourceEmails) return
+    runEnrichment({
+      transactionIds: transactions.map((tx) => tx.id),
+      onStart: () => {
+        setFormError(null)
+        setStatusMessage(null)
+      },
+      onSuccess: (preview) => {
+        setMerchant(preview.merchant)
+        setCategory(preview.category)
+        setNote(preview.note ?? "")
+        const nextDateTime = resolveEnrichedDateTimeInputs(
+          preview.occurred_at_utc,
+          timezone
+        )
+        if (nextDateTime) {
+          setDate(nextDateTime.date)
+          setTime(nextDateTime.time)
+        }
+        const knownTags =
+          queryClient.getQueryData<TagSummary[]>(tagsQuery().queryKey) ??
+          tagListQuery.data ??
+          []
+        if (preview.existing_tags?.length) {
+          const addedToCache = patchTagsQueryCache(
+            queryClient,
+            preview.existing_tags,
+            new Date().toISOString()
+          )
+          if (addedToCache) {
+            void queryClient.invalidateQueries({
+              queryKey: tagsQuery().queryKey,
+            })
+          }
+        }
+        const { nextSelectedTagIds, nextDraftTagNames } =
+          mergeEnrichedPreviewTags(preview, selectedTagIds, knownTags)
+        setSelectedTagIds(nextSelectedTagIds)
+        setDraftTagNames(nextDraftTagNames)
+        setStatusMessage(
+          "Suggested fields populated from attached emails. Review and confirm combine."
+        )
+      },
+      onError: (msg) => {
+        setStatusMessage(null)
+        setFormError(msg)
+      },
+    })
+  }
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
+    if (isEnriching) return
     setFormError(null)
+    setStatusMessage(null)
 
     if (mode === "duplicate") {
       if (transactions.length !== 2 || !keepId) {
@@ -229,10 +321,13 @@ export function ManualMergeDialog({
         setFormError("Transaction date is required.")
         return
       }
+      if (!time.trim()) {
+        setFormError("Transaction time is required.")
+        return
+      }
       let occurredAtUtc: string
       try {
-        const timeToUse = date === initialDate ? initialTime : "00:00"
-        occurredAtUtc = dateTimeInputToUtcIso(date, timeToUse, timezone)
+        occurredAtUtc = dateTimeInputToUtcIso(date, time, timezone)
       } catch (err) {
         setFormError(err instanceof Error ? err.message : "Invalid date.")
         return
@@ -241,6 +336,8 @@ export function ManualMergeDialog({
         transactionIds: transactions.map((tx) => tx.id),
         merchant: merchant.trim(),
         category,
+        tag_ids: selectedTagIds,
+        tag_names: draftTagNames,
         account_id: accountId === UNASSIGNED_ACCOUNT ? null : accountId,
         occurred_at_utc: occurredAtUtc,
         note: note.trim() || null,
@@ -253,8 +350,10 @@ export function ManualMergeDialog({
       ? Boolean(keepId) && transactions.length === 2 && !isPending
       : Boolean(merchant.trim()) &&
         Boolean(date.trim()) &&
+        Boolean(time.trim()) &&
         transactions.length >= 2 &&
-        !isPending
+        !isPending &&
+        !isEnriching
 
   return (
     <Dialog
@@ -337,13 +436,22 @@ export function ManualMergeDialog({
 
           {mode === "combine" && (
             <div className="space-y-4">
-              <div className="rounded-lg border bg-muted/40 p-3">
-                <p className="text-xs text-muted-foreground">
-                  Combined total ({transactions.length} transactions)
-                </p>
-                <p className="text-2xl font-semibold tabular-nums">
-                  {formatMinorCurrency(summedAmount, sharedCurrency)}
-                </p>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/40 p-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">
+                    Combined total ({transactions.length} transactions)
+                  </p>
+                  <p className="text-2xl font-semibold tabular-nums">
+                    {formatMinorCurrency(summedAmount, sharedCurrency)}
+                  </p>
+                </div>
+                {hasSourceEmails && (
+                  <MagicEnrichButton
+                    isEnriching={isEnriching}
+                    disabled={isPending}
+                    onClick={handleMagicEnrich}
+                  />
+                )}
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
@@ -408,11 +516,34 @@ export function ManualMergeDialog({
                 </Field>
 
                 <Field className="sm:col-span-2">
+                  <FieldLabel>Tags</FieldLabel>
+                  <TagMultiSelect
+                    tags={tagListQuery.data ?? []}
+                    selectedTagIds={selectedTagIds}
+                    onChange={setSelectedTagIds}
+                    draftTagNames={draftTagNames}
+                    onDraftTagNamesChange={setDraftTagNames}
+                    disabled={isEnriching || isPending}
+                  />
+                </Field>
+
+                <Field>
                   <FieldLabel>Date</FieldLabel>
                   <DatePicker
                     value={date}
                     onChange={setDate}
                     ariaLabel="Combined transaction date"
+                  />
+                </Field>
+
+                <Field>
+                  <FieldLabel>Time</FieldLabel>
+                  <Input
+                    type="time"
+                    required
+                    aria-label="Combined transaction time"
+                    value={time}
+                    onChange={(e) => setTime(e.target.value)}
                   />
                 </Field>
 
@@ -427,6 +558,12 @@ export function ManualMergeDialog({
                 </Field>
               </div>
             </div>
+          )}
+
+          {statusMessage && (
+            <Alert>
+              <AlertDescription>{statusMessage}</AlertDescription>
+            </Alert>
           )}
 
           {formError && (

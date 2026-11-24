@@ -1,0 +1,225 @@
+"use client"
+
+import type { QueryClient } from "@tanstack/react-query"
+import { Loader2Icon, SparklesIcon } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+
+import { Button } from "@/components/ui/button"
+import {
+  enrichTransactionsApi,
+  tagsQuery,
+  type TagSummary,
+  type TransactionEnrichmentPreview,
+  type TransactionTagItem,
+} from "@/lib/api"
+import { utcToDateInputValue, utcToTimeInputValue } from "@/lib/format"
+
+export function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError"
+}
+
+export function mergeEnrichedPreviewTags(
+  preview: TransactionEnrichmentPreview,
+  currentSelectedTagIds: string[],
+  knownTags: TagSummary[]
+): { nextSelectedTagIds: string[]; nextDraftTagNames: string[] } {
+  const knownByLower = new Map<string, TagSummary>()
+  for (const tag of knownTags) {
+    knownByLower.set(tag.name.trim().toLowerCase(), tag)
+  }
+
+  const nextSelected = [...currentSelectedTagIds]
+  const selectedSet = new Set(currentSelectedTagIds)
+  const selectedNamesLower = new Set<string>()
+  for (const id of currentSelectedTagIds) {
+    const found = knownTags.find((t) => t.id === id)
+    if (found) {
+      selectedNamesLower.add(found.name.trim().toLowerCase())
+    }
+  }
+
+  for (const matched of preview.existing_tags ?? []) {
+    if (!selectedSet.has(matched.id)) {
+      selectedSet.add(matched.id)
+      nextSelected.push(matched.id)
+    }
+    selectedNamesLower.add(matched.name.trim().toLowerCase())
+  }
+
+  const nextDrafts: string[] = []
+  const seenDraftLower = new Set<string>()
+  for (const rawName of preview.draft_tag_names ?? []) {
+    const trimmed = rawName.trim()
+    if (!trimmed) continue
+    const lower = trimmed.toLowerCase()
+    if (seenDraftLower.has(lower)) continue
+
+    const known = knownByLower.get(lower)
+    if (known) {
+      if (!selectedSet.has(known.id)) {
+        selectedSet.add(known.id)
+        nextSelected.push(known.id)
+      }
+      selectedNamesLower.add(lower)
+      continue
+    }
+
+    if (selectedNamesLower.has(lower)) continue
+    seenDraftLower.add(lower)
+    nextDrafts.push(trimmed)
+  }
+
+  return {
+    nextSelectedTagIds: nextSelected,
+    nextDraftTagNames: nextDrafts,
+  }
+}
+
+export function resolveEnrichedDateTimeInputs(
+  occurredAtUtc: string | null | undefined,
+  timezone: string | null | undefined
+): { date: string; time: string } | null {
+  if (!occurredAtUtc) return null
+  const nextDate = utcToDateInputValue(occurredAtUtc, timezone)
+  const nextTime = utcToTimeInputValue(occurredAtUtc, timezone)
+  if (!nextDate || !nextTime) return null
+  return { date: nextDate, time: nextTime }
+}
+
+export function patchTagsQueryCache(
+  queryClient: QueryClient,
+  tags: readonly TransactionTagItem[],
+  fallbackCreatedAtUtc: string
+): boolean {
+  if (tags.length === 0) return false
+  let missingOrAdded = false
+  queryClient.setQueryData<TagSummary[]>(tagsQuery().queryKey, (prev) => {
+    if (!prev) {
+      missingOrAdded = true
+      return prev
+    }
+    const next = [...prev]
+    let changed = false
+    for (const tag of tags) {
+      if (!next.some((existing) => existing.id === tag.id)) {
+        next.push({
+          id: tag.id,
+          name: tag.name,
+          transaction_count: 1,
+          created_at_utc: fallbackCreatedAtUtc,
+        })
+        changed = true
+        missingOrAdded = true
+      }
+    }
+    return changed ? next.sort((a, b) => a.name.localeCompare(b.name)) : prev
+  })
+  return missingOrAdded
+}
+
+export function useMagicEnrich() {
+  const [isEnriching, setIsEnriching] = useState(false)
+  const abortRef = useRef<AbortController | null>(null)
+  const seqRef = useRef(0)
+
+  const abortEnrichment = useCallback(() => {
+    seqRef.current += 1
+    abortRef.current?.abort()
+    abortRef.current = null
+    setIsEnriching(false)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      seqRef.current += 1
+      abortRef.current?.abort()
+      abortRef.current = null
+    }
+  }, [])
+
+  const runEnrichment = useCallback(
+    async ({
+      transactionIds,
+      onStart,
+      onSuccess,
+      onError,
+    }: {
+      transactionIds: string[]
+      onStart?: () => void
+      onSuccess: (preview: TransactionEnrichmentPreview) => void
+      onError: (message: string) => void
+    }) => {
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+      const reqSeq = ++seqRef.current
+
+      onStart?.()
+      setIsEnriching(true)
+
+      try {
+        const preview = await enrichTransactionsApi(
+          { transactionIds },
+          { signal: controller.signal }
+        )
+        if (reqSeq !== seqRef.current || controller.signal.aborted) {
+          return
+        }
+        onSuccess(preview)
+      } catch (err) {
+        if (
+          reqSeq !== seqRef.current ||
+          controller.signal.aborted ||
+          isAbortError(err)
+        ) {
+          return
+        }
+        onError(
+          err instanceof Error && err.message
+            ? err.message
+            : "Failed to enrich transaction with Magic LLM."
+        )
+      } finally {
+        if (reqSeq === seqRef.current) {
+          abortRef.current = null
+          setIsEnriching(false)
+        }
+      }
+    },
+    []
+  )
+
+  return { isEnriching, abortEnrichment, runEnrichment }
+}
+
+export function MagicEnrichButton({
+  isEnriching,
+  disabled = false,
+  onClick,
+}: {
+  isEnriching: boolean
+  disabled?: boolean
+  onClick: () => void
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={disabled || isEnriching}
+      onClick={onClick}
+    >
+      {isEnriching ? (
+        <>
+          <Loader2Icon className="mr-1.5 size-3.5 animate-spin" />
+          Enriching...
+        </>
+      ) : (
+        <>
+          <SparklesIcon className="mr-1.5 size-3.5" />
+          Magic LLM
+        </>
+      )}
+    </Button>
+  )
+}

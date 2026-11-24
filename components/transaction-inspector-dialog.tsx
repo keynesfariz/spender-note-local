@@ -1,10 +1,17 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useMemo, useState, type FormEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
 import { DynamicIcon } from "@/components/dynamic-icon"
+import {
+  MagicEnrichButton,
+  mergeEnrichedPreviewTags,
+  patchTagsQueryCache,
+  resolveEnrichedDateTimeInputs,
+  useMagicEnrich,
+} from "@/components/magic-enrich"
 import { TagMultiSelect } from "@/components/tag-multi-select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -51,6 +58,8 @@ import {
   transactionDetailQuery,
   updateTransactionApi,
   type AccountSummary,
+  type TagSummary,
+  type TransactionDetailView,
 } from "@/lib/api"
 import {
   DEFAULT_CATEGORY,
@@ -91,6 +100,8 @@ function InspectorBody({
   const [amount, setAmount] = useState("")
   const [category, setCategory] = useState<string>(DEFAULT_CATEGORY)
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+  const [draftTagNames, setDraftTagNames] = useState<string[]>([])
+  const [hasUnsavedMagicEdits, setHasUnsavedMagicEdits] = useState(false)
   const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT)
   const [date, setDate] = useState("")
   const [time, setTime] = useState("")
@@ -99,19 +110,44 @@ function InspectorBody({
   const [formError, setFormError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
 
+  const { isEnriching, abortEnrichment, runEnrichment } = useMagicEnrich()
+  const lastLoadedTxRef = useRef<{ id: string; key: string } | null>(null)
+
   useEffect(() => {
     const tx = detailQuery.data?.transaction
     if (!tx) return
+    const nextKey = `${tx.id}:${tx.updated_at_utc}|${timezone ?? ""}`
+    const isSameTx = lastLoadedTxRef.current?.id === tx.id
+    if (
+      isSameTx &&
+      (hasUnsavedMagicEdits ||
+        isEnriching ||
+        lastLoadedTxRef.current?.key === nextKey)
+    ) {
+      return
+    }
+    if (!isSameTx) {
+      abortEnrichment()
+    }
+    lastLoadedTxRef.current = { id: tx.id, key: nextKey }
     setMerchant(tx.merchant)
     setAmount(minorToDecimalInput(tx.amount_minor, tx.currency))
     setCategory(tx.category)
     setSelectedTagIds((tx.tags ?? []).map((t) => t.id))
+    setDraftTagNames([])
+    setHasUnsavedMagicEdits(false)
     setAccountId(tx.account_id ?? UNASSIGNED_ACCOUNT)
     setDate(utcToDateInputValue(tx.occurred_at_utc, timezone))
     setTime(utcToTimeInputValue(tx.occurred_at_utc, timezone))
     setNote(tx.note ?? "")
     setConvertToLocalCurrency(false)
-  }, [detailQuery.data?.transaction, timezone])
+  }, [
+    detailQuery.data?.transaction,
+    timezone,
+    hasUnsavedMagicEdits,
+    isEnriching,
+    abortEnrichment,
+  ])
 
   const invalidateAll = () => {
     invalidateTransactionRelatedQueries(queryClient)
@@ -119,7 +155,29 @@ function InspectorBody({
 
   const updateMutation = useMutation({
     mutationFn: updateTransactionApi,
-    onSuccess: () => {
+    onSuccess: (updatedTx) => {
+      const syncedKey = `${updatedTx.id}:${updatedTx.updated_at_utc}|${timezone ?? ""}`
+      lastLoadedTxRef.current = { id: updatedTx.id, key: syncedKey }
+      queryClient.setQueryData<TransactionDetailView>(
+        transactionDetailQuery(updatedTx.id).queryKey,
+        (prev) => (prev ? { ...prev, transaction: updatedTx } : prev)
+      )
+      patchTagsQueryCache(
+        queryClient,
+        updatedTx.tags ?? [],
+        updatedTx.updated_at_utc
+      )
+      setMerchant(updatedTx.merchant)
+      setAmount(minorToDecimalInput(updatedTx.amount_minor, updatedTx.currency))
+      setCategory(updatedTx.category)
+      setSelectedTagIds((updatedTx.tags ?? []).map((t) => t.id))
+      setDraftTagNames([])
+      setHasUnsavedMagicEdits(false)
+      setAccountId(updatedTx.account_id ?? UNASSIGNED_ACCOUNT)
+      setNote(updatedTx.note ?? "")
+      setDate(utcToDateInputValue(updatedTx.occurred_at_utc, timezone))
+      setTime(utcToTimeInputValue(updatedTx.occurred_at_utc, timezone))
+      setConvertToLocalCurrency(false)
       setFormError(null)
       setStatusMessage("Transaction updated.")
       invalidateAll()
@@ -231,6 +289,7 @@ function InspectorBody({
 
   function handleSave(event: FormEvent) {
     event.preventDefault()
+    if (isEnriching) return
     setFormError(null)
     setStatusMessage(null)
     try {
@@ -258,6 +317,7 @@ function InspectorBody({
         amount_minor: parsedAmountMinor,
         category,
         tag_ids: selectedTagIds,
+        tag_names: draftTagNames,
         account_id: accountId !== UNASSIGNED_ACCOUNT ? accountId : null,
         occurred_at_utc: occurredAtUtc,
         note: note.trim() || null,
@@ -268,6 +328,56 @@ function InspectorBody({
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Invalid input.")
     }
+  }
+
+  function handleMagicEnrich() {
+    runEnrichment({
+      transactionIds: [tx.id],
+      onStart: () => {
+        setFormError(null)
+        setStatusMessage(null)
+      },
+      onSuccess: (preview) => {
+        setMerchant(preview.merchant)
+        setCategory(preview.category)
+        setNote(preview.note ?? "")
+        const nextDateTime = resolveEnrichedDateTimeInputs(
+          preview.occurred_at_utc,
+          timezone
+        )
+        if (nextDateTime) {
+          setDate(nextDateTime.date)
+          setTime(nextDateTime.time)
+        }
+        const knownTags =
+          queryClient.getQueryData<TagSummary[]>(tagsQuery().queryKey) ??
+          tagListQuery.data ??
+          []
+        if (preview.existing_tags?.length) {
+          const addedToCache = patchTagsQueryCache(
+            queryClient,
+            preview.existing_tags,
+            new Date().toISOString()
+          )
+          if (addedToCache) {
+            void queryClient.invalidateQueries({
+              queryKey: tagsQuery().queryKey,
+            })
+          }
+        }
+        const { nextSelectedTagIds, nextDraftTagNames } =
+          mergeEnrichedPreviewTags(preview, selectedTagIds, knownTags)
+        setSelectedTagIds(nextSelectedTagIds)
+        setDraftTagNames(nextDraftTagNames)
+        setHasUnsavedMagicEdits(true)
+        setStatusMessage(
+          "Suggested fields populated from attached emails. Review and save changes."
+        )
+      },
+      onError: (msg) => {
+        setFormError(msg)
+      },
+    })
   }
 
   return (
@@ -284,6 +394,24 @@ function InspectorBody({
       )}
 
       <form onSubmit={handleSave} className="space-y-4">
+        {detail.sources.length >= 1 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2">
+            <p className="text-xs text-muted-foreground">
+              Fill merchant, category, tags, date, time, and note from{" "}
+              {detail.sources.length}{" "}
+              {detail.sources.length === 1
+                ? "attached email"
+                : "attached emails"}
+              .
+            </p>
+            <MagicEnrichButton
+              isEnriching={isEnriching}
+              disabled={updateMutation.isPending || deleteMutation.isPending}
+              onClick={handleMagicEnrich}
+            />
+          </div>
+        )}
+
         <div className="grid gap-4 sm:grid-cols-2">
           <Field>
             <FieldLabel>Merchant</FieldLabel>
@@ -348,6 +476,9 @@ function InspectorBody({
               tags={tagListQuery.data ?? []}
               selectedTagIds={selectedTagIds}
               onChange={setSelectedTagIds}
+              draftTagNames={draftTagNames}
+              onDraftTagNamesChange={setDraftTagNames}
+              disabled={isEnriching || updateMutation.isPending}
             />
           </Field>
 
@@ -451,20 +582,23 @@ function InspectorBody({
           <div className="flex flex-wrap items-center gap-2">
             {tx.reviewed === 1 ? (
               <Badge variant="secondary">Reviewed</Badge>
-            ) : (
+            ) : !hasUnsavedMagicEdits ? (
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={markReviewedMutation.isPending}
+                disabled={markReviewedMutation.isPending || isEnriching}
                 onClick={() => markReviewedMutation.mutate()}
               >
                 {markReviewedMutation.isPending
                   ? "Marking..."
                   : "Mark reviewed"}
               </Button>
-            )}
-            <Button type="submit" disabled={updateMutation.isPending}>
+            ) : null}
+            <Button
+              type="submit"
+              disabled={updateMutation.isPending || isEnriching}
+            >
               {updateMutation.isPending ? "Saving..." : "Save changes"}
             </Button>
           </div>
@@ -513,7 +647,7 @@ function InspectorBody({
                           type="button"
                           variant="outline"
                           size="sm"
-                          disabled={splitMutation.isPending}
+                          disabled={splitMutation.isPending || isEnriching}
                           onClick={() =>
                             splitMutation.mutate({
                               transactionId: tx.id,
@@ -569,6 +703,7 @@ export function TransactionInspectorDialog({
         </DialogHeader>
         {transactionId && (
           <InspectorBody
+            key={transactionId}
             transactionId={transactionId}
             accounts={accounts}
             localCurrency={localCurrency}

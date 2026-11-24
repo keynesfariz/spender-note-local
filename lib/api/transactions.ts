@@ -4,6 +4,7 @@ import type {
   MonthlySpendingSummary,
   PaginatedTransactionsResponse,
   TransactionDetailView,
+  TransactionEnrichmentPreview,
   TransactionListItem,
 } from "./types.generated"
 
@@ -79,6 +80,7 @@ export const updateTransactionApi = (input: {
   merchant?: string
   category?: string
   tag_ids?: string[]
+  tag_names?: string[]
   account_id?: string | null
   note?: string | null
   convertToLocalCurrency?: boolean
@@ -127,6 +129,8 @@ export const combineTransactionsApi = (input: {
   transactionIds: string[]
   merchant: string
   category?: string
+  tag_ids?: string[]
+  tag_names?: string[]
   account_id?: string | null
   occurred_at_utc: string
   note?: string | null
@@ -134,6 +138,16 @@ export const combineTransactionsApi = (input: {
   apiFetch<TransactionListItem>("/api/transactions/merge", {
     method: "POST",
     body: JSON.stringify({ mode: "combine", ...input }),
+  })
+
+export const enrichTransactionsApi = (
+  input: { transactionIds: string[] },
+  options?: { signal?: AbortSignal }
+) =>
+  apiFetch<TransactionEnrichmentPreview>("/api/transactions/enrich", {
+    method: "POST",
+    body: JSON.stringify(input),
+    signal: options?.signal,
   })
 
 export const markTransactionsReviewedApi = (transactionIds: string[]) =>

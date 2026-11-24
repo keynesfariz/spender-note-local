@@ -202,6 +202,15 @@ export interface TransactionDetailView {
   sources: TransactionSourceView[]
 }
 
+export interface TransactionEnrichmentPreview {
+  merchant: string
+  category: string
+  note: string | null
+  occurred_at_utc: string | null
+  existing_tags: TransactionTagItem[]
+  draft_tag_names: string[]
+}
+
 export interface SyncRunRow {
   id: string
   status: "running" | "completed" | "partial_error" | "failed" | "cancelled" | "interrupted"

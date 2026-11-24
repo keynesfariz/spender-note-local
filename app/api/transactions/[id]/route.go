@@ -49,6 +49,9 @@ func PATCH(w http.ResponseWriter, r *http.Request) {
 	if _, ok := rawMap["tag_ids"]; ok {
 		patch.HasTagIDs = true
 	}
+	if _, ok := rawMap["tag_names"]; ok {
+		patch.HasTagIDs = true
+	}
 
 	tx, err := domain.UpdateTransaction(gdb, r.PathValue("id"), patch)
 	if err != nil {

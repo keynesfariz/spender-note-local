@@ -131,6 +131,10 @@ var typeSpecs = []structSpec{
 		goType: reflect.TypeOf(domain.TransactionDetailView{}),
 	},
 	{
+		tsName: "TransactionEnrichmentPreview",
+		goType: reflect.TypeOf(domain.TransactionEnrichmentPreview{}),
+	},
+	{
 		tsName: "SyncRunRow",
 		goType: reflect.TypeOf(db.SyncRun{}),
 		overrides: map[string]string{

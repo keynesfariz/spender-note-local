@@ -73,3 +73,20 @@ func TestGenerateTypeScript_MatchesCommittedFile(t *testing.T) {
 		t.Fatalf("%s is out of date; run `bun run generate:types`", repoFile)
 	}
 }
+
+func TestGenerateTypeScript_IncludesTransactionEnrichmentPreview(t *testing.T) {
+	generated := generateTypeScript()
+	for _, want := range []string{
+		"export interface TransactionEnrichmentPreview {",
+		"merchant: string",
+		"category: string",
+		"note: string | null",
+		"occurred_at_utc: string | null",
+		"existing_tags: TransactionTagItem[]",
+		"draft_tag_names: string[]",
+	} {
+		if !strings.Contains(generated, want) {
+			t.Fatalf("expected generated TypeScript to contain %q", want)
+		}
+	}
+}

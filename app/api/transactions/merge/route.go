@@ -56,9 +56,6 @@ func POST(w http.ResponseWriter, r *http.Request) {
 		if _, ok := rawMap["tag_ids"]; ok {
 			input.HasTagIDs = true
 		}
-		if _, ok := rawMap["tag_names"]; ok {
-			input.HasTagIDs = true
-		}
 		tx, err := domain.CombineTransactions(gdb, input)
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, err.Error())

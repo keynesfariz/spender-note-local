@@ -75,7 +75,16 @@ func TestGenerateTypeScript_MatchesCommittedFile(t *testing.T) {
 }
 
 func TestGenerateTypeScript_IncludesTransactionEnrichmentPreview(t *testing.T) {
-	generated := generateTypeScript()
+	full := generateTypeScript()
+	start := strings.Index(full, "export interface TransactionEnrichmentPreview {")
+	if start == -1 {
+		t.Fatalf("expected generated TypeScript to declare TransactionEnrichmentPreview")
+	}
+	end := strings.Index(full[start:], "\n}\n")
+	if end == -1 {
+		t.Fatalf("could not find end of TransactionEnrichmentPreview interface")
+	}
+	generated := full[start : start+end]
 	for _, want := range []string{
 		"export interface TransactionEnrichmentPreview {",
 		"merchant: string",

@@ -811,7 +811,7 @@ func TestEnrichTransactionsFromSources_CardChargeTimestampAndSenderRoleHintPrece
 			"tags":             []string{},
 			"note":             nil,
 			"transaction_date": "2026-11-23",
-			"transaction_time": "12:48",
+			"transaction_time": "13:30",
 			"timezone_offset":  nil,
 		}
 	})
@@ -847,8 +847,8 @@ func TestEnrichTransactionsFromSources_MultipleTransactionsEarliestCardCharge(t 
 			t.Fatalf("create %s: %v", id, err)
 		}
 	}
-	seedRichSourceEmail(t, gdb, "tx-a", "em-a", "", "card_charge", "card_charge", 2000, "2026-11-23T07:30:00Z", "bank@test.id", "Later Charge", "Body A", `{"transaction_date":"2026-11-23","transaction_time":"14:30"}`)
-	seedRichSourceEmail(t, gdb, "tx-b", "em-b", "", "card_charge", "card_charge", 1000, "2026-11-23T04:05:00Z", "bank@test.id", "Earlier Charge", "Body B", `{"transaction_date":"2026-11-23","transaction_time":"11:05"}`)
+	seedRichSourceEmail(t, gdb, "tx-a", "em-a", "", "card_charge", "card_charge", 1000, "2026-11-23T07:30:00Z", "bank@test.id", "Later Charge", "Body A", `{"transaction_date":"2026-11-23","transaction_time":"14:30"}`)
+	seedRichSourceEmail(t, gdb, "tx-b", "em-b", "", "card_charge", "card_charge", 2000, "2026-11-23T04:05:00Z", "bank@test.id", "Earlier Charge", "Body B", `{"transaction_date":"2026-11-23","transaction_time":"11:05"}`)
 
 	var capturedPrompt string
 	startEnrichTestServer(t, gdb, func(userPrompt string) map[string]any {
@@ -992,6 +992,41 @@ func TestUpdateAndCombineTransactions_AtomicTagNamesPersistence(t *testing.T) {
 	allTagsAfterFail, _ := ListTags(gdb)
 	if len(allTagsAfterFail) != 3 {
 		t.Fatalf("expected RollbackTag not to persist on transaction failure, got %d tags", len(allTagsAfterFail))
+	}
+
+	changedMerchant := "Changed Merchant"
+	if _, err := UpdateTransaction(gdb, tx1.ID, UpdateTransactionInput{
+		Merchant:  &changedMerchant,
+		HasTagIDs: true,
+		TagIDs:    []string{"missing-tag-id"},
+		TagNames:  []string{"RollbackTag"},
+	}); err == nil {
+		t.Fatalf("expected UpdateTransaction to fail for unknown tag id")
+	}
+	allTagsAfterTagFail, _ := ListTags(gdb)
+	if len(allTagsAfterTagFail) != 3 {
+		t.Fatalf("expected created RollbackTag to roll back after tag id failure, got %d tags", len(allTagsAfterTagFail))
+	}
+	var afterTagFail db.Transaction
+	if err := gdb.Where("id = ?", tx1.ID).First(&afterTagFail).Error; err != nil {
+		t.Fatalf("reload tx1: %v", err)
+	}
+	if afterTagFail.Merchant != "Lunch" {
+		t.Fatalf("expected merchant update to roll back, got %q", afterTagFail.Merchant)
+	}
+
+	namesOnly, err := UpdateTransaction(gdb, tx1.ID, UpdateTransactionInput{TagNames: []string{"NamesOnly"}})
+	if err != nil {
+		t.Fatalf("UpdateTransaction with tag_names only: %v", err)
+	}
+	hasWork := false
+	for _, tg := range namesOnly.Tags {
+		if tg.ID == tagWork.ID {
+			hasWork = true
+		}
+	}
+	if !hasWork || len(namesOnly.Tags) < 4 {
+		t.Fatalf("expected tag_names-only update to preserve existing tags and add NamesOnly, got %+v", namesOnly.Tags)
 	}
 
 	tx2, _ := CreateManualTransaction(gdb, CreateManualTransactionInput{

@@ -73,9 +73,6 @@ func replaceTransactionTags(tx *gorm.DB, transactionID string, rawTagIDs []strin
 
 func resolveAndReplaceTransactionTags(tx *gorm.DB, transactionID string, rawTagIDs []string, rawTagNames []string, nowUtc string) error {
 	callerTagIDs := normalizeTransactionIDs(rawTagIDs)
-	if err := validateSelectedTagIDs(tx, callerTagIDs); err != nil {
-		return err
-	}
 
 	pending := make([]struct {
 		name string
@@ -136,7 +133,18 @@ func resolveAndReplaceTransactionTags(tx *gorm.DB, transactionID string, rawTagI
 		}
 	}
 
+	if err := validateSelectedTagIDs(tx, callerTagIDs); err != nil {
+		return err
+	}
 	return setTransactionTags(tx, transactionID, normalizeTransactionIDs(allTagIDs), nowUtc)
+}
+
+func appendTransactionTagNames(tx *gorm.DB, transactionID string, names []string, nowUtc string) error {
+	var currentIDs []string
+	if err := tx.Model(&db.TransactionTag{}).Where("transaction_id = ?", transactionID).Pluck("tag_id", &currentIDs).Error; err != nil {
+		return err
+	}
+	return resolveAndReplaceTransactionTags(tx, transactionID, currentIDs, names, nowUtc)
 }
 
 func copyTransactionTags(tx *gorm.DB, targetTxID string, sourceTxIDs []string, nowUtc string) error {
@@ -347,6 +355,10 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 
 		if patch.HasTagIDs {
 			if err := resolveAndReplaceTransactionTags(tx, id, patch.TagIDs, patch.TagNames, nowUtc); err != nil {
+				return err
+			}
+		} else if len(patch.TagNames) > 0 {
+			if err := appendTransactionTagNames(tx, id, patch.TagNames, nowUtc); err != nil {
 				return err
 			}
 		}
@@ -607,6 +619,11 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 		} else {
 			if err := copyTransactionTags(tx, survivorID, absorbedIDs, nowUtc); err != nil {
 				return err
+			}
+			if len(input.TagNames) > 0 {
+				if err := appendTransactionTagNames(tx, survivorID, input.TagNames, nowUtc); err != nil {
+					return err
+				}
 			}
 		}
 

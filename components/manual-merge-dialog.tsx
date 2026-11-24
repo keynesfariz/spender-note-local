@@ -7,9 +7,8 @@ import { DatePicker } from "@/components/date-picker"
 import { DynamicIcon } from "@/components/dynamic-icon"
 import {
   MagicEnrichButton,
-  mergeEnrichedPreviewTags,
-  patchTagsQueryCache,
   resolveEnrichedDateTimeInputs,
+  syncAndMergeEnrichedTags,
   useMagicEnrich,
 } from "@/components/magic-enrich"
 import { TagMultiSelect } from "@/components/tag-multi-select"
@@ -41,7 +40,6 @@ import {
   invalidateTransactionRelatedQueries,
   tagsQuery,
   type AccountSummary,
-  type TagSummary,
   type TransactionListItem,
 } from "@/lib/api"
 import {
@@ -78,8 +76,14 @@ export function ManualMergeDialog({
   onSuccess: () => void
 }) {
   const queryClient = useQueryClient()
-  const catListQuery = useQuery(categoriesQuery())
-  const tagListQuery = useQuery(tagsQuery())
+  const catListQuery = useQuery({
+    ...categoriesQuery(),
+    enabled: mode === "combine",
+  })
+  const tagListQuery = useQuery({
+    ...tagsQuery(),
+    enabled: mode === "combine",
+  })
 
   const [keepId, setKeepId] = useState<string>("")
   const [merchant, setMerchant] = useState("")
@@ -97,15 +101,17 @@ export function ManualMergeDialog({
 
   const sortedByOccurred = useMemo(
     () =>
-      [...transactions].sort((a, b) =>
-        b.occurred_at_utc.localeCompare(a.occurred_at_utc)
-      ),
-    [transactions]
+      mode === "combine"
+        ? [...transactions].sort((a, b) =>
+            b.occurred_at_utc.localeCompare(a.occurred_at_utc)
+          )
+        : transactions,
+    [mode, transactions]
   )
 
   const hasSourceEmails = useMemo(
-    () => transactions.some((tx) => tx.sourceCount > 0),
-    [transactions]
+    () => mode === "combine" && transactions.some((tx) => tx.sourceCount > 0),
+    [mode, transactions]
   )
 
   const summedAmount = useMemo(
@@ -144,7 +150,6 @@ export function ManualMergeDialog({
     return base
   }, [accounts, accountId, primaryAccountId, primaryAccountName])
 
-  const prevSelectionKeyRef = useRef<string | null>(null)
   const lastInitKeyRef = useRef<string | null>(null)
   const selectionKey =
     mode && transactions.length >= 2
@@ -155,25 +160,19 @@ export function ManualMergeDialog({
       : null
 
   useEffect(() => {
-    if (prevSelectionKeyRef.current !== selectionKey) {
-      abortEnrichment()
-      prevSelectionKeyRef.current = selectionKey
-    }
-    if (!selectionKey) {
-      lastInitKeyRef.current = null
-      setSelectedTagIds([])
-      setDraftTagNames([])
-      setFormError(null)
-      setStatusMessage(null)
-      return
-    }
     if (lastInitKeyRef.current === selectionKey) return
+    abortEnrichment()
     lastInitKeyRef.current = selectionKey
 
     setFormError(null)
     setStatusMessage(null)
     setKeepId("")
-    setDraftTagNames([])
+    setDraftTagNames((prev) => (prev.length === 0 ? prev : []))
+
+    if (mode !== "combine" || !selectionKey) {
+      setSelectedTagIds((prev) => (prev.length === 0 ? prev : []))
+      return
+    }
 
     const seenTagIds = new Set<string>()
     const unionTagIds: string[] = []
@@ -200,7 +199,7 @@ export function ManualMergeDialog({
         .join(" / ")
       setNote(combinedNotes)
     }
-  }, [selectionKey, sortedByOccurred, timezone, abortEnrichment])
+  }, [selectionKey, mode, sortedByOccurred, timezone, abortEnrichment])
 
   const invalidateAll = () => {
     invalidateTransactionRelatedQueries(queryClient)
@@ -258,24 +257,13 @@ export function ManualMergeDialog({
           setDate(nextDateTime.date)
           setTime(nextDateTime.time)
         }
-        const knownTags =
-          queryClient.getQueryData<TagSummary[]>(tagsQuery().queryKey) ??
-          tagListQuery.data ??
-          []
-        if (preview.existing_tags?.length) {
-          const addedToCache = patchTagsQueryCache(
-            queryClient,
-            preview.existing_tags,
-            new Date().toISOString()
-          )
-          if (addedToCache) {
-            void queryClient.invalidateQueries({
-              queryKey: tagsQuery().queryKey,
-            })
-          }
-        }
         const { nextSelectedTagIds, nextDraftTagNames } =
-          mergeEnrichedPreviewTags(preview, selectedTagIds, knownTags)
+          syncAndMergeEnrichedTags({
+            queryClient,
+            preview,
+            currentSelectedTagIds: selectedTagIds,
+            fallbackKnownTags: tagListQuery.data ?? [],
+          })
         setSelectedTagIds(nextSelectedTagIds)
         setDraftTagNames(nextDraftTagNames)
         setStatusMessage(

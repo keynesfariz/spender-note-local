@@ -58,7 +58,8 @@ func resolveEffectiveEmailRole(row enrichSourceRow) string {
 }
 
 func resolveEarliestCardChargeUtc(rows []enrichSourceRow, effectiveRoles []string, userTimezone string) *string {
-	var earliest *string
+	var earliestTime time.Time
+	hasEarliest := false
 	for i, row := range rows {
 		if effectiveRoles[i] != "card_charge" || row.RawLlmJSON == nil {
 			continue
@@ -71,31 +72,43 @@ func resolveEarliestCardChargeUtc(rows []enrichSourceRow, effectiveRoles []strin
 		if err := json.Unmarshal([]byte(cleaned), &raw); err != nil {
 			continue
 		}
-		parsedUtc := llm.ParseStrictExtractedDateTimeToUtc(
+		parsedTime, ok := llm.ParseStrictExtractedDateTime(
 			raw.TransactionDate,
 			raw.TransactionTime,
 			raw.TimezoneOffset,
 			userTimezone,
 		)
-		if parsedUtc == nil {
+		if !ok {
 			continue
 		}
-		// Timestamps are formatted as fixed-width YYYY-MM-DDTHH:MM:SSZ UTC strings, so string order matches time order.
-		if earliest == nil || *parsedUtc < *earliest {
-			ts := *parsedUtc
-			earliest = &ts
+		if !hasEarliest || parsedTime.Before(earliestTime) {
+			earliestTime = parsedTime
+			hasEarliest = true
 		}
 	}
-	return earliest
+	if !hasEarliest {
+		return nil
+	}
+	ts := ToUtcIsoSeconds(earliestTime)
+	return &ts
 }
 
-func partitionEnrichedTags(suggested []string, dbTags []TagSummary) ([]TransactionTagItem, []string) {
+func resolveKnownCategoryFromNames(dbCategoryNames []string, raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed != "" {
+		for _, name := range dbCategoryNames {
+			if strings.EqualFold(strings.TrimSpace(name), trimmed) {
+				return name
+			}
+		}
+	}
+	return DefaultCategory
+}
+
+func partitionEnrichedTags(suggested []string, dbTags []TransactionTagItem) ([]TransactionTagItem, []string) {
 	byLower := make(map[string]TransactionTagItem, len(dbTags))
 	for _, t := range dbTags {
-		byLower[strings.ToLower(strings.TrimSpace(t.Name))] = TransactionTagItem{
-			ID:   t.ID,
-			Name: t.Name,
-		}
+		byLower[strings.ToLower(strings.TrimSpace(t.Name))] = t
 	}
 
 	existing := make([]TransactionTagItem, 0, len(suggested))
@@ -149,15 +162,7 @@ func EnrichTransactionsFromSources(gdb *gorm.DB, ctx context.Context, transactio
 		return nil, &ValidationError{Message: "Select a model from your local LLM server in Settings before using Magic enrichment."}
 	}
 
-	baseURL := strings.TrimSpace(settings.LlmBaseURL)
-	if baseURL == "" {
-		baseURL = db.DefaultLlmBaseURL
-	}
-	timeoutMs := settings.LlmTimeoutMs
-	if timeoutMs <= 0 {
-		timeoutMs = 60000
-	}
-	client, err := llm.NewClient(baseURL, time.Duration(timeoutMs)*time.Millisecond)
+	client, err := llm.NewClient(settings.LlmBaseURL, time.Duration(settings.LlmTimeoutMs)*time.Millisecond)
 	if err != nil {
 		return nil, &ValidationError{Message: err.Error()}
 	}
@@ -197,12 +202,20 @@ func EnrichTransactionsFromSources(gdb *gorm.DB, ctx context.Context, transactio
 		return nil, &ValidationError{Message: "No source emails are attached to the selected transactions."}
 	}
 
-	categories, err := ListCategoryNames(gdb)
-	if err != nil {
+	var dbCategoryNames []string
+	if err := gdb.Raw(`
+		SELECT name
+		FROM categories
+		ORDER BY is_system ASC, sort_order ASC, LOWER(name) ASC`).Scan(&dbCategoryNames).Error; err != nil {
 		return nil, err
 	}
-	existingTags, err := ListTags(gdb)
-	if err != nil {
+	categories := llm.ResolveCategories(dbCategoryNames)
+
+	existingTags := []TransactionTagItem{}
+	if err := gdb.Raw(`
+		SELECT id, name
+		FROM tags
+		ORDER BY LOWER(name) ASC, created_at_utc ASC`).Scan(&existingTags).Error; err != nil {
 		return nil, err
 	}
 	existingTagNames := make([]string, 0, len(existingTags))
@@ -243,7 +256,7 @@ func EnrichTransactionsFromSources(gdb *gorm.DB, ctx context.Context, transactio
 		occurredAtUtc = llmResult.OccurredAtUtc
 	}
 
-	canonicalCategory := ResolveKnownCategory(gdb, llmResult.Category)
+	canonicalCategory := resolveKnownCategoryFromNames(dbCategoryNames, llmResult.Category)
 	matchedTags, draftTagNames := partitionEnrichedTags(llmResult.Tags, existingTags)
 
 	return &TransactionEnrichmentPreview{

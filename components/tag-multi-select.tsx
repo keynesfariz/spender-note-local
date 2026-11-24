@@ -15,11 +15,30 @@ import {
 } from "@/components/ui/popover"
 import { createTagApi, type TagSummary } from "@/lib/api"
 
+const EMPTY_DRAFT_TAG_NAMES: string[] = []
+
+function dedupeDraftTagNames(
+  names: readonly string[],
+  persistedNamesLower: ReadonlySet<string>
+): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of names) {
+    const trimmed = raw.trim()
+    if (!trimmed) continue
+    const lower = trimmed.toLowerCase()
+    if (persistedNamesLower.has(lower) || seen.has(lower)) continue
+    seen.add(lower)
+    out.push(trimmed)
+  }
+  return out
+}
+
 export function TagMultiSelect({
   tags,
   selectedTagIds,
   onChange,
-  draftTagNames = [],
+  draftTagNames = EMPTY_DRAFT_TAG_NAMES,
   onDraftTagNamesChange,
   disabled = false,
 }: {
@@ -39,12 +58,14 @@ export function TagMultiSelect({
   const trimmedSearch = search.trim()
   const selectedSet = useMemo(() => new Set(selectedTagIds), [selectedTagIds])
 
+  const tagById = useMemo(() => new Map(tags.map((t) => [t.id, t])), [tags])
+
   const selectedTags = useMemo(
     () =>
       selectedTagIds
-        .map((id) => tags.find((t) => t.id === id))
+        .map((id) => tagById.get(id))
         .filter((t): t is TagSummary => Boolean(t)),
-    [selectedTagIds, tags]
+    [selectedTagIds, tagById]
   )
 
   const persistedNamesLower = useMemo(
@@ -52,38 +73,24 @@ export function TagMultiSelect({
     [tags]
   )
 
-  const activeDraftNames = useMemo(() => {
-    const seen = new Set<string>()
-    const out: string[] = []
-    for (const raw of draftTagNames) {
-      const trimmed = raw.trim()
-      if (!trimmed) continue
-      const lower = trimmed.toLowerCase()
-      if (persistedNamesLower.has(lower) || seen.has(lower)) continue
-      seen.add(lower)
-      out.push(trimmed)
-    }
-    return out
-  }, [draftTagNames, persistedNamesLower])
+  const activeDraftNames = useMemo(
+    () => dedupeDraftTagNames(draftTagNames, persistedNamesLower),
+    [draftTagNames, persistedNamesLower]
+  )
 
   const activeDraftSet = useMemo(
     () => new Set(activeDraftNames.map((n) => n.toLowerCase())),
     [activeDraftNames]
   )
 
-  const popoverDraftNames = useMemo(() => {
-    const seen = new Set<string>()
-    const out: string[] = []
-    for (const raw of [...sessionDraftNames, ...activeDraftNames]) {
-      const trimmed = raw.trim()
-      if (!trimmed) continue
-      const lower = trimmed.toLowerCase()
-      if (persistedNamesLower.has(lower) || seen.has(lower)) continue
-      seen.add(lower)
-      out.push(trimmed)
-    }
-    return out
-  }, [sessionDraftNames, activeDraftNames, persistedNamesLower])
+  const popoverDraftNames = useMemo(
+    () =>
+      dedupeDraftTagNames(
+        [...sessionDraftNames, ...activeDraftNames],
+        persistedNamesLower
+      ),
+    [sessionDraftNames, activeDraftNames, persistedNamesLower]
+  )
 
   const filteredTags = useMemo(() => {
     if (!trimmedSearch) return tags

@@ -31,18 +31,21 @@ func validateTransactionCategory(tx *gorm.DB, rawCategory string) (string, error
 	return cat.Name, nil
 }
 
-func replaceTransactionTags(tx *gorm.DB, transactionID string, rawTagIDs []string, nowUtc string) error {
-	tagIDs := normalizeTransactionIDs(rawTagIDs)
-	if len(tagIDs) > 0 {
-		var existingCount int64
-		if err := tx.Model(&db.Tag{}).Where("id IN ?", tagIDs).Count(&existingCount).Error; err != nil {
-			return err
-		}
-		if int(existingCount) != len(tagIDs) {
-			return errors.New("One or more selected tags do not exist.")
-		}
+func validateSelectedTagIDs(tx *gorm.DB, tagIDs []string) error {
+	if len(tagIDs) == 0 {
+		return nil
 	}
+	var existingCount int64
+	if err := tx.Model(&db.Tag{}).Where("id IN ?", tagIDs).Count(&existingCount).Error; err != nil {
+		return err
+	}
+	if int(existingCount) != len(tagIDs) {
+		return errors.New("One or more selected tags do not exist.")
+	}
+	return nil
+}
 
+func setTransactionTags(tx *gorm.DB, transactionID string, tagIDs []string, nowUtc string) error {
 	if err := tx.Where("transaction_id = ?", transactionID).Delete(&db.TransactionTag{}).Error; err != nil {
 		return err
 	}
@@ -60,10 +63,25 @@ func replaceTransactionTags(tx *gorm.DB, transactionID string, rawTagIDs []strin
 	return tx.Create(&rows).Error
 }
 
-func resolveAndReplaceTransactionTags(tx *gorm.DB, transactionID string, rawTagIDs []string, rawTagNames []string, nowUtc string) error {
-	allTagIDs := make([]string, 0, len(rawTagIDs)+len(rawTagNames))
-	allTagIDs = append(allTagIDs, rawTagIDs...)
+func replaceTransactionTags(tx *gorm.DB, transactionID string, rawTagIDs []string, nowUtc string) error {
+	tagIDs := normalizeTransactionIDs(rawTagIDs)
+	if err := validateSelectedTagIDs(tx, tagIDs); err != nil {
+		return err
+	}
+	return setTransactionTags(tx, transactionID, tagIDs, nowUtc)
+}
 
+func resolveAndReplaceTransactionTags(tx *gorm.DB, transactionID string, rawTagIDs []string, rawTagNames []string, nowUtc string) error {
+	callerTagIDs := normalizeTransactionIDs(rawTagIDs)
+	if err := validateSelectedTagIDs(tx, callerTagIDs); err != nil {
+		return err
+	}
+
+	pending := make([]struct {
+		name string
+		norm string
+	}, 0, len(rawTagNames))
+	norms := make([]string, 0, len(rawTagNames))
 	seenLower := make(map[string]struct{}, len(rawTagNames))
 	for _, rawName := range rawTagNames {
 		name := strings.TrimSpace(rawName)
@@ -75,30 +93,50 @@ func resolveAndReplaceTransactionTags(tx *gorm.DB, transactionID string, rawTagI
 			continue
 		}
 		seenLower[norm] = struct{}{}
-
-		var existing db.Tag
-		err := tx.Where("normalized_name = ?", norm).First(&existing).Error
-		if err == nil {
-			allTagIDs = append(allTagIDs, existing.ID)
-			continue
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-
-		createdID := uuid.NewString()
-		if err := tx.Create(&db.Tag{
-			ID:             createdID,
-			Name:           name,
-			NormalizedName: norm,
-			CreatedAtUtc:   nowUtc,
-		}).Error; err != nil {
-			return err
-		}
-		allTagIDs = append(allTagIDs, createdID)
+		pending = append(pending, struct {
+			name string
+			norm string
+		}{name: name, norm: norm})
+		norms = append(norms, norm)
 	}
 
-	return replaceTransactionTags(tx, transactionID, allTagIDs, nowUtc)
+	allTagIDs := make([]string, 0, len(callerTagIDs)+len(pending))
+	allTagIDs = append(allTagIDs, callerTagIDs...)
+
+	if len(norms) > 0 {
+		var existingTags []db.Tag
+		if err := tx.Select("id, normalized_name").Where("normalized_name IN ?", norms).Find(&existingTags).Error; err != nil {
+			return err
+		}
+		idByNorm := make(map[string]string, len(pending))
+		for _, t := range existingTags {
+			idByNorm[t.NormalizedName] = t.ID
+		}
+
+		newTags := make([]db.Tag, 0, len(pending))
+		for _, item := range pending {
+			if existingID, ok := idByNorm[item.norm]; ok {
+				allTagIDs = append(allTagIDs, existingID)
+				continue
+			}
+			createdID := uuid.NewString()
+			idByNorm[item.norm] = createdID
+			newTags = append(newTags, db.Tag{
+				ID:             createdID,
+				Name:           item.name,
+				NormalizedName: item.norm,
+				CreatedAtUtc:   nowUtc,
+			})
+			allTagIDs = append(allTagIDs, createdID)
+		}
+		if len(newTags) > 0 {
+			if err := tx.Create(&newTags).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	return setTransactionTags(tx, transactionID, normalizeTransactionIDs(allTagIDs), nowUtc)
 }
 
 func copyTransactionTags(tx *gorm.DB, targetTxID string, sourceTxIDs []string, nowUtc string) error {

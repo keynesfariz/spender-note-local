@@ -1,15 +1,22 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react"
 
 import { DatePicker } from "@/components/date-picker"
 import { DynamicIcon } from "@/components/dynamic-icon"
 import {
   MagicEnrichButton,
-  mergeEnrichedPreviewTags,
   patchTagsQueryCache,
   resolveEnrichedDateTimeInputs,
+  syncAndMergeEnrichedTags,
   useMagicEnrich,
 } from "@/components/magic-enrich"
 import { TagMultiSelect } from "@/components/tag-multi-select"
@@ -58,8 +65,8 @@ import {
   transactionDetailQuery,
   updateTransactionApi,
   type AccountSummary,
-  type TagSummary,
   type TransactionDetailView,
+  type TransactionListItem,
 } from "@/lib/api"
 import {
   DEFAULT_CATEGORY,
@@ -68,7 +75,6 @@ import {
 } from "@/lib/categories"
 import {
   dateTimeInputToUtcIso,
-  formatMinorCurrency,
   formatUtcInTimezone,
   minorToDecimalInput,
   parseDecimalToMinorClient,
@@ -113,6 +119,25 @@ function InspectorBody({
   const { isEnriching, abortEnrichment, runEnrichment } = useMagicEnrich()
   const lastLoadedTxRef = useRef<{ id: string; key: string } | null>(null)
 
+  const syncFormFromTransaction = useCallback(
+    (tx: TransactionListItem) => {
+      const nextKey = `${tx.id}:${tx.updated_at_utc}|${timezone ?? ""}`
+      lastLoadedTxRef.current = { id: tx.id, key: nextKey }
+      setMerchant(tx.merchant)
+      setAmount(minorToDecimalInput(tx.amount_minor, tx.currency))
+      setCategory(tx.category)
+      setSelectedTagIds((tx.tags ?? []).map((t) => t.id))
+      setDraftTagNames([])
+      setHasUnsavedMagicEdits(false)
+      setAccountId(tx.account_id ?? UNASSIGNED_ACCOUNT)
+      setDate(utcToDateInputValue(tx.occurred_at_utc, timezone))
+      setTime(utcToTimeInputValue(tx.occurred_at_utc, timezone))
+      setNote(tx.note ?? "")
+      setConvertToLocalCurrency(false)
+    },
+    [timezone]
+  )
+
   useEffect(() => {
     const tx = detailQuery.data?.transaction
     if (!tx) return
@@ -129,24 +154,14 @@ function InspectorBody({
     if (!isSameTx) {
       abortEnrichment()
     }
-    lastLoadedTxRef.current = { id: tx.id, key: nextKey }
-    setMerchant(tx.merchant)
-    setAmount(minorToDecimalInput(tx.amount_minor, tx.currency))
-    setCategory(tx.category)
-    setSelectedTagIds((tx.tags ?? []).map((t) => t.id))
-    setDraftTagNames([])
-    setHasUnsavedMagicEdits(false)
-    setAccountId(tx.account_id ?? UNASSIGNED_ACCOUNT)
-    setDate(utcToDateInputValue(tx.occurred_at_utc, timezone))
-    setTime(utcToTimeInputValue(tx.occurred_at_utc, timezone))
-    setNote(tx.note ?? "")
-    setConvertToLocalCurrency(false)
+    syncFormFromTransaction(tx)
   }, [
     detailQuery.data?.transaction,
     timezone,
     hasUnsavedMagicEdits,
     isEnriching,
     abortEnrichment,
+    syncFormFromTransaction,
   ])
 
   const invalidateAll = () => {
@@ -156,8 +171,7 @@ function InspectorBody({
   const updateMutation = useMutation({
     mutationFn: updateTransactionApi,
     onSuccess: (updatedTx) => {
-      const syncedKey = `${updatedTx.id}:${updatedTx.updated_at_utc}|${timezone ?? ""}`
-      lastLoadedTxRef.current = { id: updatedTx.id, key: syncedKey }
+      syncFormFromTransaction(updatedTx)
       queryClient.setQueryData<TransactionDetailView>(
         transactionDetailQuery(updatedTx.id).queryKey,
         (prev) => (prev ? { ...prev, transaction: updatedTx } : prev)
@@ -167,17 +181,6 @@ function InspectorBody({
         updatedTx.tags ?? [],
         updatedTx.updated_at_utc
       )
-      setMerchant(updatedTx.merchant)
-      setAmount(minorToDecimalInput(updatedTx.amount_minor, updatedTx.currency))
-      setCategory(updatedTx.category)
-      setSelectedTagIds((updatedTx.tags ?? []).map((t) => t.id))
-      setDraftTagNames([])
-      setHasUnsavedMagicEdits(false)
-      setAccountId(updatedTx.account_id ?? UNASSIGNED_ACCOUNT)
-      setNote(updatedTx.note ?? "")
-      setDate(utcToDateInputValue(updatedTx.occurred_at_utc, timezone))
-      setTime(utcToTimeInputValue(updatedTx.occurred_at_utc, timezone))
-      setConvertToLocalCurrency(false)
       setFormError(null)
       setStatusMessage("Transaction updated.")
       invalidateAll()
@@ -349,24 +352,13 @@ function InspectorBody({
           setDate(nextDateTime.date)
           setTime(nextDateTime.time)
         }
-        const knownTags =
-          queryClient.getQueryData<TagSummary[]>(tagsQuery().queryKey) ??
-          tagListQuery.data ??
-          []
-        if (preview.existing_tags?.length) {
-          const addedToCache = patchTagsQueryCache(
-            queryClient,
-            preview.existing_tags,
-            new Date().toISOString()
-          )
-          if (addedToCache) {
-            void queryClient.invalidateQueries({
-              queryKey: tagsQuery().queryKey,
-            })
-          }
-        }
         const { nextSelectedTagIds, nextDraftTagNames } =
-          mergeEnrichedPreviewTags(preview, selectedTagIds, knownTags)
+          syncAndMergeEnrichedTags({
+            queryClient,
+            preview,
+            currentSelectedTagIds: selectedTagIds,
+            fallbackKnownTags: tagListQuery.data ?? [],
+          })
         setSelectedTagIds(nextSelectedTagIds)
         setDraftTagNames(nextDraftTagNames)
         setHasUnsavedMagicEdits(true)

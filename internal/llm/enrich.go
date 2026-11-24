@@ -58,37 +58,43 @@ func resolveLocationOrUTC(userTimezone string) *time.Location {
 	return loc
 }
 
-// ParseStrictExtractedDateTimeToUtc requires both a valid YYYY-MM-DD date and an
-// explicit HH:mm(:ss) clock time, returning nil rather than fabricating a fallback timestamp.
-func ParseStrictExtractedDateTimeToUtc(txDate, txTime, tzOffset *string, userTimezone string) *string {
+func ParseStrictExtractedDateTime(txDate, txTime, tzOffset *string, userTimezone string) (time.Time, bool) {
 	if txDate == nil || txTime == nil {
-		return nil
+		return time.Time{}, false
 	}
 	cleanDate := strings.TrimSpace(*txDate)
 	cleanTime := strings.TrimSpace(*txTime)
 	if !isoDateOnlyRe.MatchString(cleanDate) || !isoTimeOnlyRe.MatchString(cleanTime) {
-		return nil
+		return time.Time{}, false
 	}
 	if len(cleanTime) == 5 {
 		cleanTime += ":00"
 	}
 
+	cleanOffset := ""
 	if tzOffset != nil {
-		cleanOffset := strings.TrimSpace(*tzOffset)
-		if tzOffsetRe.MatchString(cleanOffset) {
-			if parsed, err := time.Parse(time.RFC3339, cleanDate+"T"+cleanTime+cleanOffset); err == nil {
-				out := formatUtcIsoSeconds(parsed)
-				return &out
-			}
+		cleanOffset = strings.TrimSpace(*tzOffset)
+	}
+	if tzOffsetRe.MatchString(cleanOffset) {
+		if parsed, err := time.Parse(time.RFC3339, cleanDate+"T"+cleanTime+cleanOffset); err == nil {
+			return parsed.UTC(), true
 		}
 	}
 
 	loc := resolveLocationOrUTC(userTimezone)
 	if parsed, err := time.ParseInLocation("2006-01-02T15:04:05", cleanDate+"T"+cleanTime, loc); err == nil {
-		out := formatUtcIsoSeconds(parsed)
-		return &out
+		return parsed.UTC(), true
 	}
-	return nil
+	return time.Time{}, false
+}
+
+func ParseStrictExtractedDateTimeToUtc(txDate, txTime, tzOffset *string, userTimezone string) *string {
+	parsed, ok := ParseStrictExtractedDateTime(txDate, txTime, tzOffset, userTimezone)
+	if !ok {
+		return nil
+	}
+	out := formatUtcIsoSeconds(parsed)
+	return &out
 }
 
 func BuildEnrichmentPrompt(input EnrichInput) (systemPrompt string, userPrompt string) {
@@ -207,13 +213,14 @@ func ParseAndValidateEnrichment(rawText string) (*RawEnrichment, string, error) 
 
 func matchOrCoerceCategory(rawCategory *string, allowedCategories []string) string {
 	validCategories := ResolveCategories(allowedCategories)
+	trimmed := ""
 	if rawCategory != nil {
-		trimmed := strings.TrimSpace(*rawCategory)
-		if trimmed != "" {
-			for _, c := range validCategories {
-				if strings.EqualFold(c, trimmed) {
-					return c
-				}
+		trimmed = strings.TrimSpace(*rawCategory)
+	}
+	if trimmed != "" {
+		for _, c := range validCategories {
+			if strings.EqualFold(c, trimmed) {
+				return c
 			}
 		}
 	}

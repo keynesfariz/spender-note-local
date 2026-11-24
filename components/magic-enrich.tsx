@@ -23,18 +23,15 @@ export function mergeEnrichedPreviewTags(
   currentSelectedTagIds: string[],
   knownTags: TagSummary[]
 ): { nextSelectedTagIds: string[]; nextDraftTagNames: string[] } {
-  const knownByLower = new Map<string, TagSummary>()
-  for (const tag of knownTags) {
-    knownByLower.set(tag.name.trim().toLowerCase(), tag)
-  }
-
   const nextSelected = [...currentSelectedTagIds]
   const selectedSet = new Set(currentSelectedTagIds)
+  const knownByLower = new Map<string, TagSummary>()
   const selectedNamesLower = new Set<string>()
-  for (const id of currentSelectedTagIds) {
-    const found = knownTags.find((t) => t.id === id)
-    if (found) {
-      selectedNamesLower.add(found.name.trim().toLowerCase())
+  for (const tag of knownTags) {
+    const lower = tag.name.trim().toLowerCase()
+    knownByLower.set(lower, tag)
+    if (selectedSet.has(tag.id)) {
+      selectedNamesLower.add(lower)
     }
   }
 
@@ -73,6 +70,35 @@ export function mergeEnrichedPreviewTags(
     nextSelectedTagIds: nextSelected,
     nextDraftTagNames: nextDrafts,
   }
+}
+
+export function syncAndMergeEnrichedTags({
+  queryClient,
+  preview,
+  currentSelectedTagIds,
+  fallbackKnownTags,
+}: {
+  queryClient: QueryClient
+  preview: TransactionEnrichmentPreview
+  currentSelectedTagIds: string[]
+  fallbackKnownTags: TagSummary[]
+}): { nextSelectedTagIds: string[]; nextDraftTagNames: string[] } {
+  const knownTags =
+    queryClient.getQueryData<TagSummary[]>(tagsQuery().queryKey) ??
+    fallbackKnownTags
+  if (preview.existing_tags?.length) {
+    const addedToCache = patchTagsQueryCache(
+      queryClient,
+      preview.existing_tags,
+      new Date().toISOString()
+    )
+    if (addedToCache) {
+      void queryClient.invalidateQueries({
+        queryKey: tagsQuery().queryKey,
+      })
+    }
+  }
+  return mergeEnrichedPreviewTags(preview, currentSelectedTagIds, knownTags)
 }
 
 export function resolveEnrichedDateTimeInputs(

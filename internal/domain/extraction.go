@@ -347,12 +347,7 @@ func SplitTransactionSource(gdb *gorm.DB, transactionID, emailID string) (string
 			return err
 		}
 
-		// Preserve manual tags from the parent transaction on the newly split transaction.
-		if err := tx.Exec(`
-			INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id, created_at_utc)
-			SELECT ?, tag_id, ? FROM transaction_tags WHERE transaction_id = ?`,
-			newTxID, nowUtc, transactionID,
-		).Error; err != nil {
+		if err := copyTransactionTags(tx, newTxID, []string{transactionID}, nowUtc); err != nil {
 			return err
 		}
 

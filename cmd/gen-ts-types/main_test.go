@@ -1,46 +1,65 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
+
+	"portspendernote/internal/llm"
 )
 
-func TestGenerateTypeScript_ContainsExpectedContracts(t *testing.T) {
-	out := generateTypeScript()
-
-	mustContain := []string{
-		"export type AccountType =",
-		"export interface AccountSummary {",
-		"  initial_balance_minor: number | null",
-		"  identifiers: AccountIdentifierRow[]",
-		"  latest_reconciliation: ReconciliationRow | null",
-		"export interface AppSettingsView {",
-		`  llm_provider: "openai_compatible"`,
-		"export interface SyncStatusView {",
-		"  latestRun: SyncRunRow | null",
-		"export interface CategorySummary {",
-		"  is_system: 0 | 1",
-		"export interface TagSummary {",
-		"export interface TransactionTagItem {",
-		"  tags: TransactionTagItem[]",
-		"export interface PaginatedTransactionsResponse {",
-	}
-	for _, needle := range mustContain {
-		if !strings.Contains(out, needle) {
-			t.Errorf("generated TypeScript missing expected snippet %q", needle)
-		}
+func TestWriteStructFields_RespectsJsonTagsAndOmitsIgnoredFields(t *testing.T) {
+	type sample struct {
+		Visible  string  `json:"visible"`
+		Secret   string  `json:"-"`
+		Optional *string `json:"opt,omitempty"`
 	}
 
-	mustNotContain := []string{
-		"access_token",
-		"refresh_token",
+	var buf bytes.Buffer
+	writeStructFields(&buf, reflect.TypeOf(sample{}), nil, map[reflect.Type]string{})
+	got := buf.String()
+
+	if !strings.Contains(got, "  visible: string\n") {
+		t.Errorf("expected visible field in output, got:\n%s", got)
 	}
-	for _, forbidden := range mustNotContain {
-		if strings.Contains(out, forbidden) {
-			t.Errorf("generated TypeScript leaked json:\"-\" field %q", forbidden)
-		}
+	if !strings.Contains(got, "  opt?: string | null\n") {
+		t.Errorf("expected optional nullable field in output, got:\n%s", got)
+	}
+	if strings.Contains(got, "Secret") || strings.Contains(got, "secret") {
+		t.Errorf("expected json:\"-\" field to be omitted, got:\n%s", got)
+	}
+}
+
+func TestDefaultCategoriesMatchFrontendDefinitions(t *testing.T) {
+	tsFile := filepath.Join("..", "..", "lib", "categories.ts")
+	raw, err := os.ReadFile(tsFile)
+	if err != nil {
+		t.Fatalf("read %s: %v", tsFile, err)
+	}
+	src := string(raw)
+	start := strings.Index(src, "DEFAULT_CATEGORY_DEFINITIONS")
+	if start == -1 {
+		t.Fatalf("could not find DEFAULT_CATEGORY_DEFINITIONS in %s", tsFile)
+	}
+	end := strings.Index(src[start:], "]")
+	if end == -1 {
+		t.Fatalf("could not find closing bracket of DEFAULT_CATEGORY_DEFINITIONS in %s", tsFile)
+	}
+
+	re := regexp.MustCompile(`\{\s*name:\s*"([^"]+)"`)
+	matches := re.FindAllStringSubmatch(src[start:start+end], -1)
+	var frontendNames []string
+	for _, m := range matches {
+		frontendNames = append(frontendNames, m[1])
+	}
+
+	if !slices.Equal(llm.DefaultCategories, frontendNames) {
+		t.Fatalf("llm.DefaultCategories (%v) does not match %s (%v)", llm.DefaultCategories, tsFile, frontendNames)
 	}
 }
 

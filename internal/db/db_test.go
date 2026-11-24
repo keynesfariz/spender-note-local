@@ -141,7 +141,6 @@ func TestOpenDatabase_AutoBaselinesExistingDatabaseAndAppliesV2(t *testing.T) {
 		_ = sqlDB.Close()
 	}
 
-	// Second open must be idempotent.
 	reopened, err := OpenDatabase(dbPath, false)
 	if err != nil {
 		t.Fatalf("reopen already-migrated db: %v", err)

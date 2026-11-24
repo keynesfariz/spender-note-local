@@ -19,20 +19,34 @@ export const DEFAULT_CATEGORY_DEFINITIONS: ReadonlyArray<DefaultCategoryDefiniti
     { name: "Other", icon: "Ellipsis", isSystem: true },
   ]
 
-export const DEFAULT_CATEGORIES = [
-  "Housing",
-  "Food",
-  "Utilities",
-  "Transportation",
-  "Healthcare",
-  "Entertainment",
-  "Dining Out",
-  "Shopping",
-  "Education",
-  "Personal Care",
-  "Other",
-] as const
+export const DEFAULT_CATEGORY = "Other"
 
-export type DefaultCategory = (typeof DEFAULT_CATEGORIES)[number]
+export function buildCategoryIconMap(
+  categories?: ReadonlyArray<{ name: string; icon: string }>
+): Map<string, string> {
+  const map = new Map<string, string>(
+    DEFAULT_CATEGORY_DEFINITIONS.map((c) => [c.name, c.icon])
+  )
+  for (const cat of categories ?? []) {
+    map.set(cat.name, cat.icon)
+  }
+  return map
+}
 
-export const DEFAULT_CATEGORY: DefaultCategory = "Other"
+export function buildCategorySelectOptions(
+  categories?: ReadonlyArray<{ name: string }>,
+  activeCategory?: string
+): Array<{ value: string; label: string }> {
+  const opts = (categories ?? DEFAULT_CATEGORY_DEFINITIONS).map((c) => ({
+    value: c.name,
+    label: c.name,
+  }))
+  if (
+    activeCategory &&
+    activeCategory !== "all" &&
+    !opts.some((opt) => opt.value === activeCategory)
+  ) {
+    opts.push({ value: activeCategory, label: activeCategory })
+  }
+  return opts
+}

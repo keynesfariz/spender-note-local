@@ -590,6 +590,11 @@ func runExtractionWorker(
 	cancelFetch context.CancelFunc,
 ) error {
 	accountContexts := toLlmAccountContexts(domain.ListExtractionAccountContexts(gdb))
+	categoryNames, _ := domain.ListCategoryNames(gdb)
+	categoryLookup := make(map[string]string, len(categoryNames))
+	for _, name := range categoryNames {
+		categoryLookup[strings.ToLower(strings.TrimSpace(name))] = name
+	}
 
 	var countryPromptRules []string
 	if cfg.CountryCode != nil && strings.TrimSpace(*cfg.CountryCode) != "" {
@@ -645,7 +650,6 @@ func runExtractionWorker(
 		}
 
 		userCurrency := cfg.Currency
-		categoryNames, _ := domain.ListCategoryNames(gdb)
 		extracted, err := llmClient.ExtractTransaction(runCtx, cfg.LlmModel, llm.ExtractInput{
 			EmailID:            email.ID,
 			FromAddress:        email.FromAddress,
@@ -698,7 +702,10 @@ func runExtractionWorker(
 				effectiveRole = *email.RoleHint
 			}
 
-			canonicalCategory := domain.ResolveKnownCategory(tx, extracted.Category)
+			canonicalCategory := domain.DefaultCategory
+			if matched, ok := categoryLookup[strings.ToLower(strings.TrimSpace(extracted.Category))]; ok {
+				canonicalCategory = matched
+			}
 
 			if err := tx.Exec(`
 				INSERT OR REPLACE INTO email_extractions (

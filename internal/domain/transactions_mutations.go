@@ -46,16 +46,29 @@ func replaceTransactionTags(tx *gorm.DB, transactionID string, rawTagIDs []strin
 	if err := tx.Where("transaction_id = ?", transactionID).Delete(&db.TransactionTag{}).Error; err != nil {
 		return err
 	}
-	for _, tagID := range tagIDs {
-		if err := tx.Create(&db.TransactionTag{
+	if len(tagIDs) == 0 {
+		return nil
+	}
+	rows := make([]db.TransactionTag, len(tagIDs))
+	for i, tagID := range tagIDs {
+		rows[i] = db.TransactionTag{
 			TransactionID: transactionID,
 			TagID:         tagID,
 			CreatedAtUtc:  nowUtc,
-		}).Error; err != nil {
-			return err
 		}
 	}
-	return nil
+	return tx.Create(&rows).Error
+}
+
+func copyTransactionTags(tx *gorm.DB, targetTxID string, sourceTxIDs []string, nowUtc string) error {
+	if len(sourceTxIDs) == 0 {
+		return nil
+	}
+	return tx.Exec(`
+		INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id, created_at_utc)
+		SELECT ?, tag_id, ? FROM transaction_tags WHERE transaction_id IN ?`,
+		targetTxID, nowUtc, sourceTxIDs,
+	).Error
 }
 
 func CreateManualTransaction(gdb *gorm.DB, input CreateManualTransactionInput) (*TransactionListItem, error) {
@@ -385,8 +398,6 @@ func DuplicateMergeTransactions(gdb *gorm.DB, keepID, dropID string) (*Transacti
 			return errors.New("Duplicate merge requires transactions with equal amounts.")
 		}
 
-		// Re-point transaction_sources before deleting the absorbed transaction so
-		// ON DELETE CASCADE does not drop linked emails and raw_emails stay extracted.
 		if err := tx.Model(&db.TransactionSource{}).Where("transaction_id = ?", dropID).Updates(map[string]any{
 			"transaction_id": keepID,
 			"match_state":    "confirmed",
@@ -397,13 +408,8 @@ func DuplicateMergeTransactions(gdb *gorm.DB, keepID, dropID string) (*Transacti
 			return err
 		}
 
-		// Preserve deduplicated tag union on the kept transaction before dropping the duplicate.
 		nowUtc := NowUtcIsoSeconds()
-		if err := tx.Exec(`
-			INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id, created_at_utc)
-			SELECT ?, tag_id, ? FROM transaction_tags WHERE transaction_id = ?`,
-			keepID, nowUtc, dropID,
-		).Error; err != nil {
+		if err := copyTransactionTags(tx, keepID, []string{dropID}, nowUtc); err != nil {
 			return err
 		}
 
@@ -510,17 +516,11 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 		survivorID := ids[0]
 		absorbedIDs := ids[1:]
 
-		// Preserve deduplicated tag union across all combined transactions before deleting absorbed rows.
 		nowUtc := NowUtcIsoSeconds()
-		if err := tx.Exec(`
-			INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id, created_at_utc)
-			SELECT ?, tag_id, ? FROM transaction_tags WHERE transaction_id IN ?`,
-			survivorID, nowUtc, absorbedIDs,
-		).Error; err != nil {
+		if err := copyTransactionTags(tx, survivorID, absorbedIDs, nowUtc); err != nil {
 			return err
 		}
 
-		// Re-point transaction_sources from absorbed transactions before deletion.
 		if err := tx.Model(&db.TransactionSource{}).Where("transaction_id IN ?", absorbedIDs).Updates(map[string]any{
 			"transaction_id": survivorID,
 			"match_state":    "confirmed",

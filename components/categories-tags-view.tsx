@@ -48,6 +48,7 @@ import {
   type CategorySummary,
   type TagSummary,
 } from "@/lib/api"
+import { DEFAULT_CATEGORY } from "@/lib/categories"
 import { cn } from "@/lib/utils"
 
 const TAB_VALUES = ["categories", "tags"] as const
@@ -73,7 +74,6 @@ export function CategoriesTagsView() {
   const categories = useMemo(() => catQuery.data ?? [], [catQuery.data])
   const tags = useMemo(() => tagQuery.data ?? [], [tagQuery.data])
 
-  // Category dialogs
   const [catDialogOpen, setCatDialogOpen] = useState(false)
   const [editingCategory, setEditingCategory] = useState<CategorySummary | null>(null)
   const [catName, setCatName] = useState("")
@@ -81,10 +81,9 @@ export function CategoriesTagsView() {
   const [catFormError, setCatFormError] = useState<string | null>(null)
 
   const [deletingCategory, setDeletingCategory] = useState<CategorySummary | null>(null)
-  const [replacementCategory, setReplacementCategory] = useState("Other")
+  const [replacementCategory, setReplacementCategory] = useState(DEFAULT_CATEGORY)
   const [deleteCatError, setDeleteCatError] = useState<string | null>(null)
 
-  // Tag dialogs
   const [tagDialogOpen, setTagDialogOpen] = useState(false)
   const [editingTag, setEditingTag] = useState<TagSummary | null>(null)
   const [tagName, setTagName] = useState("")
@@ -192,7 +191,7 @@ export function CategoriesTagsView() {
 
   const openDeleteCategory = (cat: CategorySummary) => {
     setDeletingCategory(cat)
-    setReplacementCategory("Other")
+    setReplacementCategory(DEFAULT_CATEGORY)
     setDeleteCatError(null)
     deleteCategoryMutation.reset()
   }
@@ -253,8 +252,8 @@ export function CategoriesTagsView() {
       (cat) => !deletingCategory || cat.id !== deletingCategory.id
     )
     const items = filtered.map((cat) => ({ value: cat.name, label: cat.name }))
-    if (!items.some((item) => item.value === "Other")) {
-      items.push({ value: "Other", label: "Other" })
+    if (!items.some((item) => item.value === DEFAULT_CATEGORY)) {
+      items.push({ value: DEFAULT_CATEGORY, label: DEFAULT_CATEGORY })
     }
     if (
       replacementCategory &&
@@ -291,7 +290,6 @@ export function CategoriesTagsView() {
         )}
       </div>
 
-      {/* Gmail inbox-style horizontal underline tabs */}
       <div
         role="tablist"
         aria-label="Categories and Tags sections"
@@ -383,15 +381,13 @@ export function CategoriesTagsView() {
                             className="size-4 text-foreground"
                           />
                         </div>
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-medium text-foreground">
-                              {cat.name}
-                            </span>
-                            {isSystem ? (
-                              <Badge variant="secondary">System default</Badge>
-                            ) : null}
-                          </div>
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <span className="font-medium text-foreground">
+                            {cat.name}
+                          </span>
+                          {isSystem ? (
+                            <Badge variant="secondary">System default</Badge>
+                          ) : null}
                         </div>
                       </div>
 
@@ -537,7 +533,6 @@ export function CategoriesTagsView() {
         </Card>
       )}
 
-      {/* Create / Edit Category Dialog */}
       <Dialog open={catDialogOpen} onOpenChange={setCatDialogOpen}>
         <DialogContent className="sm:max-w-lg">
           <form onSubmit={handleCategorySubmit} className="space-y-4">
@@ -623,7 +618,6 @@ export function CategoriesTagsView() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Category Dialog */}
       <Dialog
         open={Boolean(deletingCategory)}
         onOpenChange={(open) => {
@@ -653,7 +647,7 @@ export function CategoriesTagsView() {
             <Select
               items={replacementItems}
               value={replacementCategory}
-              onValueChange={(v) => setReplacementCategory(v ?? "Other")}
+              onValueChange={(v) => setReplacementCategory(v ?? DEFAULT_CATEGORY)}
             >
               <SelectTrigger className="w-full">
                 <SelectValue />
@@ -692,7 +686,6 @@ export function CategoriesTagsView() {
         </DialogContent>
       </Dialog>
 
-      {/* Create / Rename Tag Dialog */}
       <Dialog open={tagDialogOpen} onOpenChange={setTagDialogOpen}>
         <DialogContent>
           <form onSubmit={handleTagSubmit} className="space-y-4">
@@ -740,7 +733,6 @@ export function CategoriesTagsView() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Tag Dialog */}
       <Dialog
         open={Boolean(deletingTag)}
         onOpenChange={(open) => {

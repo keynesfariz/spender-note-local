@@ -84,11 +84,9 @@ func TestUpdateSenderSyncState_FinalBatchAdvancesCursorToHighWaterMarkAcrossPrio
 	gdb := openTestDB(t)
 	sender := seedSender(t, gdb, "sender-1", "bca@bca.co.id", nil)
 
-	// Earlier batch-capped run fetched newer emails (Gmail returns newest-first).
 	earlierNewestMs := int64(1795251063000)
 	seedRawEmail(t, gdb, "email-new", "gmail-new", sender.ID, earlierNewestMs, "2026-11-21T08:51:03Z")
 
-	// Final batch fetches older emails and completes with hasMore=false.
 	finalBatchOlderMs := int64(1794273898000)
 	seedRawEmail(t, gdb, "email-old", "gmail-old", sender.ID, finalBatchOlderMs, "2026-11-10T01:24:58Z")
 
@@ -116,7 +114,6 @@ func TestUpdateSenderSyncState_FinalBatchWithZeroNewEmailsUsesStoredHighWaterMar
 	earlierNewestMs := int64(1795251063000)
 	seedRawEmail(t, gdb, "email-new", "gmail-new", sender.ID, earlierNewestMs, "2026-11-21T08:51:03Z")
 
-	// Final run finds 0 remaining unseen messages (maxInternalDateMs == nil) and hasMore=false.
 	updateSenderSyncState(gdb, sender, nil, false)
 
 	var got db.Sender
@@ -244,7 +241,6 @@ func TestLoadValidatedSettings_RejectsUnsupportedSavedCountryOnFullSync(t *testi
 		t.Fatalf("expected unsupported country error on full sync, got: %v", err)
 	}
 
-	// Retry mode (requireCountryAndGmail=false) must still succeed for unrecognized or NULL country_code.
 	cfg, err := loadValidatedSettings(gdb, false)
 	if err != nil {
 		t.Fatalf("expected retry validation to allow unsupported saved country, got: %v", err)
@@ -392,7 +388,6 @@ func TestRunExtractionWorker_SkipsBillingStatementWithoutCallingLLM(t *testing.T
 		t.Fatalf("create sync_run: %v", err)
 	}
 
-	// Pass an unreachable LLM URL to prove the deterministic filter skips the LLM call.
 	cfg := &validatedConfig{
 		Timezone:     "Asia/Jakarta",
 		Currency:     "IDR",
@@ -539,7 +534,6 @@ func TestFullSync_PipelinesFetchAndExtractWithProvisionalAccountPropagation(t *t
 			ReceivedAtUtc:  "2026-11-22T05:00:01Z",
 		}
 		params.OnMessage(msg1)
-		// Prove extraction starts BEFORE second email is even fetched!
 		select {
 		case <-firstExtracted:
 		case <-time.After(3 * time.Second):
@@ -657,7 +651,6 @@ func TestFullSync_MidRunLlmDropPreservesPendingAndRetryFinishesWithoutGmail(t *t
 		t.Fatalf("expected 2 remaining pending emails, got %d", pendingCnt)
 	}
 
-	// Restore LLM server and click Retry — must not call Gmail again.
 	shouldFail.Store(false)
 	retryID, err := RetryPendingAndFailedExtractions(gdb)
 	if err != nil {

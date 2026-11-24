@@ -29,14 +29,19 @@ import {
 import {
   addManualTransactionApi,
   categoriesQuery,
+  invalidateTransactionRelatedQueries,
   tagsQuery,
   type AccountSummary,
 } from "@/lib/api"
-import { DEFAULT_CATEGORY_DEFINITIONS } from "@/lib/categories"
+import {
+  DEFAULT_CATEGORY,
+  buildCategoryIconMap,
+  buildCategorySelectOptions,
+} from "@/lib/categories"
 import {
   dateInputToUtcIso,
+  getTodayDateString,
   parseDecimalToMinorClient,
-  utcToDateInputValue,
 } from "@/lib/format"
 
 const UNASSIGNED_ACCOUNT = "__unassigned__"
@@ -60,35 +65,22 @@ export function AddTransactionDialog({
 
   const [amount, setAmount] = useState("")
   const [merchant, setMerchant] = useState("")
-  const [category, setCategory] = useState<string>("Other")
+  const [category, setCategory] = useState<string>(DEFAULT_CATEGORY)
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT)
   const [date, setDate] = useState("")
   const [note, setNote] = useState("")
   const [formError, setFormError] = useState<string | null>(null)
 
-  const categoryIconMap = useMemo(() => {
-    const map = new Map<string, string>(
-      DEFAULT_CATEGORY_DEFINITIONS.map((c) => [c.name, c.icon])
-    )
-    for (const cat of catListQuery.data ?? []) {
-      map.set(cat.name, cat.icon)
-    }
-    return map
-  }, [catListQuery.data])
+  const categoryIconMap = useMemo(
+    () => buildCategoryIconMap(catListQuery.data),
+    [catListQuery.data]
+  )
 
-  const categoryOptions = useMemo(() => {
-    const opts = (catListQuery.data ?? DEFAULT_CATEGORY_DEFINITIONS).map(
-      (c) => ({
-        value: c.name,
-        label: c.name,
-      })
-    )
-    if (category && !opts.some((opt) => opt.value === category)) {
-      opts.push({ value: category, label: category })
-    }
-    return opts
-  }, [catListQuery.data, category])
+  const categoryOptions = useMemo(
+    () => buildCategorySelectOptions(catListQuery.data, category),
+    [catListQuery.data, category]
+  )
 
   const accountItems = useMemo(
     () => [
@@ -102,10 +94,10 @@ export function AddTransactionDialog({
     if (!open) return
     setAmount("")
     setMerchant("")
-    setCategory("Other")
+    setCategory(DEFAULT_CATEGORY)
     setSelectedTagIds([])
     setAccountId(UNASSIGNED_ACCOUNT)
-    setDate(utcToDateInputValue(new Date().toISOString(), timezone))
+    setDate(getTodayDateString(timezone))
     setNote("")
     setFormError(null)
   }, [open, timezone])
@@ -113,11 +105,7 @@ export function AddTransactionDialog({
   const addMutation = useMutation({
     mutationFn: addManualTransactionApi,
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["spending"] })
-      void queryClient.invalidateQueries({ queryKey: ["transactions"] })
-      void queryClient.invalidateQueries({ queryKey: ["accounts"] })
-      void queryClient.invalidateQueries({ queryKey: ["categories"] })
-      void queryClient.invalidateQueries({ queryKey: ["tags"] })
+      invalidateTransactionRelatedQueries(queryClient)
       onOpenChange(false)
     },
     onError: (err) => {
@@ -193,7 +181,7 @@ export function AddTransactionDialog({
               <Select
                 items={categoryOptions}
                 value={category}
-                onValueChange={(v) => setCategory(v ?? "Other")}
+                onValueChange={(v) => setCategory(v ?? DEFAULT_CATEGORY)}
               >
                 <SelectTrigger className="w-full" aria-label="Category">
                   <DynamicIcon

@@ -39,7 +39,10 @@ import {
   type AccountSummary,
   type TransactionListItem,
 } from "@/lib/api"
-import { DEFAULT_CATEGORY_DEFINITIONS } from "@/lib/categories"
+import {
+  buildCategoryIconMap,
+  buildCategorySelectOptions,
+} from "@/lib/categories"
 import { formatMinorCurrency, formatUtcInTimezone } from "@/lib/format"
 
 function sourceBadgeLabel(tx: TransactionListItem): string {
@@ -178,17 +181,22 @@ export function TransactionList({
   const catListQuery = useQuery(categoriesQuery())
   const tagListQuery = useQuery(tagsQuery())
 
-  const selectedSet = new Set(selectedIds)
-  const selectedTransactions = transactions.filter((tx) =>
-    selectedSet.has(tx.id)
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
+  const selectedTransactions = useMemo(
+    () => transactions.filter((tx) => selectedSet.has(tx.id)),
+    [transactions, selectedSet]
   )
+
   const allOnPageSelected =
     transactions.length > 0 &&
     selectedTransactions.length === transactions.length
   const someOnPageSelected =
     selectedTransactions.length > 0 && !allOnPageSelected
 
-  const eligibility = getMergeEligibility(selectedTransactions)
+  const eligibility = useMemo(
+    () => getMergeEligibility(selectedTransactions),
+    [selectedTransactions]
+  )
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
   const disabledHint =
@@ -196,29 +204,18 @@ export function TransactionList({
       ? eligibility.combineReason
       : eligibility.duplicateReason
 
-  const categoryIconMap = useMemo(() => {
-    const map = new Map<string, string>(
-      DEFAULT_CATEGORY_DEFINITIONS.map((c) => [c.name, c.icon])
-    )
-    for (const cat of catListQuery.data ?? []) {
-      map.set(cat.name, cat.icon)
-    }
-    return map
-  }, [catListQuery.data])
+  const categoryIconMap = useMemo(
+    () => buildCategoryIconMap(catListQuery.data),
+    [catListQuery.data]
+  )
 
-  const categoryFilterItems = useMemo(() => {
-    const names = (catListQuery.data ?? DEFAULT_CATEGORY_DEFINITIONS).map(
-      (c) => c.name
-    )
-    const items = [
+  const categoryFilterItems = useMemo(
+    () => [
       { value: "all", label: "All categories" },
-      ...names.map((name) => ({ value: name, label: name })),
-    ]
-    if (category !== "all" && !items.some((item) => item.value === category)) {
-      items.push({ value: category, label: category })
-    }
-    return items
-  }, [catListQuery.data, category])
+      ...buildCategorySelectOptions(catListQuery.data, category),
+    ],
+    [catListQuery.data, category]
+  )
 
   const tagFilterItems = useMemo(() => {
     const items = [
@@ -234,14 +231,24 @@ export function TransactionList({
     return items
   }, [tagListQuery.data, tag])
 
-  const accountFilterItems = useMemo(
-    () => [
+  const accountFilterItems = useMemo(() => {
+    const items = [
       { value: "all", label: "All accounts" },
       { value: "unassigned", label: "Unassigned" },
       ...accounts.map((acct) => ({ value: acct.id, label: acct.name })),
-    ],
-    [accounts]
-  )
+    ]
+    if (
+      accountId !== "all" &&
+      accountId !== "unassigned" &&
+      !items.some((item) => item.value === accountId)
+    ) {
+      const matchedName = transactions.find(
+        (tx) => tx.account_id === accountId && tx.account_name
+      )?.account_name
+      items.push({ value: accountId, label: matchedName ?? "Account" })
+    }
+    return items
+  }, [accounts, accountId, transactions])
 
   return (
     <Card>

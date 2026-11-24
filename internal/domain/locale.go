@@ -4,20 +4,6 @@ import "strings"
 
 const DefaultCategory = "Other"
 
-var DefaultCategories = []string{
-	"Housing",
-	"Food",
-	"Utilities",
-	"Transportation",
-	"Healthcare",
-	"Entertainment",
-	"Dining Out",
-	"Shopping",
-	"Education",
-	"Personal Care",
-	"Other",
-}
-
 type CountryLocaleInfo struct {
 	Code            string   `json:"code"`
 	Name            string   `json:"name"`

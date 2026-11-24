@@ -1,4 +1,4 @@
-import { queryOptions } from "@tanstack/react-query"
+import { queryOptions, type QueryClient } from "@tanstack/react-query"
 import { apiFetch } from "./client"
 import type {
   MonthlySpendingSummary,
@@ -141,3 +141,11 @@ export const markTransactionsReviewedApi = (transactionIds: string[]) =>
     method: "POST",
     body: JSON.stringify({ transactionIds }),
   })
+
+export function invalidateTransactionRelatedQueries(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: ["transactions"] })
+  void queryClient.invalidateQueries({ queryKey: ["spending"] })
+  void queryClient.invalidateQueries({ queryKey: ["accounts"] })
+  void queryClient.invalidateQueries({ queryKey: ["categories"] })
+  void queryClient.invalidateQueries({ queryKey: ["tags"] })
+}

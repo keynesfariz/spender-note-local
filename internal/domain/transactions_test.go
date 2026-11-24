@@ -47,7 +47,6 @@ func TestDuplicateMergeTransactions_TransfersEmailsWithoutDismissingAndMarksRevi
 	seedTestEmail(t, gdb, "e1", 1795251000000, "2026-11-21T08:50:00Z")
 	seedTestEmail(t, gdb, "e2", 1795251005000, "2026-11-21T08:50:05Z")
 
-	// Both unassigned (nil account_id) should be eligible.
 	txKeep, err := SaveExtractedTransaction(gdb, ExtractedTransactionInput{
 		EmailID: "e1", EmailKind: "card_charge", AmountMinor: 50000, Currency: "IDR",
 		OccurredAtUtc: "2026-11-21T08:50:00Z", MerchantRaw: "GrabFood", Category: "Food",
@@ -147,7 +146,6 @@ func TestCombineTransactions_SumsAmountsLocksOverrideTransfersEmailsAndMarksRevi
 		t.Fatalf("expected 2 linked sources, got %d", combined.SourceCount)
 	}
 
-	// RecomputeTransactionFromSources must not overwrite the locked summed amount.
 	RecomputeTransactionFromSources(gdb, combined.ID, NowUtcIsoSeconds())
 	detail, err := GetTransactionDetail(gdb, combined.ID)
 	if err != nil {
@@ -170,7 +168,6 @@ func TestManualReviewTransitionsAndDateRangePagination(t *testing.T) {
 	gdb := openDomainTestDB(t)
 	acctA := seedTestAccount(t, gdb, "acct-a", "BCA", "IDR")
 
-	// Manual transaction starts reviewed=1 (2026-11-21 10:00 Asia/Jakarta -> 03:00Z).
 	manualTx, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
 		AmountMinor:   15000,
 		OccurredAtUtc: "2026-11-21T03:00:00Z",
@@ -184,8 +181,6 @@ func TestManualReviewTransitionsAndDateRangePagination(t *testing.T) {
 		t.Fatalf("expected manual transaction to start reviewed=1, got %d", manualTx.Reviewed)
 	}
 
-	// Seed 3 unreviewed Gmail transactions on 2026-11-21 (Asia/Jakarta, UTC+7).
-	// Note 2026-11-20T17:30:00Z is 2026-11-21 00:30 Asia/Jakarta!
 	txIDs := make([]string, 0, 3)
 	times := []string{"2026-11-20T17:30:00Z", "2026-11-21T05:00:00Z", "2026-11-21T16:30:00Z"}
 	for i, ts := range times {
@@ -201,7 +196,6 @@ func TestManualReviewTransitionsAndDateRangePagination(t *testing.T) {
 		txIDs = append(txIDs, id)
 	}
 
-	// Page 1 (pageSize=2) of 2026-11-21 in Asia/Jakarta should include all 4 transactions.
 	page1, err := ListTransactions(gdb, ListTransactionsParams{
 		StartDate: "2026-11-21",
 		EndDate:   "2026-11-21",
@@ -218,7 +212,6 @@ func TestManualReviewTransitionsAndDateRangePagination(t *testing.T) {
 		t.Fatalf("expected totalInRange=4 unreviewedInRange=3, got %d and %d", page1.TotalInRangeCount, page1.UnreviewedInRangeCount)
 	}
 
-	// Editing txIDs[0] auto-marks it reviewed=1.
 	newMerchant := "Shop 0 Edited"
 	updated, err := UpdateTransaction(gdb, txIDs[0], UpdateTransactionInput{Merchant: &newMerchant})
 	if err != nil {
@@ -228,7 +221,6 @@ func TestManualReviewTransitionsAndDateRangePagination(t *testing.T) {
 		t.Fatalf("expected UpdateTransaction to set reviewed=1, got %d", updated.Reviewed)
 	}
 
-	// Bulk mark remaining 2 reviewed.
 	affected, err := MarkTransactionsReviewed(gdb, []string{txIDs[1], txIDs[2]})
 	if err != nil {
 		t.Fatalf("MarkTransactionsReviewed: %v", err)
@@ -237,7 +229,6 @@ func TestManualReviewTransitionsAndDateRangePagination(t *testing.T) {
 		t.Fatalf("expected 2 rows marked reviewed, got %d", affected)
 	}
 
-	// UnreviewedOnly filter now returns 0 items, while TotalInRangeCount=4 and UnreviewedInRangeCount=0.
 	afterReview, err := ListTransactions(gdb, ListTransactionsParams{
 		StartDate:      "2026-11-21",
 		EndDate:        "2026-11-21",
@@ -250,7 +241,6 @@ func TestManualReviewTransitionsAndDateRangePagination(t *testing.T) {
 		t.Fatalf("expected totalCount=0 totalInRange=4 unreviewedInRange=0, got %+v", afterReview)
 	}
 
-	// Out-of-range local day boundaries (2026-11-20 23:59:59 and 2026-11-22 00:00:00 Asia/Jakarta) are excluded.
 	_, _ = CreateManualTransaction(gdb, CreateManualTransactionInput{
 		AmountMinor: 1000, OccurredAtUtc: "2026-11-20T16:59:59Z", Merchant: "Prev Day", AccountID: &acctA,
 	})
@@ -507,7 +497,6 @@ func TestTransactions_MultiTagCreateUpdateClearAndFilter(t *testing.T) {
 		t.Fatalf("expected 2 hydrated tags on list item, got %+v", filtered.Items[0].Tags)
 	}
 
-	// Update replaces tags when HasTagIDs=true, and preserves tags when HasTagIDs=false.
 	newMerchant := "Tokyo Ramen Updated"
 	unchangedTags, err := UpdateTransaction(gdb, tx1.ID, UpdateTransactionInput{
 		Merchant: &newMerchant,

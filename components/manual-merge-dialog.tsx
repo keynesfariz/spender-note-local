@@ -30,10 +30,15 @@ import {
   categoriesQuery,
   combineTransactionsApi,
   duplicateMergeTransactionsApi,
+  invalidateTransactionRelatedQueries,
   type AccountSummary,
   type TransactionListItem,
 } from "@/lib/api"
-import { DEFAULT_CATEGORY_DEFINITIONS } from "@/lib/categories"
+import {
+  DEFAULT_CATEGORY,
+  buildCategoryIconMap,
+  buildCategorySelectOptions,
+} from "@/lib/categories"
 import {
   dateTimeInputToUtcIso,
   formatMinorCurrency,
@@ -67,7 +72,7 @@ export function ManualMergeDialog({
 
   const [keepId, setKeepId] = useState<string>("")
   const [merchant, setMerchant] = useState("")
-  const [category, setCategory] = useState("Other")
+  const [category, setCategory] = useState<string>(DEFAULT_CATEGORY)
   const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT)
   const [date, setDate] = useState("")
   const [initialDate, setInitialDate] = useState("")
@@ -89,28 +94,15 @@ export function ManualMergeDialog({
   )
   const sharedCurrency = transactions[0]?.currency ?? "USD"
 
-  const categoryIconMap = useMemo(() => {
-    const map = new Map<string, string>(
-      DEFAULT_CATEGORY_DEFINITIONS.map((c) => [c.name, c.icon])
-    )
-    for (const cat of catListQuery.data ?? []) {
-      map.set(cat.name, cat.icon)
-    }
-    return map
-  }, [catListQuery.data])
+  const categoryIconMap = useMemo(
+    () => buildCategoryIconMap(catListQuery.data),
+    [catListQuery.data]
+  )
 
-  const categoryOptions = useMemo(() => {
-    const opts = (catListQuery.data ?? DEFAULT_CATEGORY_DEFINITIONS).map(
-      (c) => ({
-        value: c.name,
-        label: c.name,
-      })
-    )
-    if (category && !opts.some((opt) => opt.value === category)) {
-      opts.push({ value: category, label: category })
-    }
-    return opts
-  }, [catListQuery.data, category])
+  const categoryOptions = useMemo(
+    () => buildCategorySelectOptions(catListQuery.data, category),
+    [catListQuery.data, category]
+  )
 
   const primaryAccountId = sortedByOccurred[0]?.account_id ?? null
   const primaryAccountName = sortedByOccurred[0]?.account_name ?? null
@@ -172,11 +164,7 @@ export function ManualMergeDialog({
   }, [selectionKey, sortedByOccurred, timezone])
 
   const invalidateAll = () => {
-    void queryClient.invalidateQueries({ queryKey: ["transactions"] })
-    void queryClient.invalidateQueries({ queryKey: ["spending"] })
-    void queryClient.invalidateQueries({ queryKey: ["accounts"] })
-    void queryClient.invalidateQueries({ queryKey: ["categories"] })
-    void queryClient.invalidateQueries({ queryKey: ["tags"] })
+    invalidateTransactionRelatedQueries(queryClient)
   }
 
   const duplicateMutation = useMutation({
@@ -374,7 +362,7 @@ export function ManualMergeDialog({
                   <Select
                     items={categoryOptions}
                     value={category}
-                    onValueChange={(v) => setCategory(v ?? "Other")}
+                    onValueChange={(v) => setCategory(v ?? DEFAULT_CATEGORY)}
                   >
                     <SelectTrigger className="w-full" aria-label="Category">
                       <DynamicIcon

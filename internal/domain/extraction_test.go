@@ -113,59 +113,7 @@ func TestSaveExtractedTransaction_NoAutoDedupAndStartsUnreviewed(t *testing.T) {
 	}
 }
 
-func TestSplitTransactionSource_DetachedTransactionStartsUnreviewedWithoutRejectedMerges(t *testing.T) {
-	gdb := openDomainTestDB(t)
-	acctID := seedTestAccount(t, gdb, "acct-1", "BCA Card", "IDR")
-	seedTestEmail(t, gdb, "email-1", 1795251000000, "2026-11-21T08:50:00Z")
-	seedTestEmail(t, gdb, "email-2", 1795251060000, "2026-11-21T08:51:00Z")
-
-	txID, err := SaveExtractedTransaction(gdb, ExtractedTransactionInput{
-		EmailID:           "email-1",
-		EmailKind:         "card_charge",
-		AmountMinor:       50000,
-		Currency:          "IDR",
-		OccurredAtUtc:     "2026-11-21T08:50:00Z",
-		MerchantRaw:       "GrabFood",
-		Category:          "Food",
-		ResolvedAccountID: &acctID,
-	})
-	if err != nil {
-		t.Fatalf("save first email: %v", err)
-	}
-	if err := gdb.Exec(`
-		INSERT INTO email_extractions (id, email_id, email_kind, amount_minor, currency, occurred_at_utc, merchant_raw, merchant_norm, category, extraction_model, raw_llm_json)
-		VALUES ('ext-2', 'email-2', 'receipt', 10000, 'IDR', '2026-11-21T08:51:00Z', 'GrabFood Tip', 'grabfood tip', 'Food', 'sync', '{}')
-	`).Error; err != nil {
-		t.Fatalf("insert extraction 2: %v", err)
-	}
-	if err := gdb.Create(&db.TransactionSource{
-		ID:            "src-2",
-		TransactionID: txID,
-		EmailID:       "email-2",
-		Role:          "receipt",
-		MatchScore:    1.0,
-		MatchState:    "confirmed",
-	}).Error; err != nil {
-		t.Fatalf("attach second source: %v", err)
-	}
-
-	splitTxID, err := SplitTransactionSource(gdb, txID, "email-2")
-	if err != nil {
-		t.Fatalf("SplitTransactionSource: %v", err)
-	}
-	var splitTx db.Transaction
-	if err := gdb.Where("id = ?", splitTxID).First(&splitTx).Error; err != nil {
-		t.Fatalf("load split tx: %v", err)
-	}
-	if splitTx.Reviewed != 0 {
-		t.Fatalf("expected split transaction to start with reviewed=0, got %d", splitTx.Reviewed)
-	}
-	if splitTx.AmountMinor != 10000 {
-		t.Fatalf("expected split transaction amount 10000, got %d", splitTx.AmountMinor)
-	}
-}
-
-func TestSplitTransactionSource_PreservesParentTagsOnBothTransactions(t *testing.T) {
+func TestSplitTransactionSource_DetachedTransactionStartsUnreviewedAndPreservesParentTags(t *testing.T) {
 	gdb := openDomainTestDB(t)
 	acctID := seedTestAccount(t, gdb, "acct-1", "BCA Card", "IDR")
 	seedTestEmail(t, gdb, "email-s1", 1795251000000, "2026-11-21T08:50:00Z")
@@ -228,6 +176,12 @@ func TestSplitTransactionSource_PreservesParentTagsOnBothTransactions(t *testing
 	splitDetail, err := GetTransactionDetail(gdb, splitTxID)
 	if err != nil {
 		t.Fatalf("load split detail: %v", err)
+	}
+	if splitDetail.Transaction.Reviewed != 0 {
+		t.Fatalf("expected split transaction to start with reviewed=0, got %d", splitDetail.Transaction.Reviewed)
+	}
+	if splitDetail.Transaction.AmountMinor != 10000 {
+		t.Fatalf("expected split transaction amount 10000, got %d", splitDetail.Transaction.AmountMinor)
 	}
 	if len(parentDetail.Transaction.Tags) != 2 {
 		t.Fatalf("expected parent to keep 2 tags, got %+v", parentDetail.Transaction.Tags)

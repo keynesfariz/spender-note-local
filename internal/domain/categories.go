@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"portspendernote/internal/db"
+	"portspendernote/internal/llm"
 )
 
 type CategorySummary struct {
@@ -60,10 +61,21 @@ func ListCategoryNames(gdb *gorm.DB) ([]string, error) {
 	).Scan(&names).Error; err != nil {
 		return nil, err
 	}
-	if len(names) == 0 {
-		return append([]string(nil), DefaultCategories...), nil
+	return llm.ResolveCategories(names), nil
+}
+
+func reassignCategoryReferences(tx *gorm.DB, fromName, toName, nowUtc string) error {
+	if err := tx.Model(&db.Transaction{}).
+		Where("category = ?", fromName).
+		Updates(map[string]any{
+			"category":       toName,
+			"updated_at_utc": nowUtc,
+		}).Error; err != nil {
+		return err
 	}
-	return names, nil
+	return tx.Model(&db.EmailExtraction{}).
+		Where("category = ?", fromName).
+		Update("category", toName).Error
 }
 
 func lookupCategoryByName(gdb *gorm.DB, raw string) (*db.Category, error) {
@@ -190,29 +202,20 @@ func UpdateCategory(gdb *gorm.DB, id string, input UpdateCategoryInput) (*Catego
 			return errors.New("Category icon is required.")
 		}
 
-		var dupCount int64
-		if err := tx.Model(&db.Category{}).
-			Where("normalized_name = ? AND id <> ?", nextNorm, id).
-			Count(&dupCount).Error; err != nil {
-			return err
-		}
-		if dupCount > 0 {
-			return errors.New("A category with this name already exists.")
+		if nextNorm != current.NormalizedName {
+			var dupCount int64
+			if err := tx.Model(&db.Category{}).
+				Where("normalized_name = ? AND id <> ?", nextNorm, id).
+				Count(&dupCount).Error; err != nil {
+				return err
+			}
+			if dupCount > 0 {
+				return errors.New("A category with this name already exists.")
+			}
 		}
 
 		if nextName != current.Name {
-			nowUtc := NowUtcIsoSeconds()
-			if err := tx.Model(&db.Transaction{}).
-				Where("category = ?", current.Name).
-				Updates(map[string]any{
-					"category":       nextName,
-					"updated_at_utc": nowUtc,
-				}).Error; err != nil {
-				return err
-			}
-			if err := tx.Model(&db.EmailExtraction{}).
-				Where("category = ?", current.Name).
-				Update("category", nextName).Error; err != nil {
+			if err := reassignCategoryReferences(tx, current.Name, nextName, NowUtcIsoSeconds()); err != nil {
 				return err
 			}
 		}
@@ -271,18 +274,7 @@ func DeleteCategory(gdb *gorm.DB, id string, replaceWithCategory string) error {
 			return errors.New("Replacement category must be a different existing category.")
 		}
 
-		nowUtc := NowUtcIsoSeconds()
-		if err := tx.Model(&db.Transaction{}).
-			Where("category = ?", current.Name).
-			Updates(map[string]any{
-				"category":       replacement.Name,
-				"updated_at_utc": nowUtc,
-			}).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&db.EmailExtraction{}).
-			Where("category = ?", current.Name).
-			Update("category", replacement.Name).Error; err != nil {
+		if err := reassignCategoryReferences(tx, current.Name, replacement.Name, NowUtcIsoSeconds()); err != nil {
 			return err
 		}
 

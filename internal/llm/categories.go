@@ -2,7 +2,6 @@ package llm
 
 import "strings"
 
-// DefaultCategories mirrors lib/categories.ts DEFAULT_CATEGORIES.
 var DefaultCategories = []string{
 	"Housing",
 	"Food",

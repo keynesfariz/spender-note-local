@@ -72,7 +72,8 @@ func CreateTag(gdb *gorm.DB, input CreateTagInput) (*TagSummary, error) {
 	}
 	norm := strings.ToLower(name)
 
-	var createdID string
+	createdID := uuid.NewString()
+	nowUtc := NowUtcIsoSeconds()
 	err := gdb.Transaction(func(tx *gorm.DB) error {
 		var dupCount int64
 		if err := tx.Model(&db.Tag{}).Where("normalized_name = ?", norm).Count(&dupCount).Error; err != nil {
@@ -82,18 +83,22 @@ func CreateTag(gdb *gorm.DB, input CreateTagInput) (*TagSummary, error) {
 			return errors.New("A tag with this name already exists.")
 		}
 
-		createdID = uuid.NewString()
 		return tx.Create(&db.Tag{
 			ID:             createdID,
 			Name:           name,
 			NormalizedName: norm,
-			CreatedAtUtc:   NowUtcIsoSeconds(),
+			CreatedAtUtc:   nowUtc,
 		}).Error
 	})
 	if err != nil {
 		return nil, err
 	}
-	return getTagSummaryByID(gdb, createdID)
+	return &TagSummary{
+		ID:               createdID,
+		Name:             name,
+		TransactionCount: 0,
+		CreatedAtUtc:     nowUtc,
+	}, nil
 }
 
 func UpdateTag(gdb *gorm.DB, id string, input UpdateTagInput) (*TagSummary, error) {

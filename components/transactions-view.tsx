@@ -14,7 +14,7 @@ import {
   parseAsStringLiteral,
   useQueryStates,
 } from "nuqs"
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { AddTransactionDialog } from "@/components/add-transaction-dialog"
 import { DateRangePicker } from "@/components/date-picker"
@@ -30,6 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   accountsQuery,
   deleteTransactionsApi,
+  invalidateTransactionRelatedQueries,
   markTransactionsReviewedApi,
   settingsQuery,
   transactionsQuery,
@@ -98,15 +99,17 @@ export function TransactionsView() {
   const unreviewedInRangeCount = txQuery.data?.unreviewedInRangeCount ?? 0
   const totalPages = Math.max(1, Math.ceil(totalCount / DEFAULT_PAGE_SIZE))
 
-  // Clamp page if items shrink after filtering, merging, or reviewing.
+  const clearSelection = useCallback(() => {
+    setSelectedIds((prev) => (prev.length === 0 ? prev : []))
+  }, [])
+
   useEffect(() => {
     if (txQuery.isSuccess && activePage > totalPages) {
       void setFilters({ page: totalPages })
-      setSelectedIds([])
+      clearSelection()
     }
-  }, [txQuery.isSuccess, activePage, totalPages, setFilters])
+  }, [txQuery.isSuccess, activePage, totalPages, setFilters, clearSelection])
 
-  // Prune stale selected IDs if background sync shifts page contents.
   useEffect(() => {
     const visibleIds = new Set(items.map((tx) => tx.id))
     setSelectedIds((prev) => {
@@ -119,7 +122,7 @@ export function TransactionsView() {
     mutationFn: markTransactionsReviewedApi,
     onMutate: () => setReviewError(null),
     onSuccess: () => {
-      setSelectedIds([])
+      clearSelection()
       void queryClient.invalidateQueries({ queryKey: ["transactions"] })
       void queryClient.invalidateQueries({ queryKey: ["spending"] })
     },
@@ -135,12 +138,8 @@ export function TransactionsView() {
   const deleteTransactionsMutation = useMutation({
     mutationFn: deleteTransactionsApi,
     onSuccess: () => {
-      setSelectedIds([])
-      void queryClient.invalidateQueries({ queryKey: ["transactions"] })
-      void queryClient.invalidateQueries({ queryKey: ["spending"] })
-      void queryClient.invalidateQueries({ queryKey: ["accounts"] })
-      void queryClient.invalidateQueries({ queryKey: ["categories"] })
-      void queryClient.invalidateQueries({ queryKey: ["tags"] })
+      clearSelection()
+      invalidateTransactionRelatedQueries(queryClient)
     },
     onSettled: () => {
       setDeleteDialogOpen(false)
@@ -149,7 +148,7 @@ export function TransactionsView() {
 
   const updateRange = (next: { from: string; to: string }) => {
     void setFilters({ range: null, from: next.from, to: next.to, page: 1 })
-    setSelectedIds([])
+    clearSelection()
     deleteTransactionsMutation.reset()
   }
 
@@ -159,7 +158,7 @@ export function TransactionsView() {
     } else {
       void setFilters({ range: "all", from: null, to: null, page: 1 })
     }
-    setSelectedIds([])
+    clearSelection()
     deleteTransactionsMutation.reset()
   }
 
@@ -169,37 +168,37 @@ export function TransactionsView() {
 
   const handleSearchChange = (value: string) => {
     void setFilters({ search: value, page: 1 })
-    setSelectedIds([])
+    clearSelection()
     deleteTransactionsMutation.reset()
   }
 
   const handleCategoryChange = (value: string) => {
     void setFilters({ category: value, page: 1 })
-    setSelectedIds([])
+    clearSelection()
     deleteTransactionsMutation.reset()
   }
 
   const handleTagChange = (value: string) => {
     void setFilters({ tag: value, page: 1 })
-    setSelectedIds([])
+    clearSelection()
     deleteTransactionsMutation.reset()
   }
 
   const handleAccountIdChange = (value: string) => {
     void setFilters({ accountId: value, page: 1 })
-    setSelectedIds([])
+    clearSelection()
     deleteTransactionsMutation.reset()
   }
 
   const handleUnreviewedOnlyChange = (value: boolean) => {
     void setFilters({ unreviewed: value, page: 1 })
-    setSelectedIds([])
+    clearSelection()
     deleteTransactionsMutation.reset()
   }
 
   const handlePageChange = (nextPage: number) => {
     void setFilters({ page: Math.max(1, nextPage) })
-    setSelectedIds([])
+    clearSelection()
     deleteTransactionsMutation.reset()
   }
 

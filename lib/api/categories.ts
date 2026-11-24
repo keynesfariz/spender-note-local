@@ -1,4 +1,5 @@
 import { queryOptions } from "@tanstack/react-query"
+import { DEFAULT_CATEGORY } from "@/lib/categories"
 import { apiFetch } from "./client"
 import type { CategorySummary } from "./types.generated"
 
@@ -36,6 +37,6 @@ export const deleteCategoryApi = (input: {
   apiFetch<{ ok: boolean }>(`/api/categories/${encodeURIComponent(input.id)}`, {
     method: "DELETE",
     body: JSON.stringify({
-      replaceWithCategory: input.replaceWithCategory ?? "Other",
+      replaceWithCategory: input.replaceWithCategory ?? DEFAULT_CATEGORY,
     }),
   })

@@ -82,7 +82,6 @@ func TestCategories_CreateUpdateCaseInsensitiveUniquenessAndRenamePropagation(t 
 		t.Fatalf("SaveExtractedTransaction: %v", err)
 	}
 
-	// Renaming to existing category casing fails.
 	dupName := "housing"
 	if _, err := UpdateCategory(gdb, created.ID, UpdateCategoryInput{Name: &dupName}); err == nil {
 		t.Fatalf("expected duplicate rename to fail")
@@ -149,7 +148,6 @@ func TestCategories_DeleteReassignsTransactionsAndExtractions(t *testing.T) {
 		t.Fatalf("expected DeleteCategory to reject self as replacement category")
 	}
 
-	// Empty replacement defaults to "Other".
 	if err := DeleteCategory(gdb, catA.ID, ""); err != nil {
 		t.Fatalf("DeleteCategory default replacement: %v", err)
 	}
@@ -168,7 +166,6 @@ func TestCategories_DeleteReassignsTransactionsAndExtractions(t *testing.T) {
 		t.Fatalf("expected extraction reassigned to 'Other', got %v", gotExt1.Category)
 	}
 
-	// Explicit replacement category.
 	if err := DeleteCategory(gdb, catB.ID, "Shopping"); err != nil {
 		t.Fatalf("DeleteCategory explicit replacement: %v", err)
 	}

@@ -299,9 +299,9 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 			FROM transaction_tags tt
 			JOIN tags tg ON tg.id = tt.tag_id
 			WHERE tt.transaction_id = t.id
-			  AND (tg.name = ? OR tg.normalized_name = ? OR tg.id = ?)
+			  AND (tg.normalized_name = ? OR tg.id = ?)
 		)`)
-		args = append(args, t, strings.ToLower(t), t)
+		args = append(args, strings.ToLower(t), t)
 	}
 	if params.AccountID != "" && params.AccountID != "all" {
 		if params.AccountID == "unassigned" {

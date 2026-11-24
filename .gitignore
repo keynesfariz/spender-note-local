@@ -42,3 +42,6 @@ next-env.d.ts
 # local runtime data and models
 /data/
 /models/
+
+# Local Skills
+/.agents/skill/modern-web-guidance

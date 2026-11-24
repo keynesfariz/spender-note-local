@@ -18,6 +18,7 @@ type EnrichTransactionsInput struct {
 }
 
 type TransactionEnrichmentPreview struct {
+	Remark        string               `json:"remark"`
 	Merchant      string               `json:"merchant"`
 	Category      string               `json:"category"`
 	Note          *string              `json:"note"`
@@ -137,6 +138,77 @@ func partitionEnrichedTags(suggested []string, dbTags []TransactionTagItem) ([]T
 	return existing, drafts
 }
 
+const remarkVendorPlaceholder = "[vendor]"
+
+func findRemarkExamples(gdb *gorm.DB, ids []string, sources []enrichSourceRow) ([]string, error) {
+	var evidence strings.Builder
+	for _, source := range sources {
+		evidence.WriteString(source.FromAddress + "\n" + source.Subject + "\n" + source.CleanedText + "\n")
+	}
+
+	var examples []string
+	err := gdb.Raw(`
+		SELECT remark
+		FROM transactions
+		WHERE remark_user_edited = 1 AND remark IS NOT NULL AND trim(remark) <> ''
+		  AND id NOT IN ?
+		  AND instr(lower(?), lower(trim(CASE
+		        WHEN instr(remark, ': ') > 1 THEN substr(remark, 1, instr(remark, ': ') - 1)
+		        ELSE merchant END))) > 0
+		GROUP BY remark COLLATE NOCASE
+		ORDER BY MAX(updated_at_utc) DESC, remark COLLATE NOCASE
+		LIMIT 6`, ids, evidence.String()).Scan(&examples).Error
+	if err != nil {
+		return nil, err
+	}
+	for i, example := range examples {
+		if service, _, ok := strings.Cut(example, ": "); ok {
+			examples[i] = service + ": " + remarkVendorPlaceholder
+		}
+	}
+	return examples, nil
+}
+
+// A learned delivery format can only use a vendor named by the current emails.
+func resolveEnrichedRemark(result *llm.EnrichResult, examples []string, sources []enrichSourceRow) string {
+	proposedService, proposedVendor, _ := strings.Cut(result.Remark, ": ")
+	services := make(map[string]string)
+	for _, example := range examples {
+		service, vendor, _ := strings.Cut(example, ": ")
+		if vendor == remarkVendorPlaceholder {
+			services[strings.ToLower(service)] = service
+		}
+	}
+	service := services[strings.ToLower(proposedService)]
+	if service == "" && len(services) == 1 {
+		for _, name := range services {
+			service = name
+		}
+	}
+	if service == "" {
+		if strings.EqualFold(proposedVendor, remarkVendorPlaceholder) {
+			return proposedService
+		}
+		return result.Remark
+	}
+
+	if !strings.EqualFold(proposedService, service) {
+		proposedVendor = ""
+	}
+	for _, name := range []string{proposedVendor, result.Merchant} {
+		vendor := strings.TrimSpace(name)
+		if vendor == "" || strings.EqualFold(vendor, service) || strings.EqualFold(vendor, remarkVendorPlaceholder) {
+			continue
+		}
+		for _, source := range sources {
+			if strings.Contains(strings.ToLower(source.Subject+" "+source.CleanedText), strings.ToLower(vendor)) {
+				return service + ": " + vendor
+			}
+		}
+	}
+	return service
+}
+
 func EnrichTransactionsFromSources(gdb *gorm.DB, ctx context.Context, transactionIDs []string) (*TransactionEnrichmentPreview, error) {
 	ids := normalizeTransactionIDs(transactionIDs)
 	if len(ids) == 0 {
@@ -238,6 +310,11 @@ func EnrichTransactionsFromSources(gdb *gorm.DB, ctx context.Context, transactio
 		}
 	}
 
+	examples, err := findRemarkExamples(gdb, ids, sourceRows)
+	if err != nil {
+		return nil, err
+	}
+
 	llmResult, err := client.EnrichTransaction(ctx, strings.TrimSpace(*settings.LlmModel), llm.EnrichInput{
 		Emails:             promptEmails,
 		UserCountry:        settings.CountryCode,
@@ -246,6 +323,7 @@ func EnrichTransactionsFromSources(gdb *gorm.DB, ctx context.Context, transactio
 		UserCurrency:       settings.Currency,
 		Categories:         categories,
 		Tags:               existingTagNames,
+		RemarkExamples:     examples,
 	})
 	if err != nil {
 		return nil, err
@@ -260,6 +338,7 @@ func EnrichTransactionsFromSources(gdb *gorm.DB, ctx context.Context, transactio
 	matchedTags, draftTagNames := partitionEnrichedTags(llmResult.Tags, existingTags)
 
 	return &TransactionEnrichmentPreview{
+		Remark:        resolveEnrichedRemark(llmResult, examples, sourceRows),
 		Merchant:      llmResult.Merchant,
 		Category:      canonicalCategory,
 		Note:          llmResult.Note,

@@ -239,6 +239,8 @@ func CreateManualTransaction(gdb *gorm.DB, input CreateManualTransactionInput) (
 }
 
 type UpdateTransactionInput struct {
+	Remark                 *string  `json:"remark"`
+	RemarkUserEdited       *bool    `json:"remark_user_edited"`
 	AmountMinor            *int64   `json:"amount_minor"`
 	OccurredAtUtc          *string  `json:"occurred_at_utc"`
 	Merchant               *string  `json:"merchant"`
@@ -334,6 +336,7 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 			nextCurrency = *appCurrency
 		}
 
+		remark, remarkUserEdited := applyTransactionRemark(current, merchant, patch.Remark, patch.RemarkUserEdited)
 		manualOverride := current.ManualOverride
 		if current.SourceType == "gmail" {
 			manualOverride = 1
@@ -341,16 +344,18 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 
 		nowUtc := NowUtcIsoSeconds()
 		if err := tx.Model(&db.Transaction{}).Where("id = ?", id).Updates(map[string]any{
-			"account_id":      accountID,
-			"amount_minor":    amountMinor,
-			"currency":        nextCurrency,
-			"occurred_at_utc": occurred,
-			"merchant":        merchant,
-			"category":        category,
-			"manual_override": manualOverride,
-			"reviewed":        1,
-			"note":            note,
-			"updated_at_utc":  nowUtc,
+			"account_id":         accountID,
+			"amount_minor":       amountMinor,
+			"currency":           nextCurrency,
+			"occurred_at_utc":    occurred,
+			"merchant":           merchant,
+			"remark":             remark,
+			"remark_user_edited": remarkUserEdited,
+			"category":           category,
+			"manual_override":    manualOverride,
+			"reviewed":           1,
+			"note":               note,
+			"updated_at_utc":     nowUtc,
 		}).Error; err != nil {
 			return err
 		}
@@ -532,17 +537,38 @@ func DuplicateMergeTransactions(gdb *gorm.DB, keepID, dropID string) (*Transacti
 }
 
 type CombineTransactionsInput struct {
-	TransactionIDs []string `json:"transactionIds"`
-	Merchant       string   `json:"merchant"`
-	Category       *string  `json:"category"`
-	HasTagIDs      bool     `json:"-"`
-	TagIDs         []string `json:"tag_ids"`
-	TagNames       []string `json:"tag_names"`
-	HasAccountID   bool     `json:"-"`
-	AccountID      *string  `json:"account_id"`
-	OccurredAtUtc  string   `json:"occurred_at_utc"`
-	HasNote        bool     `json:"-"`
-	Note           *string  `json:"note"`
+	Remark           *string  `json:"remark"`
+	RemarkUserEdited *bool    `json:"remark_user_edited"`
+	TransactionIDs   []string `json:"transactionIds"`
+	Merchant         string   `json:"merchant"`
+	Category         *string  `json:"category"`
+	HasTagIDs        bool     `json:"-"`
+	TagIDs           []string `json:"tag_ids"`
+	TagNames         []string `json:"tag_names"`
+	HasAccountID     bool     `json:"-"`
+	AccountID        *string  `json:"account_id"`
+	OccurredAtUtc    string   `json:"occurred_at_utc"`
+	HasNote          bool     `json:"-"`
+	Note             *string  `json:"note"`
+}
+
+// applyTransactionRemark keeps provenance on an unchanged title and clears it
+// when the user returns to the merchant fallback.
+func applyTransactionRemark(current db.Transaction, nextMerchant string, input *string, userEdited *bool) (*string, bool) {
+	if input == nil {
+		return current.Remark, current.RemarkUserEdited
+	}
+	remark := strings.TrimSpace(*input)
+	if remark == "" {
+		return nil, false
+	}
+	if current.Remark != nil && remark == *current.Remark {
+		return current.Remark, current.RemarkUserEdited
+	}
+	if current.Remark == nil && remark == strings.TrimSpace(nextMerchant) {
+		return nil, false
+	}
+	return &remark, userEdited == nil || *userEdited
 }
 
 func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*TransactionListItem, error) {
@@ -552,7 +578,7 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 	}
 
 	merchant := strings.TrimSpace(input.Merchant)
-	if merchant == "" {
+	if merchant == "" && input.Remark == nil {
 		return nil, errors.New("Merchant name is required.")
 	}
 	occurred := strings.TrimSpace(input.OccurredAtUtc)
@@ -574,15 +600,25 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 			return errors.New("Cannot combine: one or more selected transactions no longer exist.")
 		}
 
+		survivorID := ids[0]
 		baseCurrency := rows[0].Currency
 		baseAccountID := rows[0].AccountID
+		var survivor db.Transaction
 		var totalAmount int64
-		for _, r := range rows {
-			if r.Currency != baseCurrency || !nullableStringEqual(r.AccountID, baseAccountID) {
+		for _, row := range rows {
+			if row.Currency != baseCurrency || !nullableStringEqual(row.AccountID, baseAccountID) {
 				return errors.New("Combine transactions requires all selected transactions to share the same currency and account.")
 			}
-			totalAmount += r.AmountMinor
+			if row.ID == survivorID {
+				survivor = row
+			}
+			totalAmount += row.AmountMinor
 		}
+
+		if merchant == "" {
+			merchant = survivor.Merchant
+		}
+		remark, remarkUserEdited := applyTransactionRemark(survivor, merchant, input.Remark, input.RemarkUserEdited)
 
 		accountID := baseAccountID
 		if input.HasAccountID {
@@ -610,7 +646,6 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 			return err
 		}
 
-		survivorID := ids[0]
 		absorbedIDs := ids[1:]
 
 		nowUtc := NowUtcIsoSeconds()
@@ -644,15 +679,17 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 		}
 
 		if err := tx.Model(&db.Transaction{}).Where("id = ?", survivorID).Updates(map[string]any{
-			"account_id":      accountID,
-			"amount_minor":    totalAmount,
-			"occurred_at_utc": occurred,
-			"merchant":        merchant,
-			"category":        canonicalCategory,
-			"manual_override": 1,
-			"reviewed":        1,
-			"note":            note,
-			"updated_at_utc":  nowUtc,
+			"account_id":         accountID,
+			"amount_minor":       totalAmount,
+			"occurred_at_utc":    occurred,
+			"merchant":           merchant,
+			"remark":             remark,
+			"remark_user_edited": remarkUserEdited,
+			"category":           canonicalCategory,
+			"manual_override":    1,
+			"reviewed":           1,
+			"note":               note,
+			"updated_at_utc":     nowUtc,
 		}).Error; err != nil {
 			return err
 		}

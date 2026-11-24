@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useId,
   useRef,
   useState,
   type SubmitEvent,
@@ -16,8 +17,7 @@ import { DynamicIcon } from "@/components/dynamic-icon"
 import {
   MagicEnrichButton,
   patchTagsQueryCache,
-  resolveEnrichedDateTimeInputs,
-  syncAndMergeEnrichedTags,
+  resolveMagicDraft,
   useMagicEnrich,
 } from "@/components/magic-enrich"
 import { TagMultiSelect } from "@/components/tag-multi-select"
@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/drawer"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -88,6 +89,7 @@ import {
 const UNASSIGNED_ACCOUNT = "__unassigned__"
 
 type DraftField =
+  | "remark"
   | "merchant"
   | "amount"
   | "category"
@@ -121,7 +123,12 @@ function InspectorBody({
   const catListQuery = useQuery(categoriesQuery())
   const tagListQuery = useQuery(tagsQuery())
 
+  const [remark, setRemark] = useState("")
   const [merchant, setMerchant] = useState("")
+  const [remarkUserEdited, setRemarkUserEdited] = useState(false)
+  const noteId = useId()
+  const detailFormId = useId()
+  const remarkId = useId()
   const [amount, setAmount] = useState("")
   const [category, setCategory] = useState<string>(DEFAULT_CATEGORY)
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
@@ -160,7 +167,9 @@ function InspectorBody({
         timezone,
       }
       editedFields.current.clear()
+      setRemark(tx.remark ?? tx.merchant)
       setMerchant(tx.merchant)
+      setRemarkUserEdited(tx.remark_user_edited)
       setAmount(
         groupAmountInput(minorToDecimalInput(tx.amount_minor, tx.currency))
       )
@@ -359,9 +368,17 @@ function InspectorBody({
       const saveDate =
         edits.has("date") && (date !== loaded?.date || time !== loaded?.time)
 
+      if (saveDate && (!date.trim() || !time.trim())) {
+        throw new Error("Enter a date and time in Details before saving.")
+      }
+
+      const saveMerchant = edits.has("merchant")
+      const saveRemark = edits.has("remark") || saveMerchant
       updateMutation.mutate({
         id: tx.id,
-        merchant: edits.has("merchant") ? merchant.trim() : undefined,
+        remark: saveRemark ? remark.trim() : undefined,
+        merchant: saveMerchant ? merchant : undefined,
+        remark_user_edited: saveRemark ? remarkUserEdited : undefined,
         amount_minor: saveAmount
           ? parseDecimalToMinorClient(amount, targetCurrency)
           : undefined,
@@ -392,30 +409,42 @@ function InspectorBody({
         setStatusMessage(null)
       },
       onSuccess: (preview) => {
-        editDraft("merchant", setMerchant, preview.merchant)
-        editDraft("category", setCategory, preview.category)
-        editDraft("note", setNote, preview.note ?? "")
-        const nextDateTime = resolveEnrichedDateTimeInputs(
-          preview.occurred_at_utc,
+        const { next, changed, message } = resolveMagicDraft(
+          {
+            remark,
+            merchant,
+            remarkUserEdited,
+            category,
+            date,
+            time,
+            note,
+            selectedTagIds,
+            draftTagNames,
+          },
+          preview,
+          queryClient,
+          tagListQuery.data ?? [],
           lastLoadedTxRef.current?.timezone
         )
-        if (nextDateTime) {
-          editDraft("date", setDate, nextDateTime.date)
-          editDraft("date", setTime, nextDateTime.time)
+
+        if (changed.has("Remark")) {
+          setRemarkUserEdited(next.remarkUserEdited)
+          editDraft("remark", setRemark, next.remark)
         }
-        const { nextSelectedTagIds, nextDraftTagNames } =
-          syncAndMergeEnrichedTags({
-            queryClient,
-            preview,
-            currentSelectedTagIds: selectedTagIds,
-            fallbackKnownTags: tagListQuery.data ?? [],
-          })
-        editDraft("tags", setSelectedTagIds, nextSelectedTagIds)
-        editDraft("tags", setDraftTagNames, nextDraftTagNames)
-        setHasUnsavedMagicEdits(true)
-        setStatusMessage(
-          "Suggested fields populated from attached emails. Review and save changes."
-        )
+        if (changed.has("Merchant for reports")) {
+          editDraft("merchant", setMerchant, next.merchant)
+        }
+        if (changed.has("Category"))
+          editDraft("category", setCategory, next.category)
+        if (changed.has("Note")) editDraft("note", setNote, next.note)
+        if (changed.has("Date")) editDraft("date", setDate, next.date)
+        if (changed.has("Time")) editDraft("date", setTime, next.time)
+        if (changed.has("Tags")) {
+          editDraft("tags", setSelectedTagIds, next.selectedTagIds)
+          editDraft("tags", setDraftTagNames, next.draftTagNames)
+        }
+        if (changed.size) setHasUnsavedMagicEdits(true)
+        setStatusMessage(message)
       },
       onError: (msg) => {
         setFormError(msg)
@@ -427,7 +456,7 @@ function InspectorBody({
     <div className="space-y-5">
       <div className="rounded-xl border bg-secondary/60 p-4">
         <p className="text-sm font-medium break-words text-secondary-foreground">
-          {tx.merchant}
+          {tx.remark ?? tx.merchant}
         </p>
         <p className="mt-1 text-2xl font-semibold tracking-tight text-foreground tabular-nums">
           {formatMinorCurrency(tx.amount_minor, tx.currency)}
@@ -452,17 +481,23 @@ function InspectorBody({
       <Tabs defaultValue="details">
         <TabsList aria-label="Transaction detail sections">
           <TabsTab value="details">Details</TabsTab>
+          <TabsTab value="note">
+            Note
+            <span className="text-xs text-muted-foreground">
+              {note.trim() ? "Has content" : "Empty"}
+            </span>
+          </TabsTab>
           <TabsTab value="sources">
             <MailIcon className="size-3.5" /> Source emails (
             {detail.sources.length})
           </TabsTab>
         </TabsList>
         <TabsPanel value="details" keepMounted>
-          <form onSubmit={handleSave} className="space-y-4">
+          <form id={detailFormId} onSubmit={handleSave} className="space-y-4">
             {detail.sources.length >= 1 && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2">
                 <p className="text-xs text-muted-foreground">
-                  Fill merchant, category, tags, date, time, and note from{" "}
+                  Fill remark, category, tags, date, time, and note from{" "}
                   {detail.sources.length}{" "}
                   {detail.sources.length === 1
                     ? "attached email"
@@ -479,16 +514,21 @@ function InspectorBody({
               </div>
             )}
 
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2" inert={isEnriching}>
               <Field>
-                <FieldLabel>Merchant</FieldLabel>
+                <FieldLabel htmlFor={remarkId}>Remark</FieldLabel>
                 <Input
-                  type="text"
-                  required
-                  value={merchant}
-                  onChange={(e) =>
-                    editDraft("merchant", setMerchant, e.target.value)
-                  }
+                  id={remarkId}
+                  value={remark}
+                  placeholder={tx.merchant}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    setRemarkUserEdited(
+                      tx.remark_user_edited ||
+                        value.trim() !== (tx.remark ?? tx.merchant).trim()
+                    )
+                    editDraft("remark", setRemark, value)
+                  }}
                 />
               </Field>
 
@@ -604,15 +644,6 @@ function InspectorBody({
                   onChange={(e) => editDraft("date", setTime, e.target.value)}
                 />
               </Field>
-
-              <Field className="sm:col-span-2">
-                <FieldLabel>Note</FieldLabel>
-                <Input
-                  type="text"
-                  value={note}
-                  onChange={(e) => editDraft("note", setNote, e.target.value)}
-                />
-              </Field>
             </div>
 
             {tx.isForeignCurrency && (
@@ -691,6 +722,27 @@ function InspectorBody({
               </div>
             </div>
           </form>
+        </TabsPanel>
+        <TabsPanel value="note">
+          <Field>
+            <FieldLabel htmlFor={noteId}>Note</FieldLabel>
+            <Textarea
+              id={noteId}
+              rows={8}
+              className="min-h-40"
+              disabled={isEnriching || updateMutation.isPending}
+              value={note}
+              onChange={(e) => editDraft("note", setNote, e.target.value)}
+            />
+          </Field>
+          <Button
+            type="submit"
+            form={detailFormId}
+            formNoValidate
+            disabled={updateMutation.isPending || isEnriching}
+          >
+            {updateMutation.isPending ? "Saving..." : "Save changes"}
+          </Button>
         </TabsPanel>
         <TabsPanel value="sources" className="space-y-3">
           {tx.manual_override === 1 && detail.sources.length > 1 && (

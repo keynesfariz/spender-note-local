@@ -78,6 +78,8 @@ export const updateTransactionApi = (input: {
   amount_minor?: number
   occurred_at_utc?: string
   merchant?: string
+  remark?: string
+  remark_user_edited?: boolean
   category?: string
   tag_ids?: string[]
   tag_names?: string[]
@@ -127,7 +129,9 @@ export const duplicateMergeTransactionsApi = (input: {
 
 export const combineTransactionsApi = (input: {
   transactionIds: string[]
-  merchant: string
+  merchant?: string
+  remark?: string
+  remark_user_edited?: boolean
   category?: string
   tag_ids?: string[]
   tag_names?: string[]

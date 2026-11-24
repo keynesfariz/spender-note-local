@@ -1,14 +1,13 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useMemo, useState, type SubmitEvent } from "react"
+import { useEffect, useId, useMemo, useState, type SubmitEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
 import { DynamicIcon } from "@/components/dynamic-icon"
 import {
   MagicEnrichButton,
-  resolveEnrichedDateTimeInputs,
-  syncAndMergeEnrichedTags,
+  resolveMagicDraft,
   useMagicEnrich,
 } from "@/components/magic-enrich"
 import { TagMultiSelect } from "@/components/tag-multi-select"
@@ -26,6 +25,7 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Select,
   SelectContent,
@@ -86,7 +86,11 @@ export function ManualMergeDialog({
   })
 
   const [keepId, setKeepId] = useState<string>("")
+  const [remark, setRemark] = useState("")
   const [merchant, setMerchant] = useState("")
+  const [remarkUserEdited, setRemarkUserEdited] = useState(false)
+  const remarkId = useId()
+  const noteId = useId()
   const [category, setCategory] = useState<string>(DEFAULT_CATEGORY)
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [draftTagNames, setDraftTagNames] = useState<string[]>([])
@@ -183,7 +187,9 @@ export function ManualMergeDialog({
 
       const primary = sortedByOccurred[0]
       if (primary) {
+        setRemark(primary.remark ?? primary.merchant)
         setMerchant(primary.merchant)
+        setRemarkUserEdited(primary.remark_user_edited)
         setCategory(primary.category)
         setAccountId(primary.account_id ?? UNASSIGNED_ACCOUNT)
         setDate(utcToDateInputValue(primary.occurred_at_utc, timezone))
@@ -248,29 +254,36 @@ export function ManualMergeDialog({
         setStatusMessage(null)
       },
       onSuccess: (preview) => {
-        setMerchant(preview.merchant)
-        setCategory(preview.category)
-        setNote(preview.note ?? "")
-        const nextDateTime = resolveEnrichedDateTimeInputs(
-          preview.occurred_at_utc,
+        const { next, changed, message } = resolveMagicDraft(
+          {
+            remark,
+            merchant,
+            remarkUserEdited,
+            category,
+            date,
+            time,
+            note,
+            selectedTagIds,
+            draftTagNames,
+          },
+          preview,
+          queryClient,
+          tagListQuery.data ?? [],
           timezone
         )
-        if (nextDateTime) {
-          setDate(nextDateTime.date)
-          setTime(nextDateTime.time)
+
+        setRemarkUserEdited(next.remarkUserEdited)
+        if (changed.has("Remark")) setRemark(next.remark)
+        setMerchant(next.merchant)
+        setCategory(next.category)
+        if (changed.has("Note")) setNote(next.note)
+        setDate(next.date)
+        setTime(next.time)
+        if (changed.has("Tags")) {
+          setSelectedTagIds(next.selectedTagIds)
+          setDraftTagNames(next.draftTagNames)
         }
-        const { nextSelectedTagIds, nextDraftTagNames } =
-          syncAndMergeEnrichedTags({
-            queryClient,
-            preview,
-            currentSelectedTagIds: selectedTagIds,
-            fallbackKnownTags: tagListQuery.data ?? [],
-          })
-        setSelectedTagIds(nextSelectedTagIds)
-        setDraftTagNames(nextDraftTagNames)
-        setStatusMessage(
-          "Suggested fields populated from attached emails. Review and confirm combine."
-        )
+        setStatusMessage(message)
       },
       onError: (msg) => {
         setStatusMessage(null)
@@ -303,10 +316,6 @@ export function ManualMergeDialog({
     }
 
     if (mode === "combine") {
-      if (!merchant.trim()) {
-        setFormError("Merchant name is required.")
-        return
-      }
       if (!date.trim()) {
         setFormError("Transaction date is required.")
         return
@@ -324,7 +333,9 @@ export function ManualMergeDialog({
       }
       combineMutation.mutate({
         transactionIds: transactions.map((tx) => tx.id),
-        merchant: merchant.trim(),
+        remark: remark.trim(),
+        merchant,
+        remark_user_edited: remarkUserEdited,
         category,
         tag_ids: selectedTagIds,
         tag_names: draftTagNames,
@@ -338,8 +349,7 @@ export function ManualMergeDialog({
   const canSubmit =
     mode === "duplicate"
       ? Boolean(keepId) && transactions.length === 2 && !isPending
-      : Boolean(merchant.trim()) &&
-        Boolean(date.trim()) &&
+      : Boolean(date.trim()) &&
         Boolean(time.trim()) &&
         transactions.length >= 2 &&
         !isPending &&
@@ -394,7 +404,7 @@ export function ManualMergeDialog({
                     <div className="min-w-0 flex-1 space-y-1">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="truncate font-medium">
-                          {tx.merchant}
+                          {tx.remark ?? tx.merchant}
                         </span>
                         <span className="font-medium tabular-nums">
                           {formatMinorCurrency(tx.amount_minor, tx.currency)}
@@ -444,14 +454,22 @@ export function ManualMergeDialog({
                 )}
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-2" inert={isEnriching}>
                 <Field className="sm:col-span-2">
-                  <FieldLabel>Merchant</FieldLabel>
+                  <FieldLabel htmlFor={remarkId}>Remark</FieldLabel>
                   <Input
-                    type="text"
-                    required
-                    value={merchant}
-                    onChange={(e) => setMerchant(e.target.value)}
+                    id={remarkId}
+                    value={remark}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      const primary = sortedByOccurred[0]
+                      setRemarkUserEdited(
+                        Boolean(primary?.remark_user_edited) ||
+                          value.trim() !==
+                            (primary?.remark ?? primary?.merchant ?? "").trim()
+                      )
+                      setRemark(value)
+                    }}
                   />
                 </Field>
 
@@ -538,9 +556,10 @@ export function ManualMergeDialog({
                 </Field>
 
                 <Field className="sm:col-span-2">
-                  <FieldLabel>Note</FieldLabel>
-                  <Input
-                    type="text"
+                  <FieldLabel htmlFor={noteId}>Note</FieldLabel>
+                  <Textarea
+                    id={noteId}
+                    rows={4}
                     placeholder="Optional note"
                     value={note}
                     onChange={(e) => setNote(e.target.value)}
@@ -550,11 +569,13 @@ export function ManualMergeDialog({
             </div>
           )}
 
-          {statusMessage && (
-            <Alert>
-              <AlertDescription>{statusMessage}</AlertDescription>
-            </Alert>
-          )}
+          <div role="status" className="empty:absolute">
+            {statusMessage && (
+              <Alert role="presentation">
+                <AlertDescription>{statusMessage}</AlertDescription>
+              </Alert>
+            )}
+          </div>
 
           {formError && (
             <Alert variant="destructive">

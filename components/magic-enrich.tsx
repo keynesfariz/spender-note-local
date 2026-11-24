@@ -72,7 +72,7 @@ export function mergeEnrichedPreviewTags(
   }
 }
 
-export function syncAndMergeEnrichedTags({
+function syncAndMergeEnrichedTags({
   queryClient,
   preview,
   currentSelectedTagIds,
@@ -101,7 +101,7 @@ export function syncAndMergeEnrichedTags({
   return mergeEnrichedPreviewTags(preview, currentSelectedTagIds, knownTags)
 }
 
-export function resolveEnrichedDateTimeInputs(
+function resolveEnrichedDateTimeInputs(
   occurredAtUtc: string | null | undefined,
   timezone: string | null | undefined
 ): { date: string; time: string } | null {
@@ -141,6 +141,67 @@ export function patchTagsQueryCache(
     return changed ? next.sort((a, b) => a.name.localeCompare(b.name)) : prev
   })
   return missingOrAdded
+}
+
+type MagicDraft = {
+  remark: string
+  merchant: string
+  remarkUserEdited: boolean
+  category: string
+  date: string
+  time: string
+  note: string
+  selectedTagIds: string[]
+  draftTagNames: string[]
+}
+
+export function resolveMagicDraft(
+  draft: MagicDraft,
+  preview: TransactionEnrichmentPreview,
+  queryClient: QueryClient,
+  fallbackKnownTags: TagSummary[],
+  timezone: string | null | undefined
+) {
+  const dateTime = resolveEnrichedDateTimeInputs(
+    preview.occurred_at_utc,
+    timezone
+  )
+  const { nextSelectedTagIds, nextDraftTagNames } = syncAndMergeEnrichedTags({
+    queryClient,
+    preview,
+    currentSelectedTagIds: draft.selectedTagIds,
+    fallbackKnownTags,
+  })
+  const preserveRemark = draft.remarkUserEdited && Boolean(draft.remark.trim())
+  const next: MagicDraft = {
+    remark: preserveRemark ? draft.remark : preview.remark,
+    merchant: preview.merchant,
+    remarkUserEdited: preserveRemark,
+    category: preview.category,
+    date: dateTime?.date ?? draft.date,
+    time: dateTime?.time ?? draft.time,
+    note: preview.note ?? "",
+    selectedTagIds: nextSelectedTagIds,
+    draftTagNames: nextDraftTagNames,
+  }
+  const changed = new Set<string>()
+  if (draft.remark.trim() !== next.remark.trim()) changed.add("Remark")
+  if (draft.merchant !== next.merchant) changed.add("Merchant for reports")
+  if (draft.category !== next.category) changed.add("Category")
+  if (draft.date !== next.date) changed.add("Date")
+  if (draft.time !== next.time) changed.add("Time")
+  if (draft.note.trim() !== next.note.trim()) changed.add("Note")
+  if (
+    draft.selectedTagIds.length !== next.selectedTagIds.length ||
+    JSON.stringify([...draft.draftTagNames].sort()) !==
+      JSON.stringify([...next.draftTagNames].sort())
+  ) {
+    changed.add("Tags")
+  }
+  const message = changed.size
+    ? `Magic updated: ${[...changed].join(", ")}. Review before saving.`
+    : "Magic made no changes."
+  return { next, changed, message }
 }
 
 export function useMagicEnrich() {

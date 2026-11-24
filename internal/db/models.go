@@ -144,19 +144,21 @@ type EmailExtraction struct {
 func (EmailExtraction) TableName() string { return "email_extractions" }
 
 type Transaction struct {
-	ID             string  `gorm:"column:id;primaryKey" json:"id"`
-	SourceType     string  `gorm:"column:source_type;not null" json:"source_type"`
-	AccountID      *string `gorm:"column:account_id" json:"account_id"`
-	AmountMinor    int64   `gorm:"column:amount_minor;not null" json:"amount_minor"`
-	Currency       string  `gorm:"column:currency;not null" json:"currency"`
-	OccurredAtUtc  string  `gorm:"column:occurred_at_utc;not null" json:"occurred_at_utc"`
-	Merchant       string  `gorm:"column:merchant;not null" json:"merchant"`
-	Category       string  `gorm:"column:category;not null" json:"category"`
-	ManualOverride int     `gorm:"column:manual_override;not null;default:0" json:"manual_override"`
-	Reviewed       int     `gorm:"column:reviewed;not null" json:"reviewed"`
-	Note           *string `gorm:"column:note" json:"note"`
-	CreatedAtUtc   string  `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
-	UpdatedAtUtc   string  `gorm:"column:updated_at_utc;not null" json:"updated_at_utc"`
+	ID               string  `gorm:"column:id;primaryKey" json:"id"`
+	SourceType       string  `gorm:"column:source_type;not null" json:"source_type"`
+	AccountID        *string `gorm:"column:account_id" json:"account_id"`
+	AmountMinor      int64   `gorm:"column:amount_minor;not null" json:"amount_minor"`
+	Currency         string  `gorm:"column:currency;not null" json:"currency"`
+	OccurredAtUtc    string  `gorm:"column:occurred_at_utc;not null" json:"occurred_at_utc"`
+	Merchant         string  `gorm:"column:merchant;not null" json:"merchant"`
+	Remark           *string `gorm:"column:remark" json:"remark"`
+	RemarkUserEdited bool    `gorm:"column:remark_user_edited;not null;default:0" json:"remark_user_edited"`
+	Category         string  `gorm:"column:category;not null" json:"category"`
+	ManualOverride   int     `gorm:"column:manual_override;not null;default:0" json:"manual_override"`
+	Reviewed         int     `gorm:"column:reviewed;not null" json:"reviewed"`
+	Note             *string `gorm:"column:note" json:"note"`
+	CreatedAtUtc     string  `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
+	UpdatedAtUtc     string  `gorm:"column:updated_at_utc;not null" json:"updated_at_utc"`
 }
 
 func (Transaction) TableName() string { return "transactions" }

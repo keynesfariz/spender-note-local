@@ -268,7 +268,7 @@ export function TransactionList({
           <Input
             type="search"
             aria-label="Search transactions"
-            placeholder="Search merchant or note..."
+            placeholder="Search remarks, merchants, or notes..."
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
           />
@@ -550,6 +550,7 @@ export function TransactionList({
         ) : (
           <ul className="space-y-1">
             {transactions.map((tx, idx) => {
+              const title = tx.remark ?? tx.merchant
               const formattedAmount = formatMinorCurrency(
                 tx.amount_minor,
                 tx.currency
@@ -563,7 +564,7 @@ export function TransactionList({
                     className="flex items-center gap-2 rounded-lg p-3 transition-colors hover:bg-muted data-[selected=true]:bg-secondary/60 data-[selected=true]:hover:bg-secondary"
                   >
                     <Checkbox
-                      aria-label={`Select ${tx.merchant} (${formattedAmount})`}
+                      aria-label={`Select ${title} (${formattedAmount})`}
                       checked={isSelected}
                       onCheckedChange={(checked) =>
                         onToggleRow(tx.id, Boolean(checked))
@@ -573,14 +574,14 @@ export function TransactionList({
                     <Button
                       type="button"
                       variant="ghost"
-                      aria-label={`Inspect ${tx.merchant} (${formattedAmount})${tx.manual_override === 1 ? ", edited" : ""}`}
+                      aria-label={`Inspect ${title} (${formattedAmount})${tx.manual_override === 1 ? ", edited" : ""}`}
                       onClick={() => onSelectTransaction(tx.id)}
                       className="grid h-auto min-w-0 flex-1 grid-cols-1 items-start gap-x-4 gap-y-2 px-2 text-left font-normal whitespace-normal hover:bg-transparent sm:grid-cols-[minmax(0,1fr)_auto] dark:hover:bg-transparent"
                     >
                       <span className="min-w-0 space-y-1">
                         <span className="flex items-center gap-2">
                           <span className="truncate font-semibold">
-                            {tx.merchant}
+                            {title}
                           </span>
                           {tx.manual_override === 1 && (
                             <IconTooltip label="Edited">
@@ -647,7 +648,7 @@ export function TransactionList({
                           type="button"
                           variant="ghost"
                           size="icon"
-                          aria-label={`Mark ${tx.merchant} as reviewed`}
+                          aria-label={`Mark ${title} as reviewed`}
                           disabled={isMarkingReviewed || isDeleting}
                           onClick={() => onMarkReviewed([tx.id])}
                           className="rounded-full bg-amber-100 text-amber-800 hover:bg-amber-200 hover:text-amber-950 dark:bg-amber-950 dark:text-amber-300 dark:hover:bg-amber-900"

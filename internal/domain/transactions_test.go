@@ -765,11 +765,44 @@ func TestEnrichTransactionsFromSources_SynthesizesMultipleEmailsWithoutMutatingD
 	seedRichSourceEmail(t, gdb, txID, "em-3", "", "receipt", "receipt", 3000, "2026-11-23T05:16:00Z", "orders@gofood.co.id", "GoFood order confirmed", "Order confirmed for Sate Khas Senayan", `{}`)
 	seedRichSourceEmail(t, gdb, txID, "em-4", "", "receipt", "receipt", 4000, "2026-11-23T05:48:00Z", "receipts@gofood.co.id", "Order Receipt", "Sate Khas Senayan: 10x Sate Ayam, 1x Nasi Putih, 1x Es Teh Manis", `{"email_kind":"receipt","transaction_date":"2026-11-23","transaction_time":"12:48"}`)
 
+	for _, name := range []string{"historical-user", "historical-magic", "historical-category-edit"} {
+		if err := gdb.Create(&db.Transaction{
+			ID: name, SourceType: "gmail", AmountMinor: 1000, Currency: "IDR",
+			Merchant: "GoFood", Category: "Food", ManualOverride: 1,
+			OccurredAtUtc: "2026-11-22T05:00:00Z", CreatedAtUtc: "2026-11-22T05:00:00Z", UpdatedAtUtc: "2026-11-22T05:00:00Z",
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldRemark := "GoFood: Previous Restaurant"
+	saved, err := UpdateTransaction(gdb, "historical-user", UpdateTransactionInput{Remark: &oldRemark})
+	if err != nil || !saved.RemarkUserEdited || saved.Merchant != "GoFood" {
+		t.Fatalf("saving a remark should record its provenance and preserve the merchant: %+v, %v", saved, err)
+	}
+	fallbackTitle := "GoFood"
+	unchanged, err := UpdateTransaction(gdb, "historical-category-edit", UpdateTransactionInput{Remark: &fallbackTitle})
+	if err != nil || unchanged.Remark != nil || unchanged.RemarkUserEdited {
+		t.Fatalf("saving the unchanged imported title should not create a remark example: %+v, %v", unchanged, err)
+	}
+	normalizedMerchant, generated := "Actual Restaurant", false
+	normalized, err := UpdateTransaction(gdb, "historical-category-edit", UpdateTransactionInput{
+		Merchant: &normalizedMerchant, Remark: &fallbackTitle, RemarkUserEdited: &generated,
+	})
+	if err != nil || normalized.Remark == nil || *normalized.Remark != fallbackTitle ||
+		normalized.RemarkUserEdited || normalized.Merchant != normalizedMerchant {
+		t.Fatalf("normalizing the merchant should retain the explicit displayed title: %+v, %v", normalized, err)
+	}
+	magicRemark, magicEdited := "Magic title", false
+	if _, err := UpdateTransaction(gdb, "historical-magic", UpdateTransactionInput{Remark: &magicRemark, RemarkUserEdited: &magicEdited}); err != nil {
+		t.Fatal(err)
+	}
+
 	var capturedPrompt string
 	startEnrichTestServer(t, gdb, func(userPrompt string) map[string]any {
 		capturedPrompt = userPrompt
 		return map[string]any{
 			"merchant":         "Sate Khas Senayan",
+			"remark":           "GoFood: [vendor]",
 			"category":         "Street Food",
 			"tags":             []string{"weekend", "GoFood"},
 			"note":             "10x Sate Ayam, Nasi Putih, Es Teh Manis via GoFood",
@@ -783,10 +816,16 @@ func TestEnrichTransactionsFromSources_SynthesizesMultipleEmailsWithoutMutatingD
 	if err != nil {
 		t.Fatalf("EnrichTransactionsFromSources failed: %v", err)
 	}
-	for _, want := range []string{"GOPAY*GOFOOD charge", "GoPay payment", "GoFood order confirmed", "10x Sate Ayam", "Weekend, Work", "Dining Out"} {
+	for _, want := range []string{"GOPAY*GOFOOD charge", "GoPay payment", "GoFood order confirmed", "10x Sate Ayam", "Weekend, Work", "Dining Out", `Saved-Remark-Examples: ["GoFood: [vendor]"]`} {
 		if !strings.Contains(capturedPrompt, want) {
 			t.Fatalf("expected enrichment prompt to include %q, got:\n%s", want, capturedPrompt)
 		}
+	}
+	if strings.Contains(capturedPrompt, "Previous Restaurant") || strings.Contains(capturedPrompt, "Magic title") {
+		t.Fatalf("prompt contains a historical restaurant or an unedited Magic suggestion: %s", capturedPrompt)
+	}
+	if preview.Remark != "GoFood: Sate Khas Senayan" {
+		t.Fatalf("expected the suggested remark, got %q", preview.Remark)
 	}
 	if preview.Merchant != "Sate Khas Senayan" {
 		t.Fatalf("expected merchant Sate Khas Senayan, got %q", preview.Merchant)
@@ -813,8 +852,51 @@ func TestEnrichTransactionsFromSources_SynthesizesMultipleEmailsWithoutMutatingD
 	}
 	var persisted db.Transaction
 	gdb.Where("id = ?", txID).First(&persisted)
-	if persisted.Merchant != "GOPAY*GOFOOD" || persisted.Category != "Food" || persisted.Note != nil {
+	if persisted.Merchant != "GOPAY*GOFOOD" || persisted.Category != "Food" || persisted.Note != nil || persisted.Remark != nil {
 		t.Fatalf("expected transaction row untouched by preview, got %+v", persisted)
+	}
+}
+
+func TestEnrichTransactionsFromSources_UsesOnlyServiceWhenVendorIsMissing(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	stamp := "2026-11-23T05:14:00Z"
+	for _, id := range []string{"previous-order", "service-only-order"} {
+		if err := gdb.Create(&db.Transaction{
+			ID: id, SourceType: "gmail", AmountMinor: 45000, Currency: "IDR",
+			Merchant: "GrabFood", Category: "Food", OccurredAtUtc: stamp,
+			CreatedAtUtc: stamp, UpdatedAtUtc: stamp,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	correction := "GrabFood: Previous Restaurant"
+	if _, err := UpdateTransaction(gdb, "previous-order", UpdateTransactionInput{Remark: &correction}); err != nil {
+		t.Fatal(err)
+	}
+	seedRichSourceEmail(t, gdb, "service-only-order", "payment-email", "", "receipt", "receipt",
+		1000, stamp, "payments@grabfood.example", "GrabFood payment", "Your GrabFood payment was successful.", `{}`)
+
+	for _, tc := range []struct {
+		name     string
+		merchant string
+		remark   string
+	}{
+		{"copied placeholder", "GrabFood", "GrabFood: [vendor]"},
+		{"unsupported vendor", "Previous Restaurant", "GrabFood: Previous Restaurant"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			startEnrichTestServer(t, gdb, func(prompt string) map[string]any {
+				return map[string]any{"merchant": tc.merchant, "remark": tc.remark, "category": "Food"}
+			})
+
+			preview, err := EnrichTransactionsFromSources(gdb, context.Background(), []string{"service-only-order"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if preview.Remark != "GrabFood" {
+				t.Errorf("remark = %q, want service alone when the linked email omits the vendor", preview.Remark)
+			}
+		})
 	}
 }
 

@@ -162,6 +162,8 @@ export interface TransactionListItem {
   currency: string
   occurred_at_utc: string
   merchant: string
+  remark: string | null
+  remark_user_edited: boolean
   category: string
   tags: TransactionTagItem[]
   manual_override: 0 | 1
@@ -203,6 +205,7 @@ export interface TransactionDetailView {
 }
 
 export interface TransactionEnrichmentPreview {
+  remark: string
   merchant: string
   category: string
   note: string | null

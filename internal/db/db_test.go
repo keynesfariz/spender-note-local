@@ -39,8 +39,8 @@ func TestOpenDatabase_FreshSchemaDefaultsAndIndexes(t *testing.T) {
 	if err := gdb.Raw(`SELECT version, dirty FROM schema_migrations`).Scan(&mig).Error; err != nil {
 		t.Fatalf("read schema_migrations: %v", err)
 	}
-	if mig.Version != 4 || mig.Dirty {
-		t.Fatalf("expected schema_migrations version=4 dirty=false, got version=%d dirty=%v", mig.Version, mig.Dirty)
+	if mig.Version != 5 || mig.Dirty {
+		t.Fatalf("expected schema_migrations version=5 dirty=false, got version=%d dirty=%v", mig.Version, mig.Dirty)
 	}
 
 	for _, idxName := range []string{
@@ -135,8 +135,8 @@ func TestOpenDatabase_AutoBaselinesExistingDatabaseAndAppliesV2(t *testing.T) {
 	if err := migrated.Raw(`SELECT version, dirty FROM schema_migrations`).Scan(&mig).Error; err != nil {
 		t.Fatalf("read schema_migrations: %v", err)
 	}
-	if mig.Version != 4 || mig.Dirty {
-		t.Fatalf("expected version=4 dirty=false, got version=%d dirty=%v", mig.Version, mig.Dirty)
+	if mig.Version != 5 || mig.Dirty {
+		t.Fatalf("expected version=5 dirty=false, got version=%d dirty=%v", mig.Version, mig.Dirty)
 	}
 
 	if sqlDB, err := migrated.DB(); err == nil {

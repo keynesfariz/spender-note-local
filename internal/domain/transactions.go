@@ -57,6 +57,8 @@ type TransactionListItem struct {
 	Currency          string               `json:"currency"`
 	OccurredAtUtc     string               `json:"occurred_at_utc"`
 	Merchant          string               `json:"merchant"`
+	Remark            *string              `json:"remark"`
+	RemarkUserEdited  bool                 `json:"remark_user_edited"`
 	Category          string               `json:"category"`
 	Tags              []TransactionTagItem `json:"tags"`
 	ManualOverride    int                  `json:"manual_override"`
@@ -313,8 +315,8 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 	}
 	if q := strings.TrimSpace(params.Search); q != "" {
 		like := "%" + strings.ToLower(q) + "%"
-		conds = append(conds, "(LOWER(t.merchant) LIKE ? OR LOWER(COALESCE(t.note, '')) LIKE ?)")
-		args = append(args, like, like)
+		conds = append(conds, "(LOWER(t.merchant) LIKE ? OR LOWER(COALESCE(t.remark, '')) LIKE ? OR LOWER(COALESCE(t.note, '')) LIKE ?)")
+		args = append(args, like, like, like)
 	}
 	if params.UnreviewedOnly {
 		conds = append(conds, "t.reviewed = 0")
@@ -352,20 +354,22 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 	}
 
 	type rawTxRow struct {
-		ID             string  `gorm:"column:id"`
-		SourceType     string  `gorm:"column:source_type"`
-		AccountID      *string `gorm:"column:account_id"`
-		AccountName    *string `gorm:"column:account_name"`
-		AmountMinor    int64   `gorm:"column:amount_minor"`
-		Currency       string  `gorm:"column:currency"`
-		OccurredAtUtc  string  `gorm:"column:occurred_at_utc"`
-		Merchant       string  `gorm:"column:merchant"`
-		Category       string  `gorm:"column:category"`
-		ManualOverride int     `gorm:"column:manual_override"`
-		Reviewed       int     `gorm:"column:reviewed"`
-		Note           *string `gorm:"column:note"`
-		CreatedAtUtc   string  `gorm:"column:created_at_utc"`
-		UpdatedAtUtc   string  `gorm:"column:updated_at_utc"`
+		ID               string  `gorm:"column:id"`
+		SourceType       string  `gorm:"column:source_type"`
+		AccountID        *string `gorm:"column:account_id"`
+		AccountName      *string `gorm:"column:account_name"`
+		AmountMinor      int64   `gorm:"column:amount_minor"`
+		Currency         string  `gorm:"column:currency"`
+		OccurredAtUtc    string  `gorm:"column:occurred_at_utc"`
+		Merchant         string  `gorm:"column:merchant"`
+		Remark           *string `gorm:"column:remark"`
+		RemarkUserEdited bool    `gorm:"column:remark_user_edited"`
+		Category         string  `gorm:"column:category"`
+		ManualOverride   int     `gorm:"column:manual_override"`
+		Reviewed         int     `gorm:"column:reviewed"`
+		Note             *string `gorm:"column:note"`
+		CreatedAtUtc     string  `gorm:"column:created_at_utc"`
+		UpdatedAtUtc     string  `gorm:"column:updated_at_utc"`
 	}
 
 	offset := (page - 1) * pageSize
@@ -465,6 +469,8 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 			Currency:          r.Currency,
 			OccurredAtUtc:     r.OccurredAtUtc,
 			Merchant:          r.Merchant,
+			Remark:            r.Remark,
+			RemarkUserEdited:  r.RemarkUserEdited,
 			Category:          r.Category,
 			Tags:              tags,
 			ManualOverride:    r.ManualOverride,
@@ -503,6 +509,8 @@ func GetTransactionDetail(gdb *gorm.DB, id string) (*TransactionDetailView, erro
 		Currency         string  `gorm:"column:currency"`
 		OccurredAtUtc    string  `gorm:"column:occurred_at_utc"`
 		Merchant         string  `gorm:"column:merchant"`
+		Remark           *string `gorm:"column:remark"`
+		RemarkUserEdited bool    `gorm:"column:remark_user_edited"`
 		Category         string  `gorm:"column:category"`
 		ManualOverride   int     `gorm:"column:manual_override"`
 		Reviewed         int     `gorm:"column:reviewed"`
@@ -566,6 +574,8 @@ func GetTransactionDetail(gdb *gorm.DB, id string) (*TransactionDetailView, erro
 			Currency:          txRow.Currency,
 			OccurredAtUtc:     txRow.OccurredAtUtc,
 			Merchant:          txRow.Merchant,
+			Remark:            txRow.Remark,
+			RemarkUserEdited:  txRow.RemarkUserEdited,
 			Category:          txRow.Category,
 			Tags:              tags,
 			ManualOverride:    txRow.ManualOverride,

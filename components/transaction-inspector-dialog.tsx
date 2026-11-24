@@ -7,7 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type FormEvent,
+  type SubmitEvent,
 } from "react"
 
 import { DatePicker } from "@/components/date-picker"
@@ -247,6 +247,8 @@ function InspectorBody({
     [catListQuery.data, category]
   )
 
+  const detailAccountId = detailTx?.account_id
+  const detailAccountName = detailTx?.account_name
   const accountItems = useMemo(() => {
     const base = [
       { value: UNASSIGNED_ACCOUNT, label: "Unassigned" },
@@ -257,13 +259,13 @@ function InspectorBody({
       !accounts.some((acct) => acct.id === accountId)
     ) {
       const fallbackLabel =
-        detailTx?.account_id === accountId && detailTx.account_name
-          ? detailTx.account_name
+        detailAccountId === accountId && detailAccountName
+          ? detailAccountName
           : "Unknown account"
       base.push({ value: accountId, label: fallbackLabel })
     }
     return base
-  }, [accounts, accountId, detailTx?.account_id, detailTx?.account_name])
+  }, [accounts, accountId, detailAccountId, detailAccountName])
 
   if (detailQuery.isPending) {
     return (
@@ -290,7 +292,7 @@ function InspectorBody({
 
   const tx = detail.transaction
 
-  function handleSave(event: FormEvent) {
+  function handleSave(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
     if (isEnriching) return
     setFormError(null)

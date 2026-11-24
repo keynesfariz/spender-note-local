@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { useMemo, useState, type FormEvent } from "react"
+import { useMemo, useState, type SubmitEvent } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -93,7 +93,7 @@ export function LocaleSettingsTab({
     },
   })
 
-  function handleLocaleSubmit(e: FormEvent) {
+  function handleLocaleSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!countryCode) return
     localeMutation.mutate({

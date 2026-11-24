@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useMemo, useState, type FormEvent } from "react"
+import { useMemo, useState, type SubmitEvent } from "react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -64,11 +64,14 @@ export function MergeAccountDialog({
   const hasExcludedAccounts =
     sourceAccount !== null && allAccounts.length - 1 > eligibleTargets.length
 
-  useEffect(() => {
-    if (!open) return
-    setTargetId(eligibleTargets[0]?.id ?? "")
-    setFormError(null)
-  }, [open, eligibleTargets])
+  const [previous, setPrevious] = useState({ open: false, eligibleTargets })
+  if (previous.open !== open || previous.eligibleTargets !== eligibleTargets) {
+    setPrevious({ open, eligibleTargets })
+    if (open) {
+      setTargetId(eligibleTargets[0]?.id ?? "")
+      setFormError(null)
+    }
+  }
 
   const selectedTarget = eligibleTargets.find((a) => a.id === targetId) ?? null
 
@@ -101,7 +104,7 @@ export function MergeAccountDialog({
     },
   })
 
-  function handleSubmit(e: FormEvent) {
+  function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     setFormError(null)
     if (!sourceAccount || !selectedTarget) {

@@ -10,13 +10,19 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { parseAsStringLiteral, useQueryState } from "nuqs"
-import { useMemo, useState, type FormEvent } from "react"
+import { useMemo, useState, type SubmitEvent } from "react"
 
 import { CATEGORY_ICON_OPTIONS, DynamicIcon } from "@/components/dynamic-icon"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import {
   Dialog,
   DialogClose,
@@ -75,13 +81,16 @@ export function CategoriesTagsView() {
   const tags = useMemo(() => tagQuery.data ?? [], [tagQuery.data])
 
   const [catDialogOpen, setCatDialogOpen] = useState(false)
-  const [editingCategory, setEditingCategory] = useState<CategorySummary | null>(null)
+  const [editingCategory, setEditingCategory] =
+    useState<CategorySummary | null>(null)
   const [catName, setCatName] = useState("")
   const [catIcon, setCatIcon] = useState("Tag")
   const [catFormError, setCatFormError] = useState<string | null>(null)
 
-  const [deletingCategory, setDeletingCategory] = useState<CategorySummary | null>(null)
-  const [replacementCategory, setReplacementCategory] = useState(DEFAULT_CATEGORY)
+  const [deletingCategory, setDeletingCategory] =
+    useState<CategorySummary | null>(null)
+  const [replacementCategory, setReplacementCategory] =
+    useState(DEFAULT_CATEGORY)
   const [deleteCatError, setDeleteCatError] = useState<string | null>(null)
 
   const [tagDialogOpen, setTagDialogOpen] = useState(false)
@@ -218,7 +227,7 @@ export function CategoriesTagsView() {
     deleteTagMutation.reset()
   }
 
-  const handleCategorySubmit = (e: FormEvent) => {
+  const handleCategorySubmit = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
     const trimmed = catName.trim()
     if (!trimmed) {
@@ -233,7 +242,7 @@ export function CategoriesTagsView() {
     })
   }
 
-  const handleTagSubmit = (e: FormEvent) => {
+  const handleTagSubmit = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
     const trimmed = tagName.trim()
     if (!trimmed) {
@@ -441,8 +450,8 @@ export function CategoriesTagsView() {
           <CardHeader>
             <CardTitle>Tags</CardTitle>
             <CardDescription>
-              Tags are manual labels you can attach across multiple
-              transactions for flexible tracking.
+              Tags are manual labels you can attach across multiple transactions
+              for flexible tracking.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
@@ -647,7 +656,9 @@ export function CategoriesTagsView() {
             <Select
               items={replacementItems}
               value={replacementCategory}
-              onValueChange={(v) => setReplacementCategory(v ?? DEFAULT_CATEGORY)}
+              onValueChange={(v) =>
+                setReplacementCategory(v ?? DEFAULT_CATEGORY)
+              }
             >
               <SelectTrigger className="w-full">
                 <SelectValue />
@@ -690,9 +701,7 @@ export function CategoriesTagsView() {
         <DialogContent>
           <form onSubmit={handleTagSubmit} className="space-y-4">
             <DialogHeader>
-              <DialogTitle>
-                {editingTag ? "Rename tag" : "New tag"}
-              </DialogTitle>
+              <DialogTitle>{editingTag ? "Rename tag" : "New tag"}</DialogTitle>
               <DialogDescription>
                 {editingTag
                   ? "Renaming updates this tag across all transactions using it."

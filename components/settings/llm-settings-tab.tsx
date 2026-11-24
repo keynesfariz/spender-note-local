@@ -34,6 +34,7 @@ import {
 } from "@/lib/api"
 
 const DEFAULT_LLM_BASE_URL = "http://localhost:9931/v1"
+const EMPTY_MODELS: readonly string[] = []
 
 export function LlmSettingsTab({
   settings,
@@ -57,15 +58,14 @@ export function LlmSettingsTab({
   const [modelTestResult, setModelTestResult] = useState<string | null>(null)
   const [queueMessage, setQueueMessage] = useState<string | null>(null)
 
-  const baseUrl =
-    baseUrlDraft ?? settings?.llm_base_url ?? DEFAULT_LLM_BASE_URL
+  const baseUrl = baseUrlDraft ?? settings?.llm_base_url ?? DEFAULT_LLM_BASE_URL
   const llmModel = modelDraft ?? settings?.llm_model ?? ""
   const timeoutMs = timeoutMsDraft ?? settings?.llm_timeout_ms ?? 60000
 
   const activeProbe =
     probedState && probedState.baseUrl === baseUrl.trim() ? probedState : null
   const availableModels =
-    activeProbe?.availableModels ?? settings?.availableModels ?? []
+    activeProbe?.availableModels ?? settings?.availableModels ?? EMPTY_MODELS
   const serverReachable =
     activeProbe?.serverReachable ?? settings?.serverReachable ?? false
   const serverError = activeProbe?.serverError ?? settings?.serverError ?? null

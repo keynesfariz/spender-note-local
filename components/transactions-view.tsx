@@ -14,7 +14,7 @@ import {
   parseAsStringLiteral,
   useQueryStates,
 } from "nuqs"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 
 import { AddTransactionDialog } from "@/components/add-transaction-dialog"
 import { DateRangePicker } from "@/components/date-picker"
@@ -99,24 +99,29 @@ export function TransactionsView() {
   const unreviewedInRangeCount = txQuery.data?.unreviewedInRangeCount ?? 0
   const totalPages = Math.max(1, Math.ceil(totalCount / DEFAULT_PAGE_SIZE))
 
-  const clearSelection = useCallback(() => {
+  const clearSelection = () => {
     setSelectedIds((prev) => (prev.length === 0 ? prev : []))
-  }, [])
+  }
 
+  const pageOutOfRange = txQuery.isSuccess && activePage > totalPages
   useEffect(() => {
-    if (txQuery.isSuccess && activePage > totalPages) {
+    if (pageOutOfRange) {
       void setFilters({ page: totalPages })
-      clearSelection()
     }
-  }, [txQuery.isSuccess, activePage, totalPages, setFilters, clearSelection])
+  }, [pageOutOfRange, activePage, totalPages, setFilters])
 
-  useEffect(() => {
+  const [previousItems, setPreviousItems] = useState(items)
+  if (previousItems !== items) {
+    setPreviousItems(items)
     const visibleIds = new Set(items.map((tx) => tx.id))
-    setSelectedIds((prev) => {
-      const next = prev.filter((id) => visibleIds.has(id))
-      return next.length === prev.length ? prev : next
-    })
-  }, [items])
+    const visibleSelection = selectedIds.filter((id) => visibleIds.has(id))
+    if (visibleSelection.length !== selectedIds.length) {
+      setSelectedIds(visibleSelection)
+    }
+  }
+  if (pageOutOfRange && selectedIds.length > 0) {
+    setSelectedIds([])
+  }
 
   const markReviewedMutation = useMutation({
     mutationFn: markTransactionsReviewedApi,

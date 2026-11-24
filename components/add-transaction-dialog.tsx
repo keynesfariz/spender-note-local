@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useMemo, useState, type FormEvent } from "react"
+import { useMemo, useState, type SubmitEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
 import { DynamicIcon } from "@/components/dynamic-icon"
@@ -90,17 +90,20 @@ export function AddTransactionDialog({
     [accounts]
   )
 
-  useEffect(() => {
-    if (!open) return
-    setAmount("")
-    setMerchant("")
-    setCategory(DEFAULT_CATEGORY)
-    setSelectedTagIds([])
-    setAccountId(UNASSIGNED_ACCOUNT)
-    setDate(getTodayDateString(timezone))
-    setNote("")
-    setFormError(null)
-  }, [open, timezone])
+  const [previous, setPrevious] = useState({ open: false, timezone })
+  if (previous.open !== open || previous.timezone !== timezone) {
+    setPrevious({ open, timezone })
+    if (open) {
+      setAmount("")
+      setMerchant("")
+      setCategory(DEFAULT_CATEGORY)
+      setSelectedTagIds([])
+      setAccountId(UNASSIGNED_ACCOUNT)
+      setDate(getTodayDateString(timezone))
+      setNote("")
+      setFormError(null)
+    }
+  }
 
   const addMutation = useMutation({
     mutationFn: addManualTransactionApi,
@@ -115,7 +118,7 @@ export function AddTransactionDialog({
     },
   })
 
-  function handleSubmit(event: FormEvent) {
+  function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
     setFormError(null)
     try {

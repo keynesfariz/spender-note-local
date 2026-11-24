@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+import { useEffect, useMemo, useState, type SubmitEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
 import { DynamicIcon } from "@/components/dynamic-icon"
@@ -150,7 +150,9 @@ export function ManualMergeDialog({
     return base
   }, [accounts, accountId, primaryAccountId, primaryAccountName])
 
-  const lastInitKeyRef = useRef<string | null>(null)
+  const [previousSelectionKey, setPreviousSelectionKey] = useState<
+    string | null
+  >(null)
   const selectionKey =
     mode && transactions.length >= 2
       ? `${mode}:${transactions
@@ -159,47 +161,47 @@ export function ManualMergeDialog({
           .join(",")}`
       : null
 
-  useEffect(() => {
-    if (lastInitKeyRef.current === selectionKey) return
-    abortEnrichment()
-    lastInitKeyRef.current = selectionKey
-
+  if (previousSelectionKey !== selectionKey) {
+    setPreviousSelectionKey(selectionKey)
     setFormError(null)
     setStatusMessage(null)
     setKeepId("")
     setDraftTagNames((prev) => (prev.length === 0 ? prev : []))
 
-    if (mode !== "combine" || !selectionKey) {
-      setSelectedTagIds((prev) => (prev.length === 0 ? prev : []))
-      return
-    }
-
-    const seenTagIds = new Set<string>()
-    const unionTagIds: string[] = []
-    for (const tx of sortedByOccurred) {
-      for (const tag of tx.tags ?? []) {
-        if (!seenTagIds.has(tag.id)) {
-          seenTagIds.add(tag.id)
-          unionTagIds.push(tag.id)
+    if (mode === "combine" && selectionKey) {
+      const seenTagIds = new Set<string>()
+      const unionTagIds: string[] = []
+      for (const tx of sortedByOccurred) {
+        for (const tag of tx.tags ?? []) {
+          if (!seenTagIds.has(tag.id)) {
+            seenTagIds.add(tag.id)
+            unionTagIds.push(tag.id)
+          }
         }
       }
-    }
-    setSelectedTagIds(unionTagIds)
+      setSelectedTagIds(unionTagIds)
 
-    const primary = sortedByOccurred[0]
-    if (primary) {
-      setMerchant(primary.merchant)
-      setCategory(primary.category)
-      setAccountId(primary.account_id ?? UNASSIGNED_ACCOUNT)
-      setDate(utcToDateInputValue(primary.occurred_at_utc, timezone))
-      setTime(utcToTimeInputValue(primary.occurred_at_utc, timezone) || "00:00")
-      const combinedNotes = sortedByOccurred
-        .map((tx) => tx.note?.trim())
-        .filter((n): n is string => Boolean(n))
-        .join(" / ")
-      setNote(combinedNotes)
+      const primary = sortedByOccurred[0]
+      if (primary) {
+        setMerchant(primary.merchant)
+        setCategory(primary.category)
+        setAccountId(primary.account_id ?? UNASSIGNED_ACCOUNT)
+        setDate(utcToDateInputValue(primary.occurred_at_utc, timezone))
+        setTime(
+          utcToTimeInputValue(primary.occurred_at_utc, timezone) || "00:00"
+        )
+        const combinedNotes = sortedByOccurred
+          .map((tx) => tx.note?.trim())
+          .filter((n): n is string => Boolean(n))
+          .join(" / ")
+        setNote(combinedNotes)
+      }
+    } else {
+      setSelectedTagIds([])
     }
-  }, [selectionKey, mode, sortedByOccurred, timezone, abortEnrichment])
+  }
+
+  useEffect(() => abortEnrichment, [selectionKey, abortEnrichment])
 
   const invalidateAll = () => {
     invalidateTransactionRelatedQueries(queryClient)
@@ -277,7 +279,7 @@ export function ManualMergeDialog({
     })
   }
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (isEnriching) return
     setFormError(null)

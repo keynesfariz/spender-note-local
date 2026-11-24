@@ -129,7 +129,9 @@ export function TagMultiSelect({
     },
     onError: (err) => {
       setCreateError(
-        err instanceof Error && err.message ? err.message : "Failed to create tag."
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to create tag."
       )
     },
   })
@@ -251,7 +253,8 @@ export function TagMultiSelect({
                 <p className="py-2 text-center text-xs text-muted-foreground">
                   No tags yet. Type a name above to create one.
                 </p>
-              ) : filteredTags.length === 0 && filteredDraftNames.length === 0 ? (
+              ) : filteredTags.length === 0 &&
+                filteredDraftNames.length === 0 ? (
                 <p className="py-1.5 text-center text-xs text-muted-foreground">
                   No matching tags.
                 </p>

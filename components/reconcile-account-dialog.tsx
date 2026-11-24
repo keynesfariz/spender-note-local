@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useMemo, useState, type FormEvent } from "react"
+import { useMemo, useState, type SubmitEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -53,13 +53,20 @@ export function ReconcileAccountDialog({
       ? (account.billing_cycle?.last_statement_date ?? null)
       : null
 
-  useEffect(() => {
-    if (!open) return
-    setActualBalance("")
-    setAsOfDate(getTodayDateString(timezone))
-    setNote("")
-    setFormError(null)
-  }, [open, account, timezone])
+  const [previous, setPrevious] = useState({ open: false, account, timezone })
+  if (
+    previous.open !== open ||
+    previous.account !== account ||
+    previous.timezone !== timezone
+  ) {
+    setPrevious({ open, account, timezone })
+    if (open) {
+      setActualBalance("")
+      setAsOfDate(todayStr)
+      setNote("")
+      setFormError(null)
+    }
+  }
 
   const effectiveAsOfDate = asOfDate || todayStr
   const isToday = effectiveAsOfDate === todayStr
@@ -117,7 +124,7 @@ export function ReconcileAccountDialog({
     },
   })
 
-  function handleSubmit(e: FormEvent) {
+  function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     setFormError(null)
     if (!account) return

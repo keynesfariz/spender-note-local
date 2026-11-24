@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useMemo, useState, type FormEvent } from "react"
+import { useMemo, useState, type SubmitEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -170,7 +170,7 @@ export function GmailSendersTab({
     },
   })
 
-  function handleAddSender(e: FormEvent) {
+  function handleAddSender(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     setSenderMessage(null)
     let backfillUtc: string | undefined

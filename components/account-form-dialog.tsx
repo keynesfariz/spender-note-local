@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useState, type FormEvent } from "react"
+import { useState, type SubmitEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -34,6 +34,7 @@ import {
 } from "@/lib/api"
 import {
   dateInputToUtcIso,
+  getTodayDateString,
   minorToDecimalInput,
   parseDecimalToMinorClient,
   utcToDateInputValue,
@@ -92,8 +93,21 @@ export function AccountFormDialog({
   const [identifiers, setIdentifiers] = useState<IdentifierDraft[]>([])
   const [formError, setFormError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!open) return
+  const [previous, setPrevious] = useState({
+    open: false,
+    account,
+    currency,
+    timezone,
+  })
+  const inputsChanged =
+    previous.open !== open ||
+    previous.account !== account ||
+    previous.currency !== currency ||
+    previous.timezone !== timezone
+  if (inputsChanged) {
+    setPrevious({ open, account, currency, timezone })
+  }
+  if (inputsChanged && open) {
     setFormError(null)
     if (account) {
       setName(account.name)
@@ -122,7 +136,7 @@ export function AccountFormDialog({
       } else if (account.last4) {
         setIdentifiers([
           {
-            key: crypto.randomUUID(),
+            key: "legacy-last4",
             kind: "card_last4",
             value: account.last4,
           },
@@ -134,13 +148,11 @@ export function AccountFormDialog({
       setName("")
       setType("credit_card")
       setInitialBalance("0")
-      setInitialBalanceAsOf(
-        utcToDateInputValue(new Date().toISOString(), timezone)
-      )
+      setInitialBalanceAsOf(getTodayDateString(timezone))
       setStatementDay("")
       setIdentifiers([])
     }
-  }, [open, account, currency, timezone])
+  }
 
   const saveMutation = useMutation({
     mutationFn: async (payload: {
@@ -174,7 +186,7 @@ export function AccountFormDialog({
     },
   })
 
-  function handleSubmit(e: FormEvent) {
+  function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     setFormError(null)
 

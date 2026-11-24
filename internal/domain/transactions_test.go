@@ -838,7 +838,13 @@ func TestEnrichTransactionsFromSources_CardChargeTimestampAndSenderRoleHintPrece
 
 func TestEnrichTransactionsFromSources_MultipleTransactionsEarliestCardCharge(t *testing.T) {
 	gdb := openDomainTestDB(t)
-	for _, id := range []string{"tx-a", "tx-b"} {
+	// Include source-free transactions to check that the whole selection
+	// remains eligible even when only a few transactions contribute emails.
+	ids := []string{"tx-a", "tx-b"}
+	for i := 0; i < 49; i++ {
+		ids = append(ids, fmt.Sprintf("tx-other-%d", i))
+	}
+	for _, id := range ids {
 		if err := gdb.Create(&db.Transaction{
 			ID: id, SourceType: "gmail", AmountMinor: 25000, Currency: "IDR",
 			OccurredAtUtc: "2026-11-23T08:00:00Z", Merchant: id, Category: "Food",
@@ -864,7 +870,7 @@ func TestEnrichTransactionsFromSources_MultipleTransactionsEarliestCardCharge(t 
 		}
 	})
 
-	preview, err := EnrichTransactionsFromSources(gdb, context.Background(), []string{"tx-a", "tx-b"})
+	preview, err := EnrichTransactionsFromSources(gdb, context.Background(), ids)
 	if err != nil {
 		t.Fatalf("multi-tx enrich failed: %v", err)
 	}

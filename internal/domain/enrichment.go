@@ -142,9 +142,6 @@ func EnrichTransactionsFromSources(gdb *gorm.DB, ctx context.Context, transactio
 	if len(ids) == 0 {
 		return nil, &ValidationError{Message: "Select at least one transaction to enrich."}
 	}
-	if len(ids) > 50 {
-		return nil, &ValidationError{Message: "Select at most 50 transactions to enrich at once."}
-	}
 
 	var txCount int64
 	if err := gdb.Model(&db.Transaction{}).Where("id IN ?", ids).Count(&txCount).Error; err != nil {

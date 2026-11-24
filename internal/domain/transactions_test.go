@@ -1,8 +1,16 @@
 package domain
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"gorm.io/gorm"
 
 	"portspendernote/internal/db"
 )
@@ -597,5 +605,410 @@ func TestTransactions_DuplicateMergeAndCombinePreserveTagUnion(t *testing.T) {
 	}
 	if len(combined.Tags) != 3 || combined.Tags[0].Name != "Food" || combined.Tags[1].Name != "Japan" || combined.Tags[2].Name != "Reimbursable" {
 		t.Fatalf("expected union tags [Food, Japan, Reimbursable] on combine, got %+v", combined.Tags)
+	}
+}
+
+func seedRichSourceEmail(
+	t *testing.T,
+	gdb *gorm.DB,
+	txID, emailID, senderID, role, emailKind string,
+	internalMs int64,
+	receivedAtUtc, fromAddr, subject, cleanedText, rawJSON string,
+) {
+	t.Helper()
+	var sPtr *string
+	if senderID != "" {
+		sPtr = &senderID
+	}
+	if err := gdb.Create(&db.RawEmail{
+		ID:             emailID,
+		GmailMessageID: "gmail-" + emailID,
+		SenderID:       sPtr,
+		FromAddress:    fromAddr,
+		Subject:        subject,
+		CleanedText:    cleanedText,
+		InternalDateMs: internalMs,
+		ReceivedAtUtc:  receivedAtUtc,
+		Status:         "extracted",
+	}).Error; err != nil {
+		t.Fatalf("seed raw_email %s: %v", emailID, err)
+	}
+	amt := int64(50000)
+	cur := "IDR"
+	if err := gdb.Create(&db.EmailExtraction{
+		ID:              "ext-" + emailID,
+		EmailID:         emailID,
+		EmailKind:       emailKind,
+		AmountMinor:     &amt,
+		Currency:        &cur,
+		OccurredAtUtc:   &receivedAtUtc,
+		ExtractionModel: "sync",
+		RawLlmJSON:      rawJSON,
+	}).Error; err != nil {
+		t.Fatalf("seed email_extraction %s: %v", emailID, err)
+	}
+	if err := gdb.Create(&db.TransactionSource{
+		ID:            "src-" + emailID,
+		TransactionID: txID,
+		EmailID:       emailID,
+		Role:          role,
+		MatchScore:    1.0,
+		MatchState:    "confirmed",
+	}).Error; err != nil {
+		t.Fatalf("seed transaction_source %s: %v", emailID, err)
+	}
+}
+
+func startEnrichTestServer(t *testing.T, gdb *gorm.DB, handler func(userPrompt string) map[string]any) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var userPrompt string
+		for _, m := range body.Messages {
+			if m.Role == "user" {
+				userPrompt = m.Content
+			}
+		}
+		payload := handler(userPrompt)
+		raw, _ := json.Marshal(payload)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": string(raw)}},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	model := "test-enrich-model"
+	if err := gdb.Model(&db.AppSetting{}).Where("id = 1").Updates(map[string]any{
+		"llm_base_url":   srv.URL + "/v1",
+		"llm_model":      &model,
+		"llm_timeout_ms": 5000,
+	}).Error; err != nil {
+		t.Fatalf("update app_settings for test llm: %v", err)
+	}
+}
+
+func TestEnrichTransactionsFromSources_SynthesizesMultipleEmailsWithoutMutatingDB(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	tagWeekend, err := CreateTag(gdb, CreateTagInput{Name: "Weekend"})
+	if err != nil {
+		t.Fatalf("create Weekend tag: %v", err)
+	}
+	if _, err := CreateTag(gdb, CreateTagInput{Name: "Work"}); err != nil {
+		t.Fatalf("create Work tag: %v", err)
+	}
+
+	txID := "tx-food-4"
+	if err := gdb.Create(&db.Transaction{
+		ID:            txID,
+		SourceType:    "gmail",
+		AmountMinor:   75000,
+		Currency:      "IDR",
+		OccurredAtUtc: "2026-11-23T05:14:00Z",
+		Merchant:      "GOPAY*GOFOOD",
+		Category:      "Food",
+		CreatedAtUtc:  "2026-11-23T05:14:00Z",
+		UpdatedAtUtc:  "2026-11-23T05:14:00Z",
+	}).Error; err != nil {
+		t.Fatalf("seed transaction: %v", err)
+	}
+
+	seedRichSourceEmail(t, gdb, txID, "em-1", "", "card_charge", "card_charge", 1000, "2026-11-23T05:14:00Z", "alerts@bank.id", "Card charge IDR 75,000", "GOPAY*GOFOOD charge", `{"email_kind":"card_charge","transaction_date":"2026-11-23","transaction_time":"12:14"}`)
+	seedRichSourceEmail(t, gdb, txID, "em-2", "", "receipt", "receipt", 2000, "2026-11-23T05:15:00Z", "wallet@gopay.co.id", "GoPay payment", "Paid Rp75.000", `{}`)
+	seedRichSourceEmail(t, gdb, txID, "em-3", "", "receipt", "receipt", 3000, "2026-11-23T05:16:00Z", "orders@gofood.co.id", "GoFood order confirmed", "Order confirmed for Sate Khas Senayan", `{}`)
+	seedRichSourceEmail(t, gdb, txID, "em-4", "", "receipt", "receipt", 4000, "2026-11-23T05:48:00Z", "receipts@gofood.co.id", "Order Receipt", "Sate Khas Senayan: 10x Sate Ayam, 1x Nasi Putih, 1x Es Teh Manis", `{"email_kind":"receipt","transaction_date":"2026-11-23","transaction_time":"12:48"}`)
+
+	var capturedPrompt string
+	startEnrichTestServer(t, gdb, func(userPrompt string) map[string]any {
+		capturedPrompt = userPrompt
+		return map[string]any{
+			"merchant":         "Sate Khas Senayan",
+			"category":         "Street Food",
+			"tags":             []string{"weekend", "GoFood"},
+			"note":             "10x Sate Ayam, Nasi Putih, Es Teh Manis via GoFood",
+			"transaction_date": nil,
+			"transaction_time": nil,
+			"timezone_offset":  nil,
+		}
+	})
+
+	preview, err := EnrichTransactionsFromSources(gdb, context.Background(), []string{txID})
+	if err != nil {
+		t.Fatalf("EnrichTransactionsFromSources failed: %v", err)
+	}
+	for _, want := range []string{"GOPAY*GOFOOD charge", "GoPay payment", "GoFood order confirmed", "10x Sate Ayam", "Weekend, Work", "Dining Out"} {
+		if !strings.Contains(capturedPrompt, want) {
+			t.Fatalf("expected enrichment prompt to include %q, got:\n%s", want, capturedPrompt)
+		}
+	}
+	if preview.Merchant != "Sate Khas Senayan" {
+		t.Fatalf("expected merchant Sate Khas Senayan, got %q", preview.Merchant)
+	}
+	if preview.Category != "Other" {
+		t.Fatalf("expected unknown category coerced to Other, got %q", preview.Category)
+	}
+	if preview.Note == nil || *preview.Note != "10x Sate Ayam, Nasi Putih, Es Teh Manis via GoFood" {
+		t.Fatalf("unexpected note: %v", preview.Note)
+	}
+	if preview.OccurredAtUtc == nil || *preview.OccurredAtUtc != "2026-11-23T05:14:00Z" {
+		t.Fatalf("expected card_charge timestamp 2026-11-23T05:14:00Z, got %v", preview.OccurredAtUtc)
+	}
+	if len(preview.ExistingTags) != 1 || preview.ExistingTags[0].ID != tagWeekend.ID || preview.ExistingTags[0].Name != "Weekend" {
+		t.Fatalf("expected matched existing tag [Weekend], got %+v", preview.ExistingTags)
+	}
+	if len(preview.DraftTagNames) != 1 || preview.DraftTagNames[0] != "GoFood" {
+		t.Fatalf("expected draft tag [GoFood], got %v", preview.DraftTagNames)
+	}
+
+	tagsAfter, _ := ListTags(gdb)
+	if len(tagsAfter) != 2 {
+		t.Fatalf("expected preview not to insert tags in DB, got %d tags", len(tagsAfter))
+	}
+	var persisted db.Transaction
+	gdb.Where("id = ?", txID).First(&persisted)
+	if persisted.Merchant != "GOPAY*GOFOOD" || persisted.Category != "Food" || persisted.Note != nil {
+		t.Fatalf("expected transaction row untouched by preview, got %+v", persisted)
+	}
+}
+
+func TestEnrichTransactionsFromSources_CardChargeTimestampAndSenderRoleHintPrecedence(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	s1 := db.Sender{ID: "snd-1", Email: "bank@test.id", RoleHint: "auto", Enabled: 1, BackfillFromUtc: "2026-11-01T00:00:00Z"}
+	s2 := db.Sender{ID: "snd-2", Email: "shop@test.id", RoleHint: "auto", Enabled: 1, BackfillFromUtc: "2026-11-01T00:00:00Z"}
+	if err := gdb.Create(&s1).Error; err != nil {
+		t.Fatalf("create s1: %v", err)
+	}
+	if err := gdb.Create(&s2).Error; err != nil {
+		t.Fatalf("create s2: %v", err)
+	}
+
+	txID := "tx-role-hint"
+	if err := gdb.Create(&db.Transaction{
+		ID: txID, SourceType: "gmail", AmountMinor: 50000, Currency: "IDR",
+		OccurredAtUtc: "2026-11-23T05:14:00Z", Merchant: "MERCHANT", Category: "Food",
+		CreatedAtUtc: "2026-11-23T05:14:00Z", UpdatedAtUtc: "2026-11-23T05:14:00Z",
+	}).Error; err != nil {
+		t.Fatalf("create tx: %v", err)
+	}
+
+	seedRichSourceEmail(t, gdb, txID, "er-1", s1.ID, "card_charge", "card_charge", 1000, "2026-11-23T05:14:00Z", s1.Email, "Alert", "Charge at 12:14", `{"transaction_date":"2026-11-23","transaction_time":"12:14","timezone_offset":null}`)
+	seedRichSourceEmail(t, gdb, txID, "er-2", s2.ID, "receipt", "receipt", 2000, "2026-11-23T05:48:00Z", s2.Email, "Receipt", "Delivered at 12:48", `{"transaction_date":"2026-11-23","transaction_time":"12:48","timezone_offset":null}`)
+
+	startEnrichTestServer(t, gdb, func(userPrompt string) map[string]any {
+		return map[string]any{
+			"merchant":         "Bakery",
+			"category":         "Food",
+			"tags":             []string{},
+			"note":             nil,
+			"transaction_date": "2026-11-23",
+			"transaction_time": "12:48",
+			"timezone_offset":  nil,
+		}
+	})
+
+	p1, err := EnrichTransactionsFromSources(gdb, context.Background(), []string{txID})
+	if err != nil {
+		t.Fatalf("first enrich: %v", err)
+	}
+	if p1.OccurredAtUtc == nil || *p1.OccurredAtUtc != "2026-11-23T05:14:00Z" {
+		t.Fatalf("expected 12:14 Jakarta (05:14Z) from card_charge role, got %v", p1.OccurredAtUtc)
+	}
+
+	gdb.Model(&db.Sender{}).Where("id = ?", s1.ID).Update("role_hint", "receipt")
+	gdb.Model(&db.Sender{}).Where("id = ?", s2.ID).Update("role_hint", "card_charge")
+
+	p2, err := EnrichTransactionsFromSources(gdb, context.Background(), []string{txID})
+	if err != nil {
+		t.Fatalf("second enrich: %v", err)
+	}
+	if p2.OccurredAtUtc == nil || *p2.OccurredAtUtc != "2026-11-23T05:48:00Z" {
+		t.Fatalf("expected sender role_hint to swap priority to 12:48 Jakarta (05:48Z), got %v", p2.OccurredAtUtc)
+	}
+}
+
+func TestEnrichTransactionsFromSources_MultipleTransactionsEarliestCardCharge(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	for _, id := range []string{"tx-a", "tx-b"} {
+		if err := gdb.Create(&db.Transaction{
+			ID: id, SourceType: "gmail", AmountMinor: 25000, Currency: "IDR",
+			OccurredAtUtc: "2026-11-23T08:00:00Z", Merchant: id, Category: "Food",
+			CreatedAtUtc: "2026-11-23T08:00:00Z", UpdatedAtUtc: "2026-11-23T08:00:00Z",
+		}).Error; err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	seedRichSourceEmail(t, gdb, "tx-a", "em-a", "", "card_charge", "card_charge", 2000, "2026-11-23T07:30:00Z", "bank@test.id", "Later Charge", "Body A", `{"transaction_date":"2026-11-23","transaction_time":"14:30"}`)
+	seedRichSourceEmail(t, gdb, "tx-b", "em-b", "", "card_charge", "card_charge", 1000, "2026-11-23T04:05:00Z", "bank@test.id", "Earlier Charge", "Body B", `{"transaction_date":"2026-11-23","transaction_time":"11:05"}`)
+
+	var capturedPrompt string
+	startEnrichTestServer(t, gdb, func(userPrompt string) map[string]any {
+		capturedPrompt = userPrompt
+		return map[string]any{
+			"merchant":         "Merged Kitchen",
+			"category":         "Dining Out",
+			"tags":             []string{},
+			"note":             "Order + tip",
+			"transaction_date": "2026-11-23",
+			"transaction_time": "14:45",
+			"timezone_offset":  nil,
+		}
+	})
+
+	preview, err := EnrichTransactionsFromSources(gdb, context.Background(), []string{"tx-a", "tx-b"})
+	if err != nil {
+		t.Fatalf("multi-tx enrich failed: %v", err)
+	}
+	if !strings.Contains(capturedPrompt, "Body A") || !strings.Contains(capturedPrompt, "Body B") {
+		t.Fatalf("expected both transactions' emails in prompt, got:\n%s", capturedPrompt)
+	}
+	if preview.OccurredAtUtc == nil || *preview.OccurredAtUtc != "2026-11-23T04:05:00Z" {
+		t.Fatalf("expected earliest card_charge timestamp 04:05:00Z, got %v", preview.OccurredAtUtc)
+	}
+}
+
+func TestEnrichTransactionsFromSources_MissingCardChargeTimeFallsBackToLlmOrNil(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	txID := "tx-fallback-ts"
+	if err := gdb.Create(&db.Transaction{
+		ID: txID, SourceType: "gmail", AmountMinor: 40000, Currency: "IDR",
+		OccurredAtUtc: "2026-11-23T05:00:00Z", Merchant: "Cafe", Category: "Food",
+		CreatedAtUtc: "2026-11-23T05:00:00Z", UpdatedAtUtc: "2026-11-23T05:00:00Z",
+	}).Error; err != nil {
+		t.Fatalf("create tx: %v", err)
+	}
+	seedRichSourceEmail(t, gdb, txID, "em-notime", "", "card_charge", "card_charge", 1000, "2026-11-23T05:00:00Z", "bank@test.id", "Charge", "No clock time in raw json", `{"transaction_date":"2026-11-23","transaction_time":null}`)
+	seedRichSourceEmail(t, gdb, txID, "em-rcpt", "", "receipt", "receipt", 2000, "2026-11-23T12:20:00Z", "shop@test.id", "Receipt", "Paid at 19:15", `{"transaction_date":"2026-11-23","transaction_time":"19:15"}`)
+
+	var llmDate, llmTime any = "2026-11-23", "19:15"
+	startEnrichTestServer(t, gdb, func(string) map[string]any {
+		return map[string]any{
+			"merchant":         "Cafe Cozy",
+			"category":         "Dining Out",
+			"tags":             []string{},
+			"note":             nil,
+			"transaction_date": llmDate,
+			"transaction_time": llmTime,
+			"timezone_offset":  nil,
+		}
+	})
+
+	withLlmTime, err := EnrichTransactionsFromSources(gdb, context.Background(), []string{txID})
+	if err != nil {
+		t.Fatalf("fallback enrich: %v", err)
+	}
+	if withLlmTime.OccurredAtUtc == nil || *withLlmTime.OccurredAtUtc != "2026-11-23T12:15:00Z" {
+		t.Fatalf("expected fallback to LLM time 12:15:00Z rather than card_charge sync fallback 05:00:00Z, got %v", withLlmTime.OccurredAtUtc)
+	}
+
+	llmDate, llmTime = "2026-11-23", nil
+	withNilTime, err := EnrichTransactionsFromSources(gdb, context.Background(), []string{txID})
+	if err != nil {
+		t.Fatalf("nil-time enrich: %v", err)
+	}
+	if withNilTime.OccurredAtUtc != nil {
+		t.Fatalf("expected nil OccurredAtUtc when neither card_charge nor LLM has clock time, got %q", *withNilTime.OccurredAtUtc)
+	}
+}
+
+func TestEnrichTransactionsFromSources_ValidationErrors(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	manualTx, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor: 10000, OccurredAtUtc: "2026-11-23T05:00:00Z", Merchant: "Cash",
+	})
+	if err != nil {
+		t.Fatalf("CreateManualTransaction: %v", err)
+	}
+
+	assertValidationErr := func(err error, desc string) {
+		t.Helper()
+		var ve *ValidationError
+		if err == nil || !errors.As(err, &ve) {
+			t.Fatalf("%s: expected ValidationError, got %T: %v", desc, err, err)
+		}
+	}
+
+	_, err = EnrichTransactionsFromSources(gdb, context.Background(), []string{})
+	assertValidationErr(err, "empty transaction IDs")
+
+	_, err = EnrichTransactionsFromSources(gdb, context.Background(), []string{"does-not-exist"})
+	assertValidationErr(err, "missing transaction")
+
+	_, err = EnrichTransactionsFromSources(gdb, context.Background(), []string{manualTx.ID})
+	assertValidationErr(err, "no model configured / zero emails")
+
+	model := "qwen2.5"
+	gdb.Model(&db.AppSetting{}).Where("id = 1").Update("llm_model", &model)
+	_, err = EnrichTransactionsFromSources(gdb, context.Background(), []string{manualTx.ID})
+	assertValidationErr(err, "manual tx with zero emails")
+}
+
+func TestUpdateAndCombineTransactions_AtomicTagNamesPersistence(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	acctA := seedTestAccount(t, gdb, "acct-a", "GoPay", "IDR")
+	tagWeekend, _ := CreateTag(gdb, CreateTagInput{Name: "Weekend"})
+	tagWork, _ := CreateTag(gdb, CreateTagInput{Name: "Work"})
+
+	tx1, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor: 20000, OccurredAtUtc: "2026-11-23T05:00:00Z", Merchant: "Lunch", AccountID: &acctA, TagIDs: []string{tagWork.ID},
+	})
+	if err != nil {
+		t.Fatalf("create tx1: %v", err)
+	}
+
+	updated, err := UpdateTransaction(gdb, tx1.ID, UpdateTransactionInput{
+		HasTagIDs: true,
+		TagIDs:    []string{tagWork.ID},
+		TagNames:  []string{"GoFood", "weekend", " GoFood "},
+	})
+	if err != nil {
+		t.Fatalf("UpdateTransaction with TagNames: %v", err)
+	}
+	if len(updated.Tags) != 3 || updated.Tags[0].Name != "GoFood" || updated.Tags[1].Name != "Weekend" || updated.Tags[2].Name != "Work" {
+		t.Fatalf("expected [GoFood, Weekend, Work], got %+v", updated.Tags)
+	}
+	allTags, _ := ListTags(gdb)
+	if len(allTags) != 3 {
+		t.Fatalf("expected 3 total tags without duplicates, got %d", len(allTags))
+	}
+
+	badCat := "NoSuchCategory"
+	if _, err := UpdateTransaction(gdb, tx1.ID, UpdateTransactionInput{
+		Category:  &badCat,
+		HasTagIDs: true,
+		TagNames:  []string{"RollbackTag"},
+	}); err == nil {
+		t.Fatalf("expected UpdateTransaction to fail for invalid category")
+	}
+	allTagsAfterFail, _ := ListTags(gdb)
+	if len(allTagsAfterFail) != 3 {
+		t.Fatalf("expected RollbackTag not to persist on transaction failure, got %d tags", len(allTagsAfterFail))
+	}
+
+	tx2, _ := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor: 10000, OccurredAtUtc: "2026-11-23T06:00:00Z", Merchant: "Drink", AccountID: &acctA, TagIDs: []string{tagWeekend.ID},
+	})
+	combined, err := CombineTransactions(gdb, CombineTransactionsInput{
+		TransactionIDs: []string{tx1.ID, tx2.ID},
+		Merchant:       "Lunch + Drink",
+		OccurredAtUtc:  "2026-11-23T05:00:00Z",
+		HasTagIDs:      true,
+		TagIDs:         []string{tagWork.ID},
+		TagNames:       []string{"SplitBill", "weekend"},
+	})
+	if err != nil {
+		t.Fatalf("CombineTransactions with TagNames: %v", err)
+	}
+	if len(combined.Tags) != 3 || combined.Tags[0].Name != "SplitBill" || combined.Tags[1].Name != "Weekend" || combined.Tags[2].Name != "Work" {
+		t.Fatalf("expected combined tags [SplitBill, Weekend, Work], got %+v", combined.Tags)
 	}
 }

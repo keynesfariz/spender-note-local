@@ -60,6 +60,47 @@ func replaceTransactionTags(tx *gorm.DB, transactionID string, rawTagIDs []strin
 	return tx.Create(&rows).Error
 }
 
+func resolveAndReplaceTransactionTags(tx *gorm.DB, transactionID string, rawTagIDs []string, rawTagNames []string, nowUtc string) error {
+	allTagIDs := make([]string, 0, len(rawTagIDs)+len(rawTagNames))
+	allTagIDs = append(allTagIDs, rawTagIDs...)
+
+	seenLower := make(map[string]struct{}, len(rawTagNames))
+	for _, rawName := range rawTagNames {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			continue
+		}
+		norm := strings.ToLower(name)
+		if _, seen := seenLower[norm]; seen {
+			continue
+		}
+		seenLower[norm] = struct{}{}
+
+		var existing db.Tag
+		err := tx.Where("normalized_name = ?", norm).First(&existing).Error
+		if err == nil {
+			allTagIDs = append(allTagIDs, existing.ID)
+			continue
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		createdID := uuid.NewString()
+		if err := tx.Create(&db.Tag{
+			ID:             createdID,
+			Name:           name,
+			NormalizedName: norm,
+			CreatedAtUtc:   nowUtc,
+		}).Error; err != nil {
+			return err
+		}
+		allTagIDs = append(allTagIDs, createdID)
+	}
+
+	return replaceTransactionTags(tx, transactionID, allTagIDs, nowUtc)
+}
+
 func copyTransactionTags(tx *gorm.DB, targetTxID string, sourceTxIDs []string, nowUtc string) error {
 	if len(sourceTxIDs) == 0 {
 		return nil
@@ -158,6 +199,7 @@ type UpdateTransactionInput struct {
 	Category               *string  `json:"category"`
 	HasTagIDs              bool     `json:"-"`
 	TagIDs                 []string `json:"tag_ids"`
+	TagNames               []string `json:"tag_names"`
 	HasAccountID           bool     `json:"-"`
 	AccountID              *string  `json:"account_id"`
 	HasNote                bool     `json:"-"`
@@ -266,7 +308,7 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 		}
 
 		if patch.HasTagIDs {
-			if err := replaceTransactionTags(tx, id, patch.TagIDs, nowUtc); err != nil {
+			if err := resolveAndReplaceTransactionTags(tx, id, patch.TagIDs, patch.TagNames, nowUtc); err != nil {
 				return err
 			}
 		}
@@ -441,6 +483,9 @@ type CombineTransactionsInput struct {
 	TransactionIDs []string `json:"transactionIds"`
 	Merchant       string   `json:"merchant"`
 	Category       *string  `json:"category"`
+	HasTagIDs      bool     `json:"-"`
+	TagIDs         []string `json:"tag_ids"`
+	TagNames       []string `json:"tag_names"`
 	HasAccountID   bool     `json:"-"`
 	AccountID      *string  `json:"account_id"`
 	OccurredAtUtc  string   `json:"occurred_at_utc"`
@@ -517,8 +562,14 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 		absorbedIDs := ids[1:]
 
 		nowUtc := NowUtcIsoSeconds()
-		if err := copyTransactionTags(tx, survivorID, absorbedIDs, nowUtc); err != nil {
-			return err
+		if input.HasTagIDs {
+			if err := resolveAndReplaceTransactionTags(tx, survivorID, input.TagIDs, input.TagNames, nowUtc); err != nil {
+				return err
+			}
+		} else {
+			if err := copyTransactionTags(tx, survivorID, absorbedIDs, nowUtc); err != nil {
+				return err
+			}
 		}
 
 		if err := tx.Model(&db.TransactionSource{}).Where("transaction_id IN ?", absorbedIDs).Updates(map[string]any{

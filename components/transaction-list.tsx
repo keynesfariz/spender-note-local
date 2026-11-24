@@ -1,7 +1,15 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
-import { CheckCircle2Icon } from "lucide-react"
+import {
+  CheckCircle2Icon,
+  Clock3Icon,
+  CopyIcon,
+  MergeIcon,
+  PencilIcon,
+  RotateCcwIcon,
+  Trash2Icon,
+} from "lucide-react"
 import { useMemo } from "react"
 
 import { DynamicIcon } from "@/components/dynamic-icon"
@@ -33,6 +41,7 @@ import {
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
+import { IconTooltip } from "@/components/ui/tooltip"
 import {
   categoriesQuery,
   tagsQuery,
@@ -125,6 +134,7 @@ export function TransactionList({
   onAccountIdChange,
   unreviewedOnly,
   onUnreviewedOnlyChange,
+  onResetFilters,
   selectedIds,
   onToggleRow,
   onToggleSelectAllPage,
@@ -159,6 +169,7 @@ export function TransactionList({
   onAccountIdChange: (value: string) => void
   unreviewedOnly: boolean
   onUnreviewedOnlyChange: (value: boolean) => void
+  onResetFilters: () => void
   selectedIds: string[]
   onToggleRow: (id: string, checked: boolean) => void
   onToggleSelectAllPage: (checked: boolean) => void
@@ -253,7 +264,7 @@ export function TransactionList({
   return (
     <Card>
       <CardHeader className="space-y-3">
-        <div className="grid gap-3 md:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))_auto]">
           <Input
             type="search"
             aria-label="Search transactions"
@@ -323,142 +334,190 @@ export function TransactionList({
             </SelectContent>
           </Select>
 
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="unreviewed-filter"
-              checked={unreviewedOnly}
-              onCheckedChange={(checked) =>
-                onUnreviewedOnlyChange(Boolean(checked))
+          <div className="gap-y- flex flex-wrap items-center gap-x-4 sm:col-span-2 lg:col-span-1">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="unreviewed-filter"
+                checked={unreviewedOnly}
+                onCheckedChange={(checked) =>
+                  onUnreviewedOnlyChange(Boolean(checked))
+                }
+              />
+              <Label htmlFor="unreviewed-filter">Needs review</Label>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onResetFilters}
+              disabled={
+                !search &&
+                category === "all" &&
+                tag === "all" &&
+                accountId === "all" &&
+                !unreviewedOnly
               }
-            />
-            <Label htmlFor="unreviewed-filter">Needs review</Label>
+            >
+              <RotateCcwIcon aria-hidden="true" />
+              Reset filters
+            </Button>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2">
-          <div className="flex items-center gap-2.5">
-            <Checkbox
-              id="select-all-page"
-              aria-label="Select all transactions on this page"
-              disabled={transactions.length === 0 || isLoading}
-              checked={allOnPageSelected}
-              indeterminate={someOnPageSelected}
-              onCheckedChange={(checked) =>
-                onToggleSelectAllPage(Boolean(checked))
-              }
-            />
-            <Label
-              htmlFor="select-all-page"
-              className="text-xs font-normal text-muted-foreground"
-            >
-              {selectedTransactions.length > 0
-                ? `${selectedTransactions.length} selected`
-                : "Select all on page"}
-            </Label>
-          </div>
-
-          {selectedTransactions.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
+        <div className="space-y-2 rounded-lg border bg-muted/40 px-3 py-3">
+          <div
+            className="flex flex-wrap items-center gap-2"
+            role="group"
+            aria-label="Bulk actions"
+          >
+            <IconTooltip label="Select all on page">
+              <Checkbox
+                aria-label="Select all on page"
+                className="mr-2"
+                disabled={transactions.length === 0 || isLoading}
+                checked={allOnPageSelected}
+                indeterminate={someOnPageSelected}
+                onCheckedChange={(checked) =>
+                  onToggleSelectAllPage(Boolean(checked))
+                }
+              />
+            </IconTooltip>
+            <IconTooltip label="Mark reviewed">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={isMarkingReviewed || isDeleting}
+                className="w-8 px-0 md:w-auto md:px-2.5"
+                disabled={
+                  !selectedTransactions.some((tx) => tx.reviewed === 0) ||
+                  isMarkingReviewed ||
+                  isDeleting
+                }
                 onClick={() =>
                   onMarkReviewed(selectedTransactions.map((tx) => tx.id))
                 }
               >
-                {isMarkingReviewed ? "Marking..." : "Mark reviewed"}
+                <CheckCircle2Icon aria-hidden="true" />
+                <span className="sr-only md:not-sr-only">
+                  {isMarkingReviewed ? "Marking..." : "Mark reviewed"}
+                </span>
               </Button>
+            </IconTooltip>
+            <IconTooltip label="Duplicate merge">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
+                className="w-8 px-0 md:w-auto md:px-2.5"
                 disabled={!eligibility.canDuplicate || isDeleting}
                 aria-describedby={
+                  selectedTransactions.length > 0 &&
+                  disabledHint &&
                   !eligibility.canDuplicate
                     ? "merge-eligibility-reason"
                     : undefined
                 }
                 onClick={onOpenDuplicateMerge}
               >
-                Duplicate merge
+                <CopyIcon aria-hidden="true" />
+                <span className="sr-only md:not-sr-only">Duplicate merge</span>
               </Button>
+            </IconTooltip>
+            <IconTooltip label="Combine transactions">
               <Button
                 type="button"
                 variant="default"
                 size="sm"
+                className="w-8 px-0 md:w-auto md:px-2.5"
                 disabled={!eligibility.canCombine || isDeleting}
                 aria-describedby={
+                  selectedTransactions.length > 0 &&
+                  disabledHint &&
                   !eligibility.canCombine
                     ? "merge-eligibility-reason"
                     : undefined
                 }
                 onClick={onOpenCombine}
               >
-                Combine transactions
+                <MergeIcon aria-hidden="true" />
+                <span className="sr-only md:not-sr-only">
+                  Combine transactions
+                </span>
               </Button>
-              <AlertDialog
-                open={deleteDialogOpen}
-                onOpenChange={onDeleteDialogOpenChange}
-              >
+            </IconTooltip>
+            <AlertDialog
+              open={deleteDialogOpen}
+              onOpenChange={onDeleteDialogOpenChange}
+            >
+              <IconTooltip label="Delete selected transactions">
                 <AlertDialogTrigger
                   render={
                     <Button
                       type="button"
                       variant="destructive"
                       size="sm"
-                      disabled={isDeleting || isMarkingReviewed}
+                      className="w-8 px-0 md:w-auto md:px-2.5"
+                      disabled={
+                        selectedTransactions.length === 0 ||
+                        isDeleting ||
+                        isMarkingReviewed
+                      }
                     />
                   }
                 >
-                  {isDeleting ? "Deleting..." : "Delete"}
+                  <Trash2Icon aria-hidden="true" />
+                  <span className="sr-only md:not-sr-only">
+                    {isDeleting ? "Deleting..." : "Delete"}
+                  </span>
                 </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>
-                      Delete {selectedTransactions.length}{" "}
-                      {selectedTransactions.length === 1
-                        ? "transaction"
-                        : "transactions"}
-                      ?
-                    </AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This permanently deletes the selected{" "}
-                      {selectedTransactions.length === 1
-                        ? "transaction"
-                        : "transactions"}{" "}
-                      and marks any linked source emails as dismissed.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel disabled={isDeleting}>
-                      Cancel
-                    </AlertDialogCancel>
-                    <AlertDialogAction
-                      variant="destructive"
-                      disabled={isDeleting}
-                      onClick={() =>
-                        onDeleteSelected(
-                          selectedTransactions.map((tx) => tx.id)
-                        )
-                      }
-                    >
-                      {isDeleting ? "Deleting..." : "Delete forever"}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-              {disabledHint && (
-                <span
-                  id="merge-eligibility-reason"
-                  className="text-xs text-muted-foreground"
-                >
-                  {disabledHint}
-                </span>
-              )}
-            </div>
-          )}
+              </IconTooltip>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    Delete {selectedTransactions.length}{" "}
+                    {selectedTransactions.length === 1
+                      ? "transaction"
+                      : "transactions"}
+                    ?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This permanently deletes the selected{" "}
+                    {selectedTransactions.length === 1
+                      ? "transaction"
+                      : "transactions"}{" "}
+                    and marks any linked source emails as dismissed.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isDeleting}>
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    disabled={isDeleting}
+                    onClick={() =>
+                      onDeleteSelected(selectedTransactions.map((tx) => tx.id))
+                    }
+                  >
+                    {isDeleting ? "Deleting..." : "Delete forever"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+          <div className="flex min-h-8 items-baseline gap-3 text-xs leading-4 text-muted-foreground sm:min-h-4">
+            <span
+              role="status"
+              className="shrink-0 font-medium text-foreground"
+            >
+              {selectedTransactions.length > 0
+                ? `${selectedTransactions.length} selected`
+                : null}
+            </span>
+            <span id="merge-eligibility-reason">
+              {selectedTransactions.length > 0 ? disabledHint : null}
+            </span>
+          </div>
         </div>
 
         {reviewErrorMessage && (
@@ -499,82 +558,103 @@ export function TransactionList({
               return (
                 <li key={tx.id}>
                   {idx > 0 && <Separator className="my-1" />}
-                  <div className="flex items-center gap-2 px-1 py-1">
+                  <div
+                    data-selected={isSelected}
+                    className="flex items-center gap-2 rounded-lg p-3 transition-colors hover:bg-muted data-[selected=true]:bg-secondary/60 data-[selected=true]:hover:bg-secondary"
+                  >
                     <Checkbox
                       aria-label={`Select ${tx.merchant} (${formattedAmount})`}
                       checked={isSelected}
                       onCheckedChange={(checked) =>
                         onToggleRow(tx.id, Boolean(checked))
                       }
+                      className="mt-1 self-start"
                     />
                     <Button
                       type="button"
                       variant="ghost"
-                      aria-label={`Inspect ${tx.merchant} (${formattedAmount})`}
+                      aria-label={`Inspect ${tx.merchant} (${formattedAmount})${tx.manual_override === 1 ? ", edited" : ""}`}
                       onClick={() => onSelectTransaction(tx.id)}
-                      className="flex h-auto min-w-0 flex-1 items-center justify-between gap-4 px-2 py-2.5 text-left font-normal whitespace-normal"
+                      className="grid h-auto min-w-0 flex-1 grid-cols-1 items-start gap-x-4 gap-y-2 px-2 text-left font-normal whitespace-normal hover:bg-transparent sm:grid-cols-[minmax(0,1fr)_auto] dark:hover:bg-transparent"
                     >
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate font-medium">
+                      <span className="min-w-0 space-y-1">
+                        <span className="flex items-center gap-2">
+                          <span className="truncate font-semibold">
                             {tx.merchant}
                           </span>
-                          <Badge variant="secondary" className="gap-1">
-                            <DynamicIcon
-                              name={categoryIconMap.get(tx.category)}
-                              className="size-3"
-                            />
-                            {tx.category}
-                          </Badge>
-                          {(tx.tags ?? []).map((t) => (
-                            <Badge key={t.id} variant="outline">
-                              {t.name}
-                            </Badge>
-                          ))}
-                          <Badge variant="outline">
-                            {sourceBadgeLabel(tx)}
-                          </Badge>
-                          {tx.reviewed === 1 ? (
-                            <Badge variant="secondary" className="gap-1">
-                              <CheckCircle2Icon className="size-3" />
-                              Reviewed
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline">Needs review</Badge>
-                          )}
                           {tx.manual_override === 1 && (
-                            <Badge variant="secondary">Edited</Badge>
+                            <IconTooltip label="Edited">
+                              <span className="text-muted-foreground">
+                                <PencilIcon
+                                  className="size-3"
+                                  aria-hidden="true"
+                                />
+                              </span>
+                            </IconTooltip>
                           )}
-                          {tx.isForeignCurrency && (
-                            <Badge variant="outline">
-                              Foreign ({tx.currency})
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="truncate text-xs text-muted-foreground">
+                        </span>
+                        <span className="block text-xs text-muted-foreground">
                           {tx.account_name ??
                             (tx.payment_method_raw
                               ? `Unassigned (${tx.payment_method_raw})`
                               : "Unassigned")}{" "}
                           · {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
-                        </p>
-                      </div>
-                      <span className="shrink-0 font-medium tabular-nums">
-                        {formattedAmount}
+                        </span>
+                      </span>
+                      <span className="flex flex-wrap items-center gap-1.5 sm:col-start-1 sm:row-start-2">
+                        <Badge variant="secondary" className="gap-1">
+                          <DynamicIcon
+                            name={categoryIconMap.get(tx.category)}
+                            className="size-3"
+                          />
+                          {tx.category}
+                        </Badge>
+                        {(tx.tags ?? []).map((tag) => (
+                          <Badge
+                            key={tag.id}
+                            variant="outline"
+                            className="text-muted-foreground"
+                          >
+                            #{tag.name}
+                          </Badge>
+                        ))}
+                      </span>
+                      <span className="min-w-0 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:text-right">
+                        <span className="block font-semibold break-all tabular-nums">
+                          {formattedAmount}
+                        </span>
+                        <span className="block text-xs text-muted-foreground">
+                          {sourceBadgeLabel(tx)}
+                          {tx.isForeignCurrency
+                            ? ` · Foreign (${tx.currency})`
+                            : ""}
+                        </span>
                       </span>
                     </Button>
-                    {tx.reviewed === 0 && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        aria-label={`Mark ${tx.merchant} as reviewed`}
-                        disabled={isMarkingReviewed || isDeleting}
-                        onClick={() => onMarkReviewed([tx.id])}
-                        className="shrink-0"
-                      >
-                        Mark reviewed
-                      </Button>
+                    {tx.reviewed === 1 ? (
+                      <IconTooltip label="Reviewed">
+                        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                          <CheckCircle2Icon
+                            className="size-4"
+                            aria-hidden="true"
+                          />
+                          <span className="sr-only">Reviewed</span>
+                        </span>
+                      </IconTooltip>
+                    ) : (
+                      <IconTooltip label="Needs review · Mark reviewed">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Mark ${tx.merchant} as reviewed`}
+                          disabled={isMarkingReviewed || isDeleting}
+                          onClick={() => onMarkReviewed([tx.id])}
+                          className="rounded-full bg-amber-100 text-amber-800 hover:bg-amber-200 hover:text-amber-950 dark:bg-amber-950 dark:text-amber-300 dark:hover:bg-amber-900"
+                        >
+                          <Clock3Icon className="size-4" aria-hidden="true" />
+                        </Button>
+                      </IconTooltip>
                     )}
                   </div>
                 </li>

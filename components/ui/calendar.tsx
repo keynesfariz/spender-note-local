@@ -10,6 +10,7 @@ import {
 } from "react-day-picker"
 
 import { Button, buttonVariants } from "@/components/ui/button"
+import { IconTooltip } from "@/components/ui/tooltip"
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -148,6 +149,16 @@ function Calendar({
             />
           )
         },
+        PreviousMonthButton: (props) => (
+          <IconTooltip label={props["aria-label"] ?? "Previous month"}>
+            <button {...props} />
+          </IconTooltip>
+        ),
+        NextMonthButton: (props) => (
+          <IconTooltip label={props["aria-label"] ?? "Next month"}>
+            <button {...props} />
+          </IconTooltip>
+        ),
         Chevron: ({ className, orientation, ...props }) => {
           if (orientation === "left") {
             return (

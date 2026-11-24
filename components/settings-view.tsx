@@ -78,7 +78,7 @@ export function SettingsView({
       )}
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList>
+        <TabsList variant="line" aria-label="Settings sections">
           <TabsTab value="general">General</TabsTab>
           <TabsTab value="gmail">Gmail &amp; Senders</TabsTab>
           <TabsTab value="llm">Local LLM</TabsTab>

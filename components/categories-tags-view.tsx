@@ -1,5 +1,6 @@
 "use client"
 
+import { IconTooltip } from "@/components/ui/tooltip"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   FolderKanbanIcon,
@@ -41,6 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   categoriesQuery,
@@ -299,248 +301,228 @@ export function CategoriesTagsView() {
         )}
       </div>
 
-      <div
-        role="tablist"
-        aria-label="Categories and Tags sections"
-        className="flex border-b border-border"
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          if (value === "categories" || value === "tags") void setTab(value)
+        }}
       >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "categories"}
-          onClick={() => void setTab("categories")}
-          className={cn(
-            "-mb-px flex items-center gap-2 border-b-2 px-5 py-2.5 text-sm font-medium transition-colors",
-            tab === "categories"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:border-border hover:text-foreground"
-          )}
-        >
-          <FolderKanbanIcon className="size-4" />
-          <span>Categories</span>
-          <Badge variant="secondary" className="ml-0.5 text-xs">
-            {catQuery.isLoading ? "…" : categories.length}
-          </Badge>
-        </button>
+        <TabsList variant="line" aria-label="Categories and Tags sections">
+          <TabsTab value="categories">
+            <FolderKanbanIcon className="size-4" />
+            Categories
+            <Badge variant="secondary" className="text-xs">
+              {catQuery.isLoading ? "…" : categories.length}
+            </Badge>
+          </TabsTab>
+          <TabsTab value="tags">
+            <TagIcon className="size-4" />
+            Tags
+            <Badge variant="secondary" className="text-xs">
+              {tagQuery.isLoading ? "…" : tags.length}
+            </Badge>
+          </TabsTab>
+        </TabsList>
+        <TabsPanel value="categories">
+          <Card>
+            <CardHeader>
+              <CardTitle>Categories</CardTitle>
+              <CardDescription>
+                Each transaction belongs to one category. Deleting a category
+                reassigns its transactions to a replacement category.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {catQuery.isLoading ? (
+                <div className="space-y-2 p-6">
+                  {Array.from({ length: 5 }).map((_, idx) => (
+                    <Skeleton key={idx} className="h-12 w-full" />
+                  ))}
+                </div>
+              ) : catQuery.isError ? (
+                <div className="p-6">
+                  <Alert variant="destructive">
+                    <AlertDescription>
+                      {getErrorMessage(
+                        catQuery.error,
+                        "Unable to load categories."
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              ) : categories.length === 0 ? (
+                <div className="p-6 text-sm text-muted-foreground">
+                  No categories found.
+                </div>
+              ) : (
+                <div className="divide-y divide-border border-t border-border">
+                  {categories.map((cat) => {
+                    const isSystem = cat.is_system === 1
+                    return (
+                      <div
+                        key={cat.id}
+                        className="flex flex-wrap items-center justify-between gap-3 px-6 py-3"
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted/40">
+                            <DynamicIcon
+                              name={cat.icon}
+                              className="size-4 text-foreground"
+                            />
+                          </div>
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <span className="font-medium text-foreground">
+                              {cat.name}
+                            </span>
+                            {isSystem ? (
+                              <Badge variant="secondary">System default</Badge>
+                            ) : null}
+                          </div>
+                        </div>
 
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "tags"}
-          onClick={() => void setTab("tags")}
-          className={cn(
-            "-mb-px flex items-center gap-2 border-b-2 px-5 py-2.5 text-sm font-medium transition-colors",
-            tab === "tags"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:border-border hover:text-foreground"
-          )}
-        >
-          <TagIcon className="size-4" />
-          <span>Tags</span>
-          <Badge variant="secondary" className="ml-0.5 text-xs">
-            {tagQuery.isLoading ? "…" : tags.length}
-          </Badge>
-        </button>
-      </div>
+                        <div className="flex items-center gap-2">
+                          <Link
+                            href={`/transactions?category=${encodeURIComponent(cat.name)}&range=all`}
+                            className={buttonVariants({
+                              variant: "ghost",
+                              size: "xs",
+                            })}
+                          >
+                            {formatTxCount(cat.transaction_count)}
+                          </Link>
 
-      {tab === "categories" ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Categories</CardTitle>
-            <CardDescription>
-              Each transaction belongs to one category. Deleting a category
-              reassigns its transactions to a replacement category.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="p-0">
-            {catQuery.isLoading ? (
-              <div className="space-y-2 p-6">
-                {Array.from({ length: 5 }).map((_, idx) => (
-                  <Skeleton key={idx} className="h-12 w-full" />
-                ))}
-              </div>
-            ) : catQuery.isError ? (
-              <div className="p-6">
-                <Alert variant="destructive">
-                  <AlertDescription>
-                    {getErrorMessage(
-                      catQuery.error,
-                      "Unable to load categories."
-                    )}
-                  </AlertDescription>
-                </Alert>
-              </div>
-            ) : categories.length === 0 ? (
-              <div className="p-6 text-sm text-muted-foreground">
-                No categories found.
-              </div>
-            ) : (
-              <div className="divide-y divide-border border-t border-border">
-                {categories.map((cat) => {
-                  const isSystem = cat.is_system === 1
-                  return (
+                          {isSystem ? (
+                            <span className="px-2 text-xs text-muted-foreground">
+                              Read-only
+                            </span>
+                          ) : (
+                            <>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="xs"
+                                onClick={() => openEditCategory(cat)}
+                              >
+                                <PencilIcon className="mr-1 size-3" />
+                                Edit
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="xs"
+                                onClick={() => openDeleteCategory(cat)}
+                              >
+                                <Trash2Icon className="mr-1 size-3" />
+                                Delete
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsPanel>
+        <TabsPanel value="tags">
+          <Card>
+            <CardHeader>
+              <CardTitle>Tags</CardTitle>
+              <CardDescription>
+                Tags are manual labels you can attach across multiple
+                transactions for flexible tracking.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {tagQuery.isLoading ? (
+                <div className="space-y-2 p-6">
+                  {Array.from({ length: 4 }).map((_, idx) => (
+                    <Skeleton key={idx} className="h-12 w-full" />
+                  ))}
+                </div>
+              ) : tagQuery.isError ? (
+                <div className="p-6">
+                  <Alert variant="destructive">
+                    <AlertDescription>
+                      {getErrorMessage(tagQuery.error, "Unable to load tags.")}
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              ) : tags.length === 0 ? (
+                <div className="border-t border-border px-6 py-10 text-center">
+                  <p className="text-sm font-medium text-foreground">
+                    No tags yet
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Create a tag here or add one inline while creating or
+                    editing a transaction.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="mt-4"
+                    onClick={openCreateTag}
+                  >
+                    <PlusIcon className="mr-1.5 size-4" />
+                    New tag
+                  </Button>
+                </div>
+              ) : (
+                <div className="divide-y divide-border border-t border-border">
+                  {tags.map((tag) => (
                     <div
-                      key={cat.id}
+                      key={tag.id}
                       className="flex flex-wrap items-center justify-between gap-3 px-6 py-3"
                     >
                       <div className="flex min-w-0 items-center gap-3">
                         <div className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted/40">
-                          <DynamicIcon
-                            name={cat.icon}
-                            className="size-4 text-foreground"
-                          />
+                          <TagIcon className="size-4 text-muted-foreground" />
                         </div>
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <span className="font-medium text-foreground">
-                            {cat.name}
-                          </span>
-                          {isSystem ? (
-                            <Badge variant="secondary">System default</Badge>
-                          ) : null}
-                        </div>
+                        <span className="font-medium text-foreground">
+                          {tag.name}
+                        </span>
                       </div>
 
                       <div className="flex items-center gap-2">
                         <Link
-                          href={`/transactions?category=${encodeURIComponent(cat.name)}&range=all`}
+                          href={`/transactions?tag=${encodeURIComponent(tag.name)}&range=all`}
                           className={buttonVariants({
                             variant: "ghost",
                             size: "xs",
                           })}
                         >
-                          {formatTxCount(cat.transaction_count)}
+                          {formatTxCount(tag.transaction_count)}
                         </Link>
 
-                        {isSystem ? (
-                          <span className="px-2 text-xs text-muted-foreground">
-                            Read-only
-                          </span>
-                        ) : (
-                          <>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="xs"
-                              onClick={() => openEditCategory(cat)}
-                            >
-                              <PencilIcon className="mr-1 size-3" />
-                              Edit
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="xs"
-                              onClick={() => openDeleteCategory(cat)}
-                            >
-                              <Trash2Icon className="mr-1 size-3" />
-                              Delete
-                            </Button>
-                          </>
-                        )}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="xs"
+                          onClick={() => openEditTag(tag)}
+                        >
+                          <PencilIcon className="mr-1 size-3" />
+                          Rename
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="xs"
+                          onClick={() => openDeleteTag(tag)}
+                        >
+                          <Trash2Icon className="mr-1 size-3" />
+                          Delete
+                        </Button>
                       </div>
                     </div>
-                  )
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle>Tags</CardTitle>
-            <CardDescription>
-              Tags are manual labels you can attach across multiple transactions
-              for flexible tracking.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="p-0">
-            {tagQuery.isLoading ? (
-              <div className="space-y-2 p-6">
-                {Array.from({ length: 4 }).map((_, idx) => (
-                  <Skeleton key={idx} className="h-12 w-full" />
-                ))}
-              </div>
-            ) : tagQuery.isError ? (
-              <div className="p-6">
-                <Alert variant="destructive">
-                  <AlertDescription>
-                    {getErrorMessage(tagQuery.error, "Unable to load tags.")}
-                  </AlertDescription>
-                </Alert>
-              </div>
-            ) : tags.length === 0 ? (
-              <div className="border-t border-border px-6 py-10 text-center">
-                <p className="text-sm font-medium text-foreground">
-                  No tags yet
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Create a tag here or add one inline while creating or editing
-                  a transaction.
-                </p>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="mt-4"
-                  onClick={openCreateTag}
-                >
-                  <PlusIcon className="mr-1.5 size-4" />
-                  New tag
-                </Button>
-              </div>
-            ) : (
-              <div className="divide-y divide-border border-t border-border">
-                {tags.map((tag) => (
-                  <div
-                    key={tag.id}
-                    className="flex flex-wrap items-center justify-between gap-3 px-6 py-3"
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted/40">
-                        <TagIcon className="size-4 text-muted-foreground" />
-                      </div>
-                      <span className="font-medium text-foreground">
-                        {tag.name}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <Link
-                        href={`/transactions?tag=${encodeURIComponent(tag.name)}&range=all`}
-                        className={buttonVariants({
-                          variant: "ghost",
-                          size: "xs",
-                        })}
-                      >
-                        {formatTxCount(tag.transaction_count)}
-                      </Link>
-
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="xs"
-                        onClick={() => openEditTag(tag)}
-                      >
-                        <PencilIcon className="mr-1 size-3" />
-                        Rename
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="xs"
-                        onClick={() => openDeleteTag(tag)}
-                      >
-                        <Trash2Icon className="mr-1 size-3" />
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsPanel>
+      </Tabs>
 
       <Dialog open={catDialogOpen} onOpenChange={setCatDialogOpen}>
         <DialogContent className="sm:max-w-lg">
@@ -589,23 +571,23 @@ export function CategoriesTagsView() {
                 {CATEGORY_ICON_OPTIONS.map((opt) => {
                   const selected = catIcon === opt.name
                   return (
-                    <button
-                      key={opt.name}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      aria-label={opt.label}
-                      title={opt.label}
-                      onClick={() => setCatIcon(opt.name)}
-                      className={cn(
-                        "flex h-9 items-center justify-center rounded-md border transition-colors",
-                        selected
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
-                      )}
-                    >
-                      <DynamicIcon name={opt.name} className="size-4" />
-                    </button>
+                    <IconTooltip key={opt.name} label={opt.label}>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        aria-label={opt.label}
+                        onClick={() => setCatIcon(opt.name)}
+                        className={cn(
+                          "flex h-9 items-center justify-center rounded-md border transition-colors",
+                          selected
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
+                        )}
+                      >
+                        <DynamicIcon name={opt.name} className="size-4" />
+                      </button>
+                    </IconTooltip>
                   )
                 })}
               </div>

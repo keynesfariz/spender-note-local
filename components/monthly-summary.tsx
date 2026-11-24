@@ -20,10 +20,10 @@ export function MonthlySummary({
   const currency = summary.currency ?? "USD"
 
   return (
-    <Card>
+    <Card className="bg-summary ring-transparent">
       <CardHeader>
         <CardDescription>Total spent ({summary.month})</CardDescription>
-        <CardTitle className="text-3xl tabular-nums">
+        <CardTitle className="text-3xl font-semibold text-primary tabular-nums">
           {formatMinorCurrency(summary.totalSpentMinor, currency)}
         </CardTitle>
         {summary.foreignCurrencyCount > 0 && (

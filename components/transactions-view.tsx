@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   CheckCircle2Icon,
+  Clock3Icon,
   ChevronLeftIcon,
   ChevronRightIcon,
 } from "lucide-react"
@@ -22,7 +23,7 @@ import {
   ManualMergeDialog,
   type ManualMergeMode,
 } from "@/components/manual-merge-dialog"
-import { TransactionInspectorDialog } from "@/components/transaction-inspector-dialog"
+import { TransactionInspectorDrawer } from "@/components/transaction-inspector-drawer"
 import { TransactionList } from "@/components/transaction-list"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -201,6 +202,19 @@ export function TransactionsView() {
     deleteTransactionsMutation.reset()
   }
 
+  const handleResetFilters = () => {
+    void setFilters({
+      search: null,
+      category: null,
+      tag: null,
+      accountId: null,
+      unreviewed: null,
+      page: 1,
+    })
+    clearSelection()
+    deleteTransactionsMutation.reset()
+  }
+
   const handlePageChange = (nextPage: number) => {
     void setFilters({ page: Math.max(1, nextPage) })
     clearSelection()
@@ -323,64 +337,44 @@ export function TransactionsView() {
         </Alert>
       ) : (
         <>
-          {allInRangeReviewed && (
-            <Alert>
-              <CheckCircle2Icon className="size-4" />
-              <AlertTitle>All transactions reviewed</AlertTitle>
-              <AlertDescription className="mt-1 flex flex-wrap items-center justify-between gap-3">
-                <span>
-                  Every transaction in this date range has been reviewed. You
-                  can skip to another day.
-                </span>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleShiftRange(-1)}
-                  >
-                    {activeRange.from === activeRange.to
-                      ? "Previous day"
-                      : "Previous range"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleShiftRange(1)}
-                  >
-                    {activeRange.from === activeRange.to
-                      ? "Next day"
-                      : "Next range"}
-                  </Button>
-                </div>
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {allOnPageReviewedButMoreUnreviewed && (
-            <Alert>
-              <CheckCircle2Icon className="size-4" />
-              <AlertTitle>This page is all reviewed</AlertTitle>
-              <AlertDescription className="mt-1 flex flex-wrap items-center justify-between gap-3">
-                <span>
-                  All transactions on this page are reviewed (
-                  {unreviewedInRangeCount} unreviewed remaining in this date
-                  range).
-                </span>
-                {activePage < totalPages && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handlePageChange(activePage + 1)}
-                  >
-                    Next page
-                  </Button>
-                )}
-              </AlertDescription>
-            </Alert>
-          )}
+          <div className="flex h-12 items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2">
+            <p
+              role="status"
+              className="flex items-center gap-2 text-sm font-medium"
+            >
+              {allInRangeReviewed ? (
+                <>
+                  <CheckCircle2Icon className="size-4 shrink-0 text-emerald-700 dark:text-emerald-300" />
+                  <span className="text-emerald-800 dark:text-emerald-300">
+                    All transactions reviewed
+                  </span>
+                </>
+              ) : txQuery.isLoading || txQuery.isError ? (
+                <span className="text-muted-foreground">Review status</span>
+              ) : (
+                <>
+                  <Clock3Icon className="size-4 shrink-0 text-amber-700 dark:text-amber-300" />
+                  <span>
+                    {allOnPageReviewedButMoreUnreviewed
+                      ? `Page reviewed · ${unreviewedInRangeCount} left`
+                      : unreviewedInRangeCount > 0
+                        ? `${unreviewedInRangeCount} need review`
+                        : "No transactions to review"}
+                  </span>
+                </>
+              )}
+            </p>
+            {allOnPageReviewedButMoreUnreviewed && activePage < totalPages && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(activePage + 1)}
+              >
+                Next page
+              </Button>
+            )}
+          </div>
 
           <TransactionList
             transactions={items}
@@ -404,6 +398,7 @@ export function TransactionsView() {
             onAccountIdChange={handleAccountIdChange}
             unreviewedOnly={filters.unreviewed}
             onUnreviewedOnlyChange={handleUnreviewedOnlyChange}
+            onResetFilters={handleResetFilters}
             selectedIds={selectedIds}
             onToggleRow={handleToggleRow}
             onToggleSelectAllPage={handleToggleSelectAllPage}
@@ -444,7 +439,7 @@ export function TransactionsView() {
         onSuccess={() => setSelectedIds([])}
       />
 
-      <TransactionInspectorDialog
+      <TransactionInspectorDrawer
         transactionId={selectedTransactionId}
         accounts={accountsListQuery.data ?? []}
         localCurrency={currency}

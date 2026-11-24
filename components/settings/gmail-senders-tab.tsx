@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useMemo, useState, type SubmitEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
+import { IconTooltip } from "@/components/ui/tooltip"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -420,16 +421,18 @@ export function GmailSendersTab({
                           settings?.timezone
                         )}
                         {sender.last_sync_at_utc ? (
-                          <span
-                            title={formatUtcInTimezone(
+                          <IconTooltip
+                            label={formatUtcInTimezone(
                               sender.last_sync_at_utc,
                               settings?.timezone
                             )}
                           >
-                            {" "}
-                            · Last synced{" "}
-                            {formatRelativeUtc(sender.last_sync_at_utc)}
-                          </span>
+                            <span>
+                              {" "}
+                              · Last synced{" "}
+                              {formatRelativeUtc(sender.last_sync_at_utc)}
+                            </span>
+                          </IconTooltip>
                         ) : (
                           " · Never synced"
                         )}

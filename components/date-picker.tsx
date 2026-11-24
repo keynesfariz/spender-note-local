@@ -1,5 +1,6 @@
 "use client"
 
+import { IconTooltip } from "@/components/ui/tooltip"
 import { CalendarIcon, XIcon } from "lucide-react"
 import { useState } from "react"
 import type { DateRange } from "react-day-picker"
@@ -85,16 +86,18 @@ export function DatePicker({
       </Popover>
 
       {clearable && value && !disabled && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Clear date"
-          className="shrink-0"
-          onClick={() => onChange("")}
-        >
-          <XIcon className="size-3.5" />
-        </Button>
+        <IconTooltip label="Clear date">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Clear date"
+            className="shrink-0"
+            onClick={() => onChange("")}
+          >
+            <XIcon className="size-3.5" />
+          </Button>
+        </IconTooltip>
       )}
     </div>
   )

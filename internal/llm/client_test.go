@@ -183,3 +183,94 @@ func TestClient_ExtractTransaction_ErrorClassification(t *testing.T) {
 		t.Fatalf("expected RuntimeError for closed server, got %T: %v", err, err)
 	}
 }
+
+func TestClient_EnrichTransaction_JsonSchemaAnd400Fallback(t *testing.T) {
+	var seenSchemaName string
+	var seenCachePrompt bool
+	var attempts atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := attempts.Add(1)
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if v, ok := body["cache_prompt"].(bool); ok {
+			seenCachePrompt = v
+		}
+		rf, _ := body["response_format"].(map[string]any)
+		if n == 1 && rf["type"] == "json_schema" {
+			js, _ := rf["json_schema"].(map[string]any)
+			seenSchemaName, _ = js["name"].(string)
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"message": "json_schema unsupported"}})
+			return
+		}
+		if rf["type"] != "json_object" {
+			t.Fatalf("expected fallback response_format=json_object, got %v", rf)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"content": "<think>checking emails</think>```json\n{\"merchant\":\"Sate Khas Senayan\",\"category\":\"Invented Category\",\"tags\":[\"weekend\",\"GoFood\",\"Weekend\"],\"note\":\"10x Sate Ayam via GoFood\",\"transaction_date\":\"2026-11-23\",\"transaction_time\":\"19:15\",\"timezone_offset\":null}\n```",
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(srv.URL+"/v1", 5*time.Second)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	res, err := c.EnrichTransaction(context.Background(), "qwen2.5", EnrichInput{
+		Emails: []EnrichEmailSource{
+			{
+				EmailID:       "e1",
+				FromAddress:   "noreply@gofood.co.id",
+				Subject:       "GoFood Receipt",
+				ReceivedAtUtc: "2026-11-23T12:30:00Z",
+				EffectiveRole: "receipt",
+				CleanedText:   "Sate Khas Senayan 10x Sate Ayam",
+			},
+		},
+		UserTimezone: "Asia/Jakarta",
+		Categories:   []string{"Dining Out", "Other"},
+		Tags:         []string{"Work", "Weekend"},
+	})
+	if err != nil {
+		t.Fatalf("expected EnrichTransaction fallback to succeed, got %v", err)
+	}
+	if attempts.Load() != 2 {
+		t.Fatalf("expected 2 attempts (json_schema then json_object), got %d", attempts.Load())
+	}
+	if !seenCachePrompt || seenSchemaName != "transaction_enrichment" {
+		t.Fatalf("expected cache_prompt=true and schema name transaction_enrichment, got cache=%v name=%q", seenCachePrompt, seenSchemaName)
+	}
+	if res.Merchant != "Sate Khas Senayan" {
+		t.Fatalf("expected concise merchant, got %q", res.Merchant)
+	}
+	if res.Category != "Other" {
+		t.Fatalf("expected unknown category coerced to Other, got %q", res.Category)
+	}
+	if len(res.Tags) != 2 || res.Tags[0] != "Weekend" || res.Tags[1] != "GoFood" {
+		t.Fatalf("expected [Weekend GoFood], got %v", res.Tags)
+	}
+	if res.Note == nil || *res.Note != "10x Sate Ayam via GoFood" {
+		t.Fatalf("expected note, got %v", res.Note)
+	}
+	if res.OccurredAtUtc == nil || *res.OccurredAtUtc != "2026-11-23T12:15:00Z" {
+		t.Fatalf("expected 2026-11-23T12:15:00Z, got %v", res.OccurredAtUtc)
+	}
+
+	if _, err := c.EnrichTransaction(context.Background(), "  ", EnrichInput{UserTimezone: "UTC"}); !IsRuntimeError(err) {
+		t.Fatalf("expected RuntimeError for blank model, got %T: %v", err, err)
+	}
+	srv.Close()
+	if _, err := c.EnrichTransaction(context.Background(), "qwen2.5", EnrichInput{UserTimezone: "UTC"}); !IsRuntimeError(err) {
+		t.Fatalf("expected RuntimeError for closed server, got %T: %v", err, err)
+	}
+}

@@ -237,38 +237,15 @@ func parseRawExtractedDateTimeToUtc(txDate, txTime, tzOffset *string, userTimezo
 		fallback = formatUtcIsoSeconds(parsed)
 	}
 
+	if strict := ParseStrictExtractedDateTimeToUtc(txDate, txTime, tzOffset, userTimezone); strict != nil {
+		return *strict
+	}
+
 	if txDate == nil || !isoDateOnlyRe.MatchString(strings.TrimSpace(*txDate)) {
 		return fallback
 	}
 	cleanDate := strings.TrimSpace(*txDate)
-	cleanTime := ""
-	if txTime != nil {
-		cleanTime = strings.TrimSpace(*txTime)
-	}
-	cleanOffset := ""
-	if tzOffset != nil {
-		cleanOffset = strings.TrimSpace(*tzOffset)
-	}
-
-	loc, err := time.LoadLocation(strings.TrimSpace(userTimezone))
-	if err != nil || strings.TrimSpace(userTimezone) == "" {
-		loc = time.UTC
-	}
-
-	if cleanTime != "" && isoTimeOnlyRe.MatchString(cleanTime) {
-		normTime := cleanTime
-		if len(normTime) == 5 {
-			normTime += ":00"
-		}
-		if cleanOffset != "" && tzOffsetRe.MatchString(cleanOffset) {
-			if parsed, err := time.Parse(time.RFC3339, cleanDate+"T"+normTime+cleanOffset); err == nil {
-				return formatUtcIsoSeconds(parsed)
-			}
-		}
-		if parsed, err := time.ParseInLocation("2006-01-02T15:04:05", cleanDate+"T"+normTime, loc); err == nil {
-			return formatUtcIsoSeconds(parsed)
-		}
-	}
+	loc := resolveLocationOrUTC(userTimezone)
 
 	if recTime, err := time.Parse(time.RFC3339, fallback); err == nil {
 		if recTime.In(loc).Format("2006-01-02") == cleanDate {

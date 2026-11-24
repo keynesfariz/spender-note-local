@@ -228,19 +228,11 @@ func (c *Client) CheckHealth(ctx context.Context, model string) error {
 	return err
 }
 
-func (c *Client) ExtractTransaction(ctx context.Context, model string, input ExtractInput) (*ExtractResult, error) {
+func (c *Client) completeStructuredJSON(ctx context.Context, model, emptyModelErr, schemaName string, schema map[string]any, systemPrompt, userPrompt string) (string, error) {
 	model = strings.TrimSpace(model)
 	if model == "" {
-		return nil, &RuntimeError{Message: "No model configured for extraction."}
+		return "", &RuntimeError{Message: emptyModelErr}
 	}
-
-	categories := ResolveCategories(input.Categories)
-	accountIDs := make([]string, 0, len(input.Accounts))
-	for _, a := range input.Accounts {
-		accountIDs = append(accountIDs, a.ID)
-	}
-	systemPrompt, userPrompt := BuildExtractionPrompt(input)
-	schema := BuildExtractionJSONSchema(categories, accountIDs)
 
 	req := chatCompletionRequest{
 		Model: model,
@@ -253,7 +245,7 @@ func (c *Client) ExtractTransaction(ctx context.Context, model string, input Ext
 		ResponseFormat: map[string]any{
 			"type": "json_schema",
 			"json_schema": map[string]any{
-				"name":   "transaction_extraction",
+				"name":   schemaName,
 				"strict": true,
 				"schema": schema,
 			},
@@ -267,6 +259,30 @@ func (c *Client) ExtractTransaction(ctx context.Context, model string, input Ext
 		_, content, err = c.doChatCompletion(ctx, req)
 	}
 	if err != nil {
+		return "", err
+	}
+	return content, nil
+}
+
+func (c *Client) ExtractTransaction(ctx context.Context, model string, input ExtractInput) (*ExtractResult, error) {
+	categories := ResolveCategories(input.Categories)
+	accountIDs := make([]string, 0, len(input.Accounts))
+	for _, a := range input.Accounts {
+		accountIDs = append(accountIDs, a.ID)
+	}
+	systemPrompt, userPrompt := BuildExtractionPrompt(input)
+	schema := BuildExtractionJSONSchema(categories, accountIDs)
+
+	content, err := c.completeStructuredJSON(
+		ctx,
+		model,
+		"No model configured for extraction.",
+		"transaction_extraction",
+		schema,
+		systemPrompt,
+		userPrompt,
+	)
+	if err != nil {
 		return nil, err
 	}
 
@@ -275,4 +291,29 @@ func (c *Client) ExtractTransaction(ctx context.Context, model string, input Ext
 		return nil, err
 	}
 	return NormalizeExtractedResult(raw, cleanedJSON, input)
+}
+
+func (c *Client) EnrichTransaction(ctx context.Context, model string, input EnrichInput) (*EnrichResult, error) {
+	categories := ResolveCategories(input.Categories)
+	systemPrompt, userPrompt := BuildEnrichmentPrompt(input)
+	schema := BuildEnrichmentJSONSchema(categories)
+
+	content, err := c.completeStructuredJSON(
+		ctx,
+		model,
+		"No model configured for enrichment.",
+		"transaction_enrichment",
+		schema,
+		systemPrompt,
+		userPrompt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	raw, cleanedJSON, err := ParseAndValidateEnrichment(content)
+	if err != nil {
+		return nil, err
+	}
+	return NormalizeEnrichedResult(raw, cleanedJSON, input)
 }

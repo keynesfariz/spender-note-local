@@ -123,25 +123,43 @@ type RawEmail struct {
 func (RawEmail) TableName() string { return "raw_emails" }
 
 type EmailExtraction struct {
-	ID              string  `gorm:"column:id;primaryKey" json:"id"`
-	EmailID         string  `gorm:"column:email_id;not null;unique" json:"email_id"`
-	EmailKind       string  `gorm:"column:email_kind;not null" json:"email_kind"`
-	AmountMinor     *int64  `gorm:"column:amount_minor" json:"amount_minor"`
-	Currency        *string `gorm:"column:currency" json:"currency"`
-	OccurredAtUtc   *string `gorm:"column:occurred_at_utc" json:"occurred_at_utc"`
-	MerchantRaw     *string `gorm:"column:merchant_raw" json:"merchant_raw"`
-	MerchantNorm    *string `gorm:"column:merchant_norm" json:"merchant_norm"`
-	Category        *string `gorm:"column:category" json:"category"`
-	CardLast4       *string `gorm:"column:card_last4" json:"card_last4"`
-	PaymentMethodRaw *string `gorm:"column:payment_method_raw" json:"payment_method_raw"`
-	BankAccountHint *string `gorm:"column:bank_account_hint" json:"bank_account_hint"`
-	LlmAccountID    *string `gorm:"column:llm_account_id" json:"llm_account_id"`
-	ReferenceCode   *string `gorm:"column:reference_code" json:"reference_code"`
-	ExtractionModel string  `gorm:"column:extraction_model;not null" json:"extraction_model"`
-	RawLlmJSON      string  `gorm:"column:raw_llm_json;not null" json:"raw_llm_json"`
+	ID                   string  `gorm:"column:id;primaryKey" json:"id"`
+	EmailID              string  `gorm:"column:email_id;not null;unique" json:"email_id"`
+	EmailKind            string  `gorm:"column:email_kind;not null" json:"email_kind"`
+	AmountMinor          *int64  `gorm:"column:amount_minor" json:"amount_minor"`
+	Currency             *string `gorm:"column:currency" json:"currency"`
+	OccurredAtUtc        *string `gorm:"column:occurred_at_utc" json:"occurred_at_utc"`
+	MerchantRaw          *string `gorm:"column:merchant_raw" json:"merchant_raw"`
+	MerchantNorm         *string `gorm:"column:merchant_norm" json:"merchant_norm"`
+	Category             *string `gorm:"column:category" json:"category"`
+	CardLast4            *string `gorm:"column:card_last4" json:"card_last4"`
+	PaymentMethodRaw     *string `gorm:"column:payment_method_raw" json:"payment_method_raw"`
+	BankAccountHint      *string `gorm:"column:bank_account_hint" json:"bank_account_hint"`
+	LlmAccountID         *string `gorm:"column:llm_account_id" json:"llm_account_id"`
+	ReferenceCode        *string `gorm:"column:reference_code" json:"reference_code"`
+	ExtractionModel      string  `gorm:"column:extraction_model;not null" json:"extraction_model"`
+	RawLlmJSON           string  `gorm:"column:raw_llm_json;not null" json:"raw_llm_json"`
+	AccountTypeGuess     *string `gorm:"column:account_type_guess" json:"account_type_guess"`
+	TriageSignatureKey   *string `gorm:"column:triage_signature_key" json:"triage_signature_key"`
+	TriageSubjectPattern *string `gorm:"column:triage_subject_pattern" json:"triage_subject_pattern"`
+	TriageBodyCue        *string `gorm:"column:triage_body_cue" json:"triage_body_cue"`
+	TriageState          *string `gorm:"column:triage_state" json:"triage_state"`
 }
 
 func (EmailExtraction) TableName() string { return "email_extractions" }
+
+type SenderTriagePolicy struct {
+	ID             string `gorm:"column:id;primaryKey" json:"id"`
+	SenderEmail    string `gorm:"column:sender_email;not null" json:"sender_email"`
+	SignatureKey   string `gorm:"column:signature_key;not null" json:"signature_key"`
+	SubjectPattern string `gorm:"column:subject_pattern;not null" json:"subject_pattern"`
+	BodyCue        string `gorm:"column:body_cue;not null;default:''" json:"body_cue"`
+	Action         string `gorm:"column:action;not null" json:"action"`
+	CreatedAtUtc   string `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
+	UpdatedAtUtc   string `gorm:"column:updated_at_utc;not null" json:"updated_at_utc"`
+}
+
+func (SenderTriagePolicy) TableName() string { return "sender_triage_policies" }
 
 type Transaction struct {
 	ID               string  `gorm:"column:id;primaryKey" json:"id"`

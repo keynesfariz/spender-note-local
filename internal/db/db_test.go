@@ -39,8 +39,8 @@ func TestOpenDatabase_FreshSchemaDefaultsAndIndexes(t *testing.T) {
 	if err := gdb.Raw(`SELECT version, dirty FROM schema_migrations`).Scan(&mig).Error; err != nil {
 		t.Fatalf("read schema_migrations: %v", err)
 	}
-	if mig.Version != 5 || mig.Dirty {
-		t.Fatalf("expected schema_migrations version=5 dirty=false, got version=%d dirty=%v", mig.Version, mig.Dirty)
+	if mig.Version != 6 || mig.Dirty {
+		t.Fatalf("expected schema_migrations version=6 dirty=false, got version=%d dirty=%v", mig.Version, mig.Dirty)
 	}
 
 	for _, idxName := range []string{
@@ -48,6 +48,8 @@ func TestOpenDatabase_FreshSchemaDefaultsAndIndexes(t *testing.T) {
 		"idx_raw_emails_sender_date",
 		"idx_transaction_tags_tag",
 		"idx_transactions_category_occurred",
+		"idx_email_extractions_triage_state_occurred",
+		"idx_email_extractions_triage_signature_state",
 	} {
 		var found string
 		if err := gdb.Raw(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, idxName).Scan(&found).Error; err != nil {
@@ -135,8 +137,8 @@ func TestOpenDatabase_AutoBaselinesExistingDatabaseAndAppliesV2(t *testing.T) {
 	if err := migrated.Raw(`SELECT version, dirty FROM schema_migrations`).Scan(&mig).Error; err != nil {
 		t.Fatalf("read schema_migrations: %v", err)
 	}
-	if mig.Version != 5 || mig.Dirty {
-		t.Fatalf("expected version=5 dirty=false, got version=%d dirty=%v", mig.Version, mig.Dirty)
+	if mig.Version != 6 || mig.Dirty {
+		t.Fatalf("expected version=6 dirty=false, got version=%d dirty=%v", mig.Version, mig.Dirty)
 	}
 
 	if sqlDB, err := migrated.DB(); err == nil {
@@ -352,5 +354,182 @@ func TestOpenDatabase_PreservesExistingDirectoryPermissions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestOpenDatabase_UpgradesV5AndEnforcesTriageConstraints(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "v5-upgrade.db")
+
+	rawDB, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	for _, path := range []string{
+		"migrations/000001_baseline.up.sql",
+		"migrations/000002_performance_indexes.up.sql",
+		"migrations/000003_categories_and_tags.up.sql",
+		"migrations/000004_repair_ledger_and_sender_state.up.sql",
+		"migrations/000005_transaction_remarks.up.sql",
+	} {
+		body, err := migrationsFS.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := rawDB.Exec(string(body)).Error; err != nil {
+			t.Fatalf("apply %s: %v", path, err)
+		}
+	}
+	sqlDB, err := rawDB.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver, err := newSQLiteMigrateDriver(sqlDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := driver.SetVersion(5, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	upgraded, err := OpenDatabase(dbPath, false)
+	if err != nil {
+		t.Fatalf("upgrade v5 -> v6 failed: %v", err)
+	}
+	upSQL, err := upgraded.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upSQL.Close()
+
+	var migVersion int
+	if err := upgraded.Raw(`SELECT version FROM schema_migrations`).Scan(&migVersion).Error; err != nil {
+		t.Fatal(err)
+	}
+	if migVersion != 6 {
+		t.Fatalf("expected version 6, got %d", migVersion)
+	}
+
+	if err := upgraded.Create(&SenderTriagePolicy{
+		ID:             "pol-1",
+		SenderEmail:    "bca@bca.co.id",
+		SignatureKey:   "sig-1",
+		SubjectPattern: "internet transaction journal",
+		BodyCue:        "transaction type: qris payment",
+		Action:         "admit",
+		CreatedAtUtc:   "2026-11-24T12:00:00Z",
+		UpdatedAtUtc:   "2026-11-24T12:00:00Z",
+	}).Error; err != nil {
+		t.Fatalf("insert valid sender_triage_policies row failed: %v", err)
+	}
+
+	if err := upgraded.Create(&SenderTriagePolicy{
+		ID:             "pol-dup",
+		SenderEmail:    "bca@bca.co.id",
+		SignatureKey:   "sig-1",
+		SubjectPattern: "internet transaction journal",
+		BodyCue:        "transaction type: qris payment",
+		Action:         "ignore",
+		CreatedAtUtc:   "2026-11-24T12:00:00Z",
+		UpdatedAtUtc:   "2026-11-24T12:00:00Z",
+	}).Error; err == nil {
+		t.Fatalf("expected UNIQUE (sender_email, signature_key) failure, got nil")
+	}
+
+	if err := upgraded.Create(&SenderTriagePolicy{
+		ID:             "pol-bad-action",
+		SenderEmail:    "bca@bca.co.id",
+		SignatureKey:   "sig-2",
+		SubjectPattern: "internet transaction journal",
+		Action:         "invalid_action",
+		CreatedAtUtc:   "2026-11-24T12:00:00Z",
+		UpdatedAtUtc:   "2026-11-24T12:00:00Z",
+	}).Error; err == nil {
+		t.Fatalf("expected CHECK constraint failure on invalid action, got nil")
+	}
+
+	if err := upgraded.Exec(`
+		INSERT INTO raw_emails (id, gmail_message_id, from_address, subject, cleaned_text, internal_date_ms, received_at_utc, status)
+		VALUES ('e-1', 'gm-1', 'bca@bca.co.id', 'Subj', 'Body', 1000, '2026-11-24T12:00:00Z', 'non_transaction')
+	`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := upgraded.Exec(`
+		INSERT INTO email_extractions (id, email_id, email_kind, extraction_model, raw_llm_json, triage_state)
+		VALUES ('ext-bad', 'e-1', 'non_transaction', 'model', '{}', 'invalid_state')
+	`).Error; err == nil {
+		t.Fatalf("expected CHECK constraint failure on email_extractions.triage_state, got nil")
+	}
+}
+
+func TestRunImmediateTx_CommitAndRollback(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "immediate-tx.db")
+	gdb, err := OpenDatabase(dbPath, false)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+
+	err = RunImmediateTx(gdb, func(tx *gorm.DB) error {
+		if err := tx.Create(&SenderTriagePolicy{
+			ID:             "pol-commit",
+			SenderEmail:    "alerts@bank.test",
+			SignatureKey:   "sig-commit",
+			SubjectPattern: "alert",
+			BodyCue:        "",
+			Action:         "admit",
+			CreatedAtUtc:   "2026-11-24T12:00:00Z",
+			UpdatedAtUtc:   "2026-11-24T12:00:00Z",
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&SenderTriagePolicy{}).Where("id = ?", "pol-commit").Updates(map[string]any{
+			"body_cue": "updated cue",
+		}).Error
+	})
+	if err != nil {
+		t.Fatalf("RunImmediateTx commit path failed: %v", err)
+	}
+
+	var stored SenderTriagePolicy
+	if err := gdb.First(&stored, "id = ?", "pol-commit").Error; err != nil {
+		t.Fatalf("load committed policy: %v", err)
+	}
+	if stored.BodyCue != "updated cue" {
+		t.Fatalf("expected body_cue 'updated cue', got %q", stored.BodyCue)
+	}
+
+	errRollback := RunImmediateTx(gdb, func(tx *gorm.DB) error {
+		if err := tx.Create(&SenderTriagePolicy{
+			ID:             "pol-rollback",
+			SenderEmail:    "alerts@bank.test",
+			SignatureKey:   "sig-rollback",
+			SubjectPattern: "alert",
+			Action:         "ignore",
+			CreatedAtUtc:   "2026-11-24T12:00:00Z",
+			UpdatedAtUtc:   "2026-11-24T12:00:00Z",
+		}).Error; err != nil {
+			return err
+		}
+		return os.ErrInvalid
+	})
+	if errRollback == nil {
+		t.Fatalf("expected error from rollback RunImmediateTx")
+	}
+
+	var rollbackCount int64
+	if err := gdb.Model(&SenderTriagePolicy{}).Where("id = ?", "pol-rollback").Count(&rollbackCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rollbackCount != 0 {
+		t.Fatalf("expected rolled-back row count 0, got %d", rollbackCount)
 	}
 }

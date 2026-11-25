@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+
+	"gorm.io/gorm"
 
 	"portspendernote/internal/db"
 	"portspendernote/internal/domain"
@@ -15,7 +18,31 @@ func GET(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	detail, err := domain.GetTransactionDetail(gdb, r.PathValue("id"))
+	id := r.PathValue("id")
+	query := r.URL.Query()
+	if query.Has("sourceEmailId") {
+		body, err := domain.GetTransactionSourceBody(gdb.WithContext(r.Context()), id, query.Get("sourceEmailId"))
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "Source email not found.")
+			return
+		}
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, body)
+		return
+	}
+	if query.Get("view") == "inspector" {
+		detail, err := domain.GetTransactionInspector(gdb.WithContext(r.Context()), id)
+		if err != nil {
+			httpx.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, detail)
+		return
+	}
+	detail, err := domain.GetTransactionDetail(gdb, id)
 	if err != nil {
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
 		return

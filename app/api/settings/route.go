@@ -20,8 +20,19 @@ func GET(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	probeBaseURL := strings.TrimSpace(r.URL.Query().Get("llm_base_url"))
-	settings, err := domain.GetAppSettings(r.Context(), gdb, probeBaseURL)
+	query := r.URL.Query()
+	probeBaseURL := query.Get("llm_base_url")
+	var settings any
+	switch query.Get("view") {
+	case "locale":
+		settings, err = domain.GetAppLocale(gdb.WithContext(r.Context()))
+	case "saved":
+		settings, err = domain.GetSavedSettings(gdb.WithContext(r.Context()))
+	case "models":
+		settings, err = domain.GetModelDiscovery(r.Context(), gdb.WithContext(r.Context()), probeBaseURL)
+	default:
+		settings, err = domain.GetAppSettings(r.Context(), gdb, probeBaseURL)
+	}
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return

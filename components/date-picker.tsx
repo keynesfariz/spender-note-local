@@ -2,11 +2,10 @@
 
 import { IconTooltip } from "@/components/ui/tooltip"
 import { CalendarIcon, XIcon } from "lucide-react"
-import { useState } from "react"
+import { lazy, Suspense, useState } from "react"
 import type { DateRange } from "react-day-picker"
 
 import { Button } from "@/components/ui/button"
-import { Calendar } from "@/components/ui/calendar"
 import {
   Popover,
   PopoverContent,
@@ -19,6 +18,28 @@ import {
   isoDateStringToDate,
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
+
+const loadCalendar = () => import("@/components/ui/calendar")
+const Calendar = lazy(() =>
+  loadCalendar().then(({ Calendar }) => ({ default: Calendar }))
+)
+
+function preloadCalendar() {
+  void loadCalendar().catch(() => {})
+}
+
+function isKeyboardActivation(event: Event) {
+  return (
+    event instanceof KeyboardEvent ||
+    (event instanceof MouseEvent && event.detail === 0)
+  )
+}
+
+const calendarLoading = (
+  <div role="status" className="p-4 text-muted-foreground">
+    Loading calendar…
+  </div>
+)
 
 export function DatePicker({
   value,
@@ -40,12 +61,21 @@ export function DatePicker({
   className?: string
 }) {
   const [open, setOpen] = useState(false)
+  const [keyboardOpen, setKeyboardOpen] = useState(false)
   const selected = value ? isoDateStringToDate(value) : undefined
 
   return (
     <div className={cn("flex items-center gap-1", className)}>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover
+        open={open}
+        onOpenChange={(nextOpen, { event }) => {
+          if (nextOpen) setKeyboardOpen(isKeyboardActivation(event))
+          setOpen(nextOpen)
+        }}
+      >
         <PopoverTrigger
+          onPointerEnter={preloadCalendar}
+          onFocus={preloadCalendar}
           render={
             <Button
               id={id}
@@ -66,22 +96,25 @@ export function DatePicker({
           </span>
         </PopoverTrigger>
         <PopoverContent className="w-auto p-0" align="start">
-          <Calendar
-            mode="single"
-            selected={selected}
-            defaultMonth={selected}
-            onSelect={(day) => {
-              if (!day) {
-                if (clearable) {
-                  onChange("")
-                  setOpen(false)
+          <Suspense fallback={calendarLoading}>
+            <Calendar
+              autoFocus={keyboardOpen}
+              mode="single"
+              selected={selected}
+              defaultMonth={selected}
+              onSelect={(day) => {
+                if (!day) {
+                  if (clearable) {
+                    onChange("")
+                    setOpen(false)
+                  }
+                  return
                 }
-                return
-              }
-              onChange(dateToIsoDateString(day))
-              setOpen(false)
-            }}
-          />
+                onChange(dateToIsoDateString(day))
+                setOpen(false)
+              }}
+            />
+          </Suspense>
         </PopoverContent>
       </Popover>
 
@@ -119,6 +152,7 @@ export function DateRangePicker({
   className?: string
 }) {
   const [open, setOpen] = useState(false)
+  const [keyboardOpen, setKeyboardOpen] = useState(false)
   const [draft, setDraft] = useState<DateRange | undefined>(undefined)
 
   const committedFrom = isoDateStringToDate(from)
@@ -142,8 +176,16 @@ export function DateRangePicker({
   }
 
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen, { event }) => {
+        if (nextOpen) setKeyboardOpen(isKeyboardActivation(event))
+        handleOpenChange(nextOpen)
+      }}
+    >
       <PopoverTrigger
+        onPointerEnter={preloadCalendar}
+        onFocus={preloadCalendar}
         render={
           <Button
             type="button"
@@ -159,30 +201,33 @@ export function DateRangePicker({
         <span className="truncate">{formatDateRangeLabel(from, to)}</span>
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0" align="start">
-        <Calendar
-          mode="range"
-          resetOnSelect
-          required
-          numberOfMonths={1}
-          selected={open ? draft : committedRange}
-          defaultMonth={committedFrom}
-          onSelect={(nextRange) => {
-            if (!nextRange?.from) {
-              setDraft(undefined)
-              return
-            }
-            if (nextRange.to) {
-              onChange({
-                from: dateToIsoDateString(nextRange.from),
-                to: dateToIsoDateString(nextRange.to),
-              })
-              setDraft(undefined)
-              setOpen(false)
-              return
-            }
-            setDraft({ from: nextRange.from, to: undefined })
-          }}
-        />
+        <Suspense fallback={calendarLoading}>
+          <Calendar
+            autoFocus={keyboardOpen}
+            mode="range"
+            resetOnSelect
+            required
+            numberOfMonths={1}
+            selected={open ? draft : committedRange}
+            defaultMonth={committedFrom}
+            onSelect={(nextRange) => {
+              if (!nextRange?.from) {
+                setDraft(undefined)
+                return
+              }
+              if (nextRange.to) {
+                onChange({
+                  from: dateToIsoDateString(nextRange.from),
+                  to: dateToIsoDateString(nextRange.to),
+                })
+                setDraft(undefined)
+                setOpen(false)
+                return
+              }
+              setDraft({ from: nextRange.from, to: undefined })
+            }}
+          />
+        </Suspense>
       </PopoverContent>
     </Popover>
   )

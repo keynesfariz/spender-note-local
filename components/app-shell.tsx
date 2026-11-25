@@ -11,7 +11,21 @@ import { SyncToast } from "@/components/sync-toast"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { IconTooltip } from "@/components/ui/tooltip"
-import { gmailStatusQuery, syncStatusQuery, triggerSyncApi } from "@/lib/api"
+import { accountsQuery } from "@/lib/api/accounts"
+import { categoriesQuery } from "@/lib/api/categories"
+import {
+  gmailStatusQuery,
+  localeQuery,
+  settingsQuery,
+} from "@/lib/api/settings"
+import { syncStatusQuery, triggerSyncApi } from "@/lib/api/sync"
+import { tagsQuery } from "@/lib/api/tags"
+import {
+  DEFAULT_LEDGER_PARAMS,
+  monthlySummaryQuery,
+  transactionsQuery,
+} from "@/lib/api/transactions"
+import type { SyncStatusView } from "@/lib/api/types.generated"
 
 const NAV_ITEMS = [
   { href: "/transactions", label: "Transactions" },
@@ -20,6 +34,8 @@ const NAV_ITEMS = [
   { href: "/settings", label: "Settings" },
 ]
 
+const selectSyncRunning = (status: SyncStatusView) => status.isRunning
+
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const { resolvedTheme, setTheme } = useTheme()
@@ -27,7 +43,33 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [syncError, setSyncError] = useState<string | null>(null)
 
   const gmailQuery = useQuery(gmailStatusQuery())
-  const syncQuery = useQuery(syncStatusQuery())
+  const { data: isSyncRunning } = useQuery({
+    ...syncStatusQuery(),
+    select: selectSyncRunning,
+  })
+
+  function prefetchRoute(path: string) {
+    switch (path) {
+      case "/":
+        void queryClient.prefetchQuery(monthlySummaryQuery())
+        break
+      case "/transactions":
+        void queryClient.prefetchQuery(localeQuery())
+        void queryClient.prefetchQuery(transactionsQuery(DEFAULT_LEDGER_PARAMS))
+        break
+      case "/accounts":
+        void queryClient.prefetchQuery(localeQuery())
+        void queryClient.prefetchQuery(accountsQuery())
+        break
+      case "/categories":
+        void queryClient.prefetchQuery(categoriesQuery())
+        void queryClient.prefetchQuery(tagsQuery())
+        break
+      case "/settings":
+        void queryClient.prefetchQuery(settingsQuery())
+        break
+    }
+  }
 
   const syncMutation = useMutation({
     mutationFn: () => triggerSyncApi(),
@@ -47,6 +89,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="contents sm:flex sm:min-w-0 sm:items-center sm:gap-6">
             <Link
               href="/"
+              onPointerEnter={() => prefetchRoute("/")}
+              onFocus={() => prefetchRoute("/")}
               className="flex w-fit items-center gap-2 py-3 font-semibold tracking-tight text-primary"
               aria-current={pathname === "/" ? "page" : undefined}
             >
@@ -68,6 +112,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <Link
                     key={item.href}
                     href={item.href}
+                    onPointerEnter={() => prefetchRoute(item.href)}
+                    onFocus={() => prefetchRoute(item.href)}
                     aria-current={active ? "page" : undefined}
                     className={buttonVariants({
                       variant: active ? "secondary" : "ghost",
@@ -103,10 +149,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
             <Button
               size="sm"
-              disabled={syncQuery.data?.isRunning || syncMutation.isPending}
+              disabled={isSyncRunning || syncMutation.isPending}
               onClick={() => syncMutation.mutate()}
             >
-              {syncQuery.data?.isRunning
+              {isSyncRunning
                 ? "Syncing..."
                 : syncMutation.isPending
                   ? "Starting..."

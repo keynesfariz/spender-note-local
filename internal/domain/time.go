@@ -89,6 +89,20 @@ func GetMonthStartUtc(monthYYYYMM string, tz string) (string, error) {
 	return start, err
 }
 
+// A timezone transition can skip midnight. Use the transition instant if
+// time.Date resolves that missing clock time into the previous civil day.
+func localDayStart(year int, month time.Month, day int, loc *time.Location) time.Time {
+	date := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	start := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc)
+	if start.Format(time.DateOnly) < date.Format(time.DateOnly) {
+		_, transition := start.ZoneBounds()
+		if !transition.IsZero() {
+			return transition
+		}
+	}
+	return start
+}
+
 func GetDateRangeUtcBounds(startDateYYYYMMDD string, endDateYYYYMMDD string, tz string) (startUtc string, endUtc string, err error) {
 	startStr := strings.TrimSpace(startDateYYYYMMDD)
 	endStr := strings.TrimSpace(endDateYYYYMMDD)
@@ -113,11 +127,11 @@ func GetDateRangeUtcBounds(startDateYYYYMMDD string, endDateYYYYMMDD string, tz 
 		return "", "", err
 	}
 
-	startDay, err := time.ParseInLocation("2006-01-02", startStr, loc)
+	startDay, err := time.Parse(time.DateOnly, startStr)
 	if err != nil {
 		return "", "", fmt.Errorf("invalid startDate: %s", startDateYYYYMMDD)
 	}
-	endDay, err := time.ParseInLocation("2006-01-02", endStr, loc)
+	endDay, err := time.Parse(time.DateOnly, endStr)
 	if err != nil {
 		return "", "", fmt.Errorf("invalid endDate: %s", endDateYYYYMMDD)
 	}
@@ -125,8 +139,9 @@ func GetDateRangeUtcBounds(startDateYYYYMMDD string, endDateYYYYMMDD string, tz 
 		return "", "", fmt.Errorf("endDate (%s) cannot be earlier than startDate (%s)", endStr, startStr)
 	}
 
-	endExclusive := endDay.AddDate(0, 0, 1)
-	return ToUtcIsoSeconds(startDay), ToUtcIsoSeconds(endExclusive), nil
+	start := localDayStart(startDay.Year(), startDay.Month(), startDay.Day(), loc)
+	endExclusive := localDayStart(endDay.Year(), endDay.Month(), endDay.Day()+1, loc)
+	return ToUtcIsoSeconds(start), ToUtcIsoSeconds(endExclusive), nil
 }
 
 type BillingCycleWindow struct {

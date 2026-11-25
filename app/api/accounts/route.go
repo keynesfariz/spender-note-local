@@ -15,6 +15,15 @@ func GET(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if r.URL.Query().Get("view") == "options" {
+		options, err := domain.ListAccountOptions(gdb.WithContext(r.Context()))
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, options)
+		return
+	}
 	accounts, err := domain.ListAccounts(gdb)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, err.Error())

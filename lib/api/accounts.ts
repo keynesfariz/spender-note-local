@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query"
 import { apiFetch } from "./client"
 import type {
   AccountIdentifierInput,
+  AccountOption,
   AccountSummary,
   AccountType,
   ReconciliationRow,
@@ -11,6 +12,13 @@ export const accountsQuery = () =>
   queryOptions({
     queryKey: ["accounts"] as const,
     queryFn: () => apiFetch<AccountSummary[]>("/api/accounts"),
+  })
+
+export const accountOptionsQuery = () =>
+  queryOptions({
+    queryKey: ["accounts", "options"] as const,
+    queryFn: ({ signal }) =>
+      apiFetch<AccountOption[]>("/api/accounts?view=options", { signal }),
   })
 
 export const accountReconciliationsQuery = (accountId: string) =>

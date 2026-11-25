@@ -1,5 +1,6 @@
 "use client"
 
+import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { DynamicIcon } from "@/components/dynamic-icon"
 import { PaginationControls } from "@/components/pagination-controls"
@@ -8,11 +9,11 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { categoriesQuery } from "@/lib/api/categories"
 import {
-  categoriesQuery,
   type ApplyTriageVerdictInput,
   type GhostRowItem,
-} from "@/lib/api"
+} from "@/lib/api/types.generated"
 import { buildCategoryIconMap } from "@/lib/categories"
 import { formatMinorCurrency, formatUtcInTimezone } from "@/lib/format"
 
@@ -48,7 +49,10 @@ export function SkippedTransactionsList({
   onPageChange: (page: number) => void
 }) {
   const categories = useQuery(categoriesQuery())
-  const categoryIconMap = buildCategoryIconMap(categories.data)
+  const categoryIconMap = useMemo(
+    () => buildCategoryIconMap(categories.data),
+    [categories.data]
+  )
 
   return (
     <Card>

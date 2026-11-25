@@ -52,6 +52,11 @@ type AccountSummary struct {
 	TypeLocked             bool                           `json:"type_locked"`
 }
 
+type AccountOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type ExtractionAccountContext struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
@@ -218,6 +223,13 @@ func hasAccountLedgerRows(gdb *gorm.DB, accountID string) (bool, error) {
 
 func ListAccounts(gdb *gorm.DB) ([]AccountSummary, error) {
 	return listAccountsAt(gdb, time.Now().UTC())
+}
+
+func ListAccountOptions(gdb *gorm.DB) ([]AccountOption, error) {
+	options := []AccountOption{}
+	err := gdb.Model(&db.Account{}).Select("id", "name").
+		Order("created_at_utc ASC, name ASC").Find(&options).Error
+	return options, err
 }
 
 func listAccountsAt(gdb *gorm.DB, now time.Time) ([]AccountSummary, error) {

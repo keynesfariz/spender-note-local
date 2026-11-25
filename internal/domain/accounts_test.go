@@ -24,6 +24,38 @@ func configureTestLocale(t *testing.T, gdb *gorm.DB, tz, currency string) {
 	}
 }
 
+func TestListAccountOptions_PreservesSummaryOrderAndCurrentNames(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	options, err := ListAccountOptions(gdb)
+	if err != nil || options == nil || len(options) != 0 {
+		t.Fatalf("empty options = %#v, %v; want an empty slice", options, err)
+	}
+
+	firstID := seedTestAccount(t, gdb, "first", "Second alphabetically", "IDR")
+	secondID := seedTestAccount(t, gdb, "second", "First alphabetically", "IDR")
+	newestID := seedTestAccount(t, gdb, "newest", "A more recent card", "IDR")
+	if err := gdb.Model(&db.Account{}).Where("id = ?", newestID).
+		Update("created_at_utc", "2026-02-01T00:00:00Z").Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateAccount(gdb, firstID, UpdateAccountInput{Name: strPtr("Renamed card")}); err != nil {
+		t.Fatal(err)
+	}
+
+	options, err = ListAccountOptions(gdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []AccountOption{
+		{ID: secondID, Name: "First alphabetically"},
+		{ID: firstID, Name: "Renamed card"},
+		{ID: newestID, Name: "A more recent card"},
+	}
+	if !reflect.DeepEqual(options, want) {
+		t.Fatalf("options = %#v, want %#v", options, want)
+	}
+}
+
 func TestAccountStatementDay_CRUDAndValidation(t *testing.T) {
 	gdb := openDomainTestDB(t)
 	configureTestLocale(t, gdb, "Asia/Jakarta", "IDR")

@@ -12,6 +12,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
 } from "lucide-react"
+import dynamic from "next/dynamic"
 import Link from "next/link"
 import {
   parseAsBoolean,
@@ -20,16 +21,11 @@ import {
   parseAsStringLiteral,
   useQueryStates,
 } from "nuqs"
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { useHasOpened } from "@/hooks/use-has-opened"
 
-import { AddTransactionDialog } from "@/components/add-transaction-dialog"
 import { DateRangePicker } from "@/components/date-picker"
-import {
-  ManualMergeDialog,
-  type ManualMergeMode,
-} from "@/components/manual-merge-dialog"
-import { SkippedTransactionsList } from "@/components/skipped-transactions-list"
-import { TransactionInspectorDrawer } from "@/components/transaction-inspector-drawer"
+import type { ManualMergeMode } from "@/components/manual-merge-dialog"
 import { TransactionList } from "@/components/transaction-list"
 import { TriageUndoToast } from "@/components/triage-undo-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -37,28 +33,69 @@ import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs"
+import { accountOptionsQuery } from "@/lib/api/accounts"
+import { localeQuery } from "@/lib/api/settings"
 import {
-  accountsQuery,
-  applyTriageVerdictApi,
   deleteTransactionsApi,
   invalidateTransactionRelatedQueries,
-  invalidateTriageRelatedQueries,
   markTransactionsReviewedApi,
-  settingsQuery,
+  DEFAULT_LEDGER_PARAMS,
+  TRANSACTIONS_PAGE_SIZE,
   transactionsQuery,
+} from "@/lib/api/transactions"
+import {
+  applyTriageVerdictApi,
+  invalidateTriageRelatedQueries,
   triageSkippedTransactionsQuery,
   undoTriageVerdictApi,
+} from "@/lib/api/triage"
+import {
+  type AccountOption,
   type ApplyTriageVerdictInput,
   type TriageVerdictResult,
-} from "@/lib/api"
+  type TransactionListItem,
+} from "@/lib/api/types.generated"
 import { getTodayDateString, shiftDateRange } from "@/lib/format"
 
-const DEFAULT_PAGE_SIZE = 25
+const AddTransactionDialog = dynamic(() =>
+  import("@/components/add-transaction-dialog").then(
+    (mod) => mod.AddTransactionDialog
+  )
+)
+const ManualMergeDialog = dynamic(() =>
+  import("@/components/manual-merge-dialog").then(
+    (mod) => mod.ManualMergeDialog
+  )
+)
+const TransactionInspectorDrawer = dynamic(() =>
+  import("@/components/transaction-inspector-drawer").then(
+    (mod) => mod.TransactionInspectorDrawer
+  )
+)
+const SkippedTransactionsList = dynamic(
+  () =>
+    import("@/components/skipped-transactions-list").then(
+      (mod) => mod.SkippedTransactionsList
+    ),
+  { loading: () => <Skeleton className="h-48 w-full" /> }
+)
+
+function preloadAddTransactionDialog() {
+  void import("@/components/add-transaction-dialog").catch(() => {})
+}
+
+function preloadSkippedTransactionsList() {
+  void import("@/components/skipped-transactions-list").catch(() => {})
+}
+
+const EMPTY_ACCOUNTS: AccountOption[] = []
+const EMPTY_TRANSACTIONS: TransactionListItem[] = []
 
 export function TransactionsView() {
   const queryClient = useQueryClient()
-  const settingsDataQuery = useQuery(settingsQuery())
-  const accountsListQuery = useQuery(accountsQuery())
+  const [mountedAt] = useState(() => Date.now())
+  const settingsDataQuery = useQuery(localeQuery())
+  const accountsListQuery = useQuery(accountOptionsQuery())
 
   const timezone = settingsDataQuery.data?.timezone
   const currency = settingsDataQuery.data?.currency ?? "USD"
@@ -81,12 +118,16 @@ export function TransactionsView() {
     skippedPage: parseAsInteger.withDefault(1),
     page: parseAsInteger.withDefault(1),
   })
+  const [searchResetKey, setSearchResetKey] = useState(0)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [selectedTransactionId, setSelectedTransactionId] = useState<
     string | null
   >(null)
   const [mergeMode, setMergeMode] = useState<ManualMergeMode | null>(null)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const hasOpenedAddDialog = useHasOpened(addDialogOpen)
+  const hasOpenedMergeDialog = useHasOpened(mergeMode !== null)
+  const hasOpenedInspector = useHasOpened(selectedTransactionId !== null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [triageError, setTriageError] = useState<string | null>(null)
@@ -101,46 +142,80 @@ export function TransactionsView() {
     action: ApplyTriageVerdictInput["action"]
   } | null>(null)
 
-  const todayStr = useMemo(() => getTodayDateString(timezone), [timezone])
   const isAllDates = filters.range === "all"
-  const activeRange = {
-    from: filters.from ?? todayStr,
-    to: filters.to ?? filters.from ?? todayStr,
-  }
+  const isRelativeRange = !isAllDates && !filters.from
   const activePage = Math.max(1, filters.page)
   const isSkippedTab = filters.tab === "skipped"
   const skippedPage = Math.max(1, filters.skippedPage)
 
   const txQuery = useQuery({
     ...transactionsQuery({
-      startDate: isAllDates ? undefined : activeRange.from,
-      endDate: isAllDates ? undefined : activeRange.to,
+      ...DEFAULT_LEDGER_PARAMS,
+      ledgerRange: isAllDates ? "all" : "dates",
+      startDate: isAllDates ? undefined : (filters.from ?? undefined),
+      endDate: isAllDates ? undefined : (filters.to ?? undefined),
       category: filters.category || undefined,
       tag: filters.tag || undefined,
       accountId: filters.accountId === "all" ? undefined : filters.accountId,
       search: filters.search.trim() || undefined,
       unreviewedOnly: filters.unreviewed || undefined,
-      showSkipped: false,
       page: activePage,
-      pageSize: DEFAULT_PAGE_SIZE,
     }),
-    enabled: isConfigured && !isSkippedTab,
+    enabled: !isSkippedTab,
+    refetchInterval: (query) => {
+      const boundary = query.state.data?.ledger?.nextDayUtc
+      if (!isRelativeRange || !boundary || query.state.status === "error")
+        return false
+      return Math.max(1_000, Date.parse(boundary) - Date.now())
+    },
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: isRelativeRange,
   })
 
-  const items = useMemo(() => txQuery.data?.items ?? [], [txQuery.data?.items])
+  const ledger = txQuery.data?.ledger
+  const ledgerExpired =
+    isRelativeRange &&
+    Boolean(ledger?.nextDayUtc && Date.parse(ledger.nextDayUtc) <= mountedAt)
+  const localeMismatch = Boolean(
+    timezone && ledger?.configured && ledger.timezone !== timezone
+  )
+  const displayLedger = !ledgerExpired && !localeMismatch
+  const todayStr =
+    (displayLedger && ledger?.today) || getTodayDateString(timezone)
+  const activeRange = {
+    from: filters.from ?? todayStr,
+    to: filters.to ?? filters.from ?? todayStr,
+  }
+  const refreshLedger = txQuery.refetch
+  const refreshLocale = settingsDataQuery.refetch
+  useEffect(() => {
+    if (!isSkippedTab && (ledgerExpired || localeMismatch)) void refreshLedger()
+    if (localeMismatch) void refreshLocale({ cancelRefetch: false })
+  }, [
+    isSkippedTab,
+    ledgerExpired,
+    localeMismatch,
+    refreshLedger,
+    refreshLocale,
+  ])
+
+  const items = displayLedger
+    ? (txQuery.data?.items ?? EMPTY_TRANSACTIONS)
+    : EMPTY_TRANSACTIONS
   const skippedQuery = useQuery({
-    ...triageSkippedTransactionsQuery(skippedPage, DEFAULT_PAGE_SIZE),
+    ...triageSkippedTransactionsQuery(skippedPage, TRANSACTIONS_PAGE_SIZE),
     placeholderData: keepPreviousData,
-    enabled: isConfigured && isSkippedTab,
+    enabled: isSkippedTab,
   })
   const pendingCount = isSkippedTab
     ? skippedQuery.data?.totalCount
     : txQuery.data?.totalGhostCount
   const skippedTotalPages = Math.max(
     1,
-    Math.ceil((skippedQuery.data?.totalCount ?? 0) / DEFAULT_PAGE_SIZE)
+    Math.ceil((skippedQuery.data?.totalCount ?? 0) / TRANSACTIONS_PAGE_SIZE)
   )
   const skippedPageOutOfRange =
+    isConfigured &&
     isSkippedTab &&
     skippedQuery.isSuccess &&
     !skippedQuery.isPlaceholderData &&
@@ -150,7 +225,7 @@ export function TransactionsView() {
   const totalCount = txQuery.data?.totalCount ?? 0
   const totalInRangeCount = txQuery.data?.totalInRangeCount ?? 0
   const unreviewedInRangeCount = txQuery.data?.unreviewedInRangeCount ?? 0
-  const totalPages = Math.max(1, Math.ceil(totalCount / DEFAULT_PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(totalCount / TRANSACTIONS_PAGE_SIZE))
 
   const clearSelection = () => {
     setSelectedIds((prev) => (prev.length === 0 ? prev : []))
@@ -162,6 +237,9 @@ export function TransactionsView() {
   }
 
   const pageOutOfRange =
+    isConfigured &&
+    ledger?.configured &&
+    displayLedger &&
     !isSkippedTab &&
     txQuery.isSuccess &&
     !txQuery.isFetching &&
@@ -312,6 +390,7 @@ export function TransactionsView() {
   }
 
   const handleResetFilters = () => {
+    setSearchResetKey((key) => key + 1)
     void setFilters({
       search: null,
       category: null,
@@ -330,15 +409,19 @@ export function TransactionsView() {
     deleteTransactionsMutation.reset()
   }
 
-  const handleToggleRow = (id: string, checked: boolean) => {
-    deleteTransactionsMutation.reset()
-    setSelectedIds((prev) => {
-      if (checked) {
-        return prev.includes(id) ? prev : [...prev, id]
-      }
-      return prev.filter((existing) => existing !== id)
-    })
-  }
+  const resetDelete = deleteTransactionsMutation.reset
+  const handleToggleRow = useCallback(
+    (id: string, checked: boolean) => {
+      resetDelete()
+      setSelectedIds((prev) => {
+        if (checked) {
+          return prev.includes(id) ? prev : [...prev, id]
+        }
+        return prev.filter((existing) => existing !== id)
+      })
+    },
+    [resetDelete]
+  )
 
   const handleToggleSelectAllPage = (checked: boolean) => {
     deleteTransactionsMutation.reset()
@@ -405,7 +488,11 @@ export function TransactionsView() {
             activateOnFocus={false}
           >
             <TabsTab value="transactions">Transactions</TabsTab>
-            <TabsTab value="skipped">
+            <TabsTab
+              value="skipped"
+              onPointerEnter={preloadSkippedTransactionsList}
+              onFocus={preloadSkippedTransactionsList}
+            >
               Skipped
               {pendingCount !== undefined && (
                 <Badge variant="secondary" className="tabular-nums">
@@ -458,6 +545,8 @@ export function TransactionsView() {
               <Button
                 type="button"
                 size="sm"
+                onPointerEnter={preloadAddTransactionDialog}
+                onFocus={preloadAddTransactionDialog}
                 onClick={() => setAddDialogOpen(true)}
               >
                 Add transaction
@@ -507,9 +596,11 @@ export function TransactionsView() {
 
             <TransactionList
               transactions={items}
-              accounts={accountsListQuery.data ?? []}
+              accounts={accountsListQuery.data ?? EMPTY_ACCOUNTS}
               timezone={timezone}
-              isLoading={txQuery.isLoading}
+              isLoading={
+                txQuery.isLoading || (!displayLedger && !txQuery.isError)
+              }
               errorMessage={
                 txQuery.isError
                   ? txQuery.error instanceof Error
@@ -518,6 +609,7 @@ export function TransactionsView() {
                   : null
               }
               search={filters.search}
+              searchResetKey={searchResetKey}
               onSearchChange={handleSearchChange}
               category={filters.category}
               onCategoryChange={handleCategoryChange}
@@ -528,13 +620,13 @@ export function TransactionsView() {
               unreviewedOnly={filters.unreviewed}
               onUnreviewedOnlyChange={handleUnreviewedOnlyChange}
               onResetFilters={handleResetFilters}
-              selectedIds={selectedIds}
+              selectedTransactions={selectedTransactions}
               onToggleRow={handleToggleRow}
               onToggleSelectAllPage={handleToggleSelectAllPage}
               onSelectTransaction={setSelectedTransactionId}
               onOpenDuplicateMerge={() => setMergeMode("duplicate")}
               onOpenCombine={() => setMergeMode("combine")}
-              onMarkReviewed={(ids) => markReviewedMutation.mutate(ids)}
+              onMarkReviewed={markReviewedMutation.mutate}
               isMarkingReviewed={markReviewedMutation.isPending}
               reviewErrorMessage={reviewError}
               onDeleteSelected={(ids) => deleteTransactionsMutation.mutate(ids)}
@@ -552,70 +644,78 @@ export function TransactionsView() {
                   : null
               }
               page={activePage}
-              pageSize={DEFAULT_PAGE_SIZE}
+              pageSize={TRANSACTIONS_PAGE_SIZE}
               totalCount={totalCount}
               onPageChange={handlePageChange}
             />
           </TabsPanel>
 
           <TabsPanel value="skipped">
-            <SkippedTransactionsList
-              rows={skippedQuery.data?.items ?? []}
-              timezone={timezone}
-              isLoading={
-                skippedQuery.isPending ||
-                skippedQuery.isPlaceholderData ||
-                skippedPageOutOfRange
-              }
-              errorMessage={
-                skippedQuery.isError
-                  ? skippedQuery.error instanceof Error
-                    ? skippedQuery.error.message
-                    : "Failed to load skipped emails."
-                  : null
-              }
-              triageError={triageError}
-              pendingTriageVerdict={pendingVerdict}
-              isUndoing={undoVerdictMutation.isPending}
-              onTriageVerdict={(emailId, action) =>
-                triageVerdictMutation.mutate({ emailId, action })
-              }
-              page={skippedPage}
-              totalPages={skippedTotalPages}
-              onPageChange={(page) => void setFilters({ skippedPage: page })}
-            />
+            {isSkippedTab && (
+              <SkippedTransactionsList
+                rows={skippedQuery.data?.items ?? []}
+                timezone={timezone}
+                isLoading={
+                  skippedQuery.isPending ||
+                  skippedQuery.isPlaceholderData ||
+                  skippedPageOutOfRange
+                }
+                errorMessage={
+                  skippedQuery.isError
+                    ? skippedQuery.error instanceof Error
+                      ? skippedQuery.error.message
+                      : "Failed to load skipped emails."
+                    : null
+                }
+                triageError={triageError}
+                pendingTriageVerdict={pendingVerdict}
+                isUndoing={undoVerdictMutation.isPending}
+                onTriageVerdict={(emailId, action) =>
+                  triageVerdictMutation.mutate({ emailId, action })
+                }
+                page={skippedPage}
+                totalPages={skippedTotalPages}
+                onPageChange={(page) => void setFilters({ skippedPage: page })}
+              />
+            )}
           </TabsPanel>
         </Tabs>
       )}
 
-      <ManualMergeDialog
-        mode={mergeMode}
-        transactions={selectedTransactions}
-        accounts={accountsListQuery.data ?? []}
-        timezone={timezone}
-        onClose={() => setMergeMode(null)}
-        onSuccess={() => {
-          setSelectedIds([])
-          clearActiveUndo()
-        }}
-      />
+      {hasOpenedMergeDialog && (
+        <ManualMergeDialog
+          mode={mergeMode}
+          transactions={mergeMode ? selectedTransactions : EMPTY_TRANSACTIONS}
+          accounts={accountsListQuery.data ?? EMPTY_ACCOUNTS}
+          timezone={timezone}
+          onClose={() => setMergeMode(null)}
+          onSuccess={() => {
+            setSelectedIds([])
+            clearActiveUndo()
+          }}
+        />
+      )}
 
-      <TransactionInspectorDrawer
-        transactionId={selectedTransactionId}
-        accounts={accountsListQuery.data ?? []}
-        localCurrency={currency}
-        timezone={timezone}
-        onClose={() => setSelectedTransactionId(null)}
-        onTransactionMutated={clearActiveUndo}
-      />
+      {hasOpenedInspector && (
+        <TransactionInspectorDrawer
+          transactionId={selectedTransactionId}
+          accounts={accountsListQuery.data ?? EMPTY_ACCOUNTS}
+          localCurrency={currency}
+          timezone={timezone}
+          onClose={() => setSelectedTransactionId(null)}
+          onTransactionMutated={clearActiveUndo}
+        />
+      )}
 
-      <AddTransactionDialog
-        open={addDialogOpen}
-        onOpenChange={setAddDialogOpen}
-        accounts={accountsListQuery.data ?? []}
-        currency={currency}
-        timezone={timezone}
-      />
+      {hasOpenedAddDialog && (
+        <AddTransactionDialog
+          open={addDialogOpen}
+          onOpenChange={setAddDialogOpen}
+          accounts={accountsListQuery.data ?? EMPTY_ACCOUNTS}
+          currency={currency}
+          timezone={timezone}
+        />
+      )}
 
       {activeUndo && (
         <TriageUndoToast

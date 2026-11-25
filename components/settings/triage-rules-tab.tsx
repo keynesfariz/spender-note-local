@@ -26,7 +26,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
+import { DebouncedSearchInput } from "@/components/debounced-search-input"
 import {
   Select,
   SelectContent,
@@ -40,12 +40,15 @@ import {
   deleteTriagePolicyApi,
   invalidateTriageRelatedQueries,
   promoteIgnoredEmailApi,
+  triageIgnoredEmailBodyQuery,
   triageIgnoredEmailsQuery,
   triagePoliciesQuery,
   updateTriagePolicyApi,
-  type AppSettingsView,
+} from "@/lib/api/triage"
+import {
+  type SavedSettingsView,
   type SenderTriagePolicyView,
-} from "@/lib/api"
+} from "@/lib/api/types.generated"
 import { formatMinorCurrency, formatUtcInTimezone } from "@/lib/format"
 
 const ALL_SENDERS = "__all__"
@@ -55,10 +58,52 @@ function policyActionBadgeLabel(action: SenderTriagePolicyView["action"]) {
   return action === "admit" ? "Always import" : "Always ignore"
 }
 
+function IgnoredEmailBodyPreview({ emailId }: { emailId: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <details
+      className="group"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <span className="shrink-0 transition-transform group-open:rotate-180">
+          <ChevronDownIcon className="size-3.5" />
+        </span>
+        <span>Inspect cleaned email text</span>
+      </summary>
+      {open ? <IgnoredEmailBody emailId={emailId} /> : null}
+    </details>
+  )
+}
+
+function IgnoredEmailBody({ emailId }: { emailId: string }) {
+  const bodyQuery = useQuery(triageIgnoredEmailBodyQuery(emailId))
+
+  if (bodyQuery.isPending) {
+    return (
+      <p role="status" className="mt-2 text-xs text-muted-foreground">
+        Loading cleaned email text…
+      </p>
+    )
+  }
+  if (bodyQuery.isError) {
+    return (
+      <p role="alert" className="mt-2 text-xs text-destructive">
+        {bodyQuery.error.message}
+      </p>
+    )
+  }
+  return (
+    <pre className="mt-2 max-h-60 overflow-auto rounded-md border bg-muted p-3 font-mono text-xs break-words whitespace-pre-wrap">
+      {bodyQuery.data.cleaned_text || "(Empty email body)"}
+    </pre>
+  )
+}
+
 export function TriageRulesTab({
   settings,
 }: {
-  settings: AppSettingsView | undefined
+  settings: SavedSettingsView | undefined
 }) {
   const queryClient = useQueryClient()
   const [senderFilter, setSenderFilter] = useState(ALL_SENDERS)
@@ -371,13 +416,12 @@ export function TriageRulesTab({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_16rem]">
-            <Input
-              type="search"
-              aria-label="Search ignored emails"
+            <DebouncedSearchInput
+              label="Search ignored emails"
               placeholder="Search sender, subject, merchant, or cue..."
               value={search}
-              onChange={(e) => {
-                setSearch(e.target.value)
+              onSearch={(value) => {
+                setSearch(value)
                 setPage(1)
               }}
             />
@@ -497,15 +541,7 @@ export function TriageRulesTab({
                         </Button>
                       </div>
 
-                      <details className="group">
-                        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-                          <ChevronDownIcon className="size-3.5 transition-transform group-open:rotate-180" />
-                          <span>Inspect cleaned email text</span>
-                        </summary>
-                        <pre className="mt-2 max-h-60 overflow-auto rounded-md border bg-muted p-3 font-mono text-xs break-words whitespace-pre-wrap">
-                          {item.cleaned_text || "(Empty email body)"}
-                        </pre>
-                      </details>
+                      <IgnoredEmailBodyPreview emailId={item.email_id} />
                     </div>
                   </div>
                 )

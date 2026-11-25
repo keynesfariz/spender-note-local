@@ -26,13 +26,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { categoriesQuery } from "@/lib/api/categories"
+import { tagsQuery } from "@/lib/api/tags"
 import {
   addManualTransactionApi,
-  categoriesQuery,
   invalidateTransactionRelatedQueries,
-  tagsQuery,
-  type AccountSummary,
-} from "@/lib/api"
+} from "@/lib/api/transactions"
+import { type AccountOption } from "@/lib/api/types.generated"
 import {
   DEFAULT_CATEGORY,
   buildCategoryIconMap,
@@ -55,13 +55,13 @@ export function AddTransactionDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  accounts: AccountSummary[]
+  accounts: AccountOption[]
   currency: string
   timezone: string | null | undefined
 }) {
   const queryClient = useQueryClient()
-  const catListQuery = useQuery(categoriesQuery())
-  const tagListQuery = useQuery(tagsQuery())
+  const catListQuery = useQuery({ ...categoriesQuery(), enabled: open })
+  const tagListQuery = useQuery({ ...tagsQuery(), enabled: open })
 
   const [amount, setAmount] = useState("")
   const [merchant, setMerchant] = useState("")

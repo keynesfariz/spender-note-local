@@ -18,7 +18,8 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { reconcileAccountApi, type AccountSummary } from "@/lib/api"
+import { reconcileAccountApi } from "@/lib/api/accounts"
+import { type AccountSummary } from "@/lib/api/types.generated"
 import {
   dateTimeInputToUtcIso,
   formatDateString,

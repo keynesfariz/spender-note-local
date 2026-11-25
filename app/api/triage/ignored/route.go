@@ -19,11 +19,12 @@ func GET(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	pageSize, _ := strconv.Atoi(q.Get("pageSize"))
-	res, err := domain.ListIgnoredEmails(gdb, domain.ListIgnoredEmailsParams{
+	res, err := domain.ListIgnoredEmails(gdb.WithContext(r.Context()), domain.ListIgnoredEmailsParams{
 		SenderEmail: q.Get("senderEmail"),
 		Search:      q.Get("search"),
 		Page:        page,
 		PageSize:    pageSize,
+		SummaryOnly: q.Get("view") == "summary",
 	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, err.Error())

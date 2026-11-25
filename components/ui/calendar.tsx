@@ -5,6 +5,8 @@ import { cn } from "cn"
 import {
   DayPicker,
   getDefaultClassNames,
+  useDayPicker,
+  type CustomComponents,
   type DayButton,
   type Locale,
 } from "react-day-picker"
@@ -138,65 +140,88 @@ function Calendar({
         hidden: cn("invisible", defaultClassNames.hidden),
         ...classNames,
       }}
-      components={{
-        Root: ({ className, rootRef, ...props }) => {
-          return (
-            <div
-              data-slot="calendar"
-              ref={rootRef}
-              className={cn(className)}
-              {...props}
-            />
-          )
-        },
-        PreviousMonthButton: (props) => (
-          <IconTooltip label={props["aria-label"] ?? "Previous month"}>
-            <button {...props} />
-          </IconTooltip>
-        ),
-        NextMonthButton: (props) => (
-          <IconTooltip label={props["aria-label"] ?? "Next month"}>
-            <button {...props} />
-          </IconTooltip>
-        ),
-        Chevron: ({ className, orientation, ...props }) => {
-          if (orientation === "left") {
-            return (
-              <ChevronLeftIcon className={cn("size-4", className)} {...props} />
-            )
-          }
-
-          if (orientation === "right") {
-            return (
-              <ChevronRightIcon
-                className={cn("size-4", className)}
-                {...props}
-              />
-            )
-          }
-
-          return (
-            <ChevronDownIcon className={cn("size-4", className)} {...props} />
-          )
-        },
-        DayButton: ({ ...props }) => (
-          <CalendarDayButton locale={locale} {...props} />
-        ),
-        WeekNumber: ({ children, ...props }) => {
-          return (
-            <td {...props}>
-              <div className="flex size-(--cell-size) items-center justify-center text-center">
-                {children}
-              </div>
-            </td>
-          )
-        },
-        ...components,
-      }}
+      components={{ ...calendarComponents, ...components }}
       {...props}
     />
   )
 }
+
+function CalendarRoot({
+  className,
+  rootRef,
+  ...props
+}: React.ComponentProps<CustomComponents["Root"]>) {
+  return (
+    <div
+      data-slot="calendar"
+      ref={rootRef}
+      className={cn(className)}
+      {...props}
+    />
+  )
+}
+
+function PreviousMonthButton(
+  props: React.ComponentProps<CustomComponents["PreviousMonthButton"]>
+) {
+  return (
+    <IconTooltip label={props["aria-label"] ?? "Previous month"}>
+      <button {...props} />
+    </IconTooltip>
+  )
+}
+
+function NextMonthButton(
+  props: React.ComponentProps<CustomComponents["NextMonthButton"]>
+) {
+  return (
+    <IconTooltip label={props["aria-label"] ?? "Next month"}>
+      <button {...props} />
+    </IconTooltip>
+  )
+}
+
+function CalendarChevron({
+  className,
+  orientation,
+  ...props
+}: React.ComponentProps<CustomComponents["Chevron"]>) {
+  const Icon =
+    orientation === "left"
+      ? ChevronLeftIcon
+      : orientation === "right"
+        ? ChevronRightIcon
+        : ChevronDownIcon
+
+  return <Icon className={cn("size-4", className)} {...props} />
+}
+
+function LocalizedDayButton(props: React.ComponentProps<typeof DayButton>) {
+  const { dayPickerProps } = useDayPicker()
+  return <CalendarDayButton locale={dayPickerProps.locale} {...props} />
+}
+
+function CalendarWeekNumber({
+  children,
+  ...props
+}: React.ComponentProps<CustomComponents["WeekNumber"]>) {
+  return (
+    <td {...props}>
+      <div className="flex size-(--cell-size) items-center justify-center text-center">
+        {children}
+      </div>
+    </td>
+  )
+}
+
+const calendarComponents = {
+  Root: CalendarRoot,
+  PreviousMonthButton,
+  NextMonthButton,
+  Chevron: CalendarChevron,
+  DayButton: LocalizedDayButton,
+  WeekNumber: CalendarWeekNumber,
+} satisfies Partial<CustomComponents>
 
 function CalendarDayButton({
   className,
@@ -216,6 +241,7 @@ function CalendarDayButton({
     <Button
       variant="ghost"
       size="icon"
+      ref={ref}
       data-day={day.date.toLocaleDateString(locale?.code)}
       data-selected-single={
         modifiers.selected &&

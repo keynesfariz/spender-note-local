@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"portspendernote/internal/db"
@@ -16,11 +17,13 @@ func TestGetAppSettings_LiveModelsAndOfflineFallback(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 
+	var probes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
 			http.NotFound(w, r)
 			return
 		}
+		probes.Add(1)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]string{{"id": "qwen2.5-3b"}, {"id": "gemma-3"}},
 		})
@@ -40,6 +43,18 @@ func TestGetAppSettings_LiveModelsAndOfflineFallback(t *testing.T) {
 	}
 	if res["llm_base_url"] != srv.URL+"/v1" {
 		t.Fatalf("expected trailing slash trimmed, got %v", res["llm_base_url"])
+	}
+
+	config, err := GetSavedSettings(gdb)
+	if err != nil || config.LlmBaseURL != srv.URL+"/v1" {
+		t.Fatalf("saved settings = %+v, %v", config, err)
+	}
+	locale, err := GetAppLocale(gdb)
+	if err != nil || locale.Timezone != nil || locale.Currency != nil {
+		t.Fatalf("initial locale = %+v, %v", locale, err)
+	}
+	if probes.Load() != 0 {
+		t.Fatal("saved settings and locale must not probe the model server")
 	}
 
 	view, err := GetAppSettings(context.Background(), gdb, "")

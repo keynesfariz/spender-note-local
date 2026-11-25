@@ -33,15 +33,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { categoriesQuery } from "@/lib/api/categories"
+import { tagsQuery } from "@/lib/api/tags"
 import {
-  categoriesQuery,
   combineTransactionsApi,
   duplicateMergeTransactionsApi,
   invalidateTransactionRelatedQueries,
-  tagsQuery,
-  type AccountSummary,
+} from "@/lib/api/transactions"
+import {
+  type AccountOption,
   type TransactionListItem,
-} from "@/lib/api"
+} from "@/lib/api/types.generated"
 import {
   DEFAULT_CATEGORY,
   buildCategoryIconMap,
@@ -70,7 +72,7 @@ export function ManualMergeDialog({
 }: {
   mode: ManualMergeMode | null
   transactions: TransactionListItem[]
-  accounts: AccountSummary[]
+  accounts: AccountOption[]
   timezone: string | null | undefined
   onClose: () => void
   onSuccess: () => void
@@ -106,7 +108,7 @@ export function ManualMergeDialog({
   const sortedByOccurred = useMemo(
     () =>
       mode === "combine"
-        ? [...transactions].sort((a, b) =>
+        ? transactions.toSorted((a, b) =>
             b.occurred_at_utc.localeCompare(a.occurred_at_utc)
           )
         : transactions,

@@ -59,6 +59,17 @@ var typeSpecs = []structSpec{
 		tsName: "CountryLocaleInfo",
 		goType: reflect.TypeOf(domain.CountryLocaleInfo{}),
 	},
+	{tsName: "AccountOption", goType: reflect.TypeOf(domain.AccountOption{})},
+	{tsName: "TransactionInspectorSource", goType: reflect.TypeOf(domain.TransactionInspectorSource{})},
+	{tsName: "TransactionInspectorView", goType: reflect.TypeOf(domain.TransactionInspectorView{})},
+	{tsName: "TransactionSourceBody", goType: reflect.TypeOf(domain.TransactionSourceBody{})},
+	{tsName: "AppLocaleView", goType: reflect.TypeOf(domain.AppLocaleView{})},
+	{
+		tsName:    "SavedSettingsView",
+		goType:    reflect.TypeOf(domain.SavedSettingsView{}),
+		overrides: map[string]string{"llm_provider": `"openai_compatible"`},
+	},
+	{tsName: "ModelDiscoveryView", goType: reflect.TypeOf(domain.ModelDiscoveryView{})},
 	{
 		tsName: "AppSettingsView",
 		goType: reflect.TypeOf(domain.AppSettingsView{}),
@@ -122,6 +133,7 @@ var typeSpecs = []structSpec{
 		tsName: "PaginatedSkippedTransactionsResponse",
 		goType: reflect.TypeOf(domain.PaginatedSkippedTransactionsResponse{}),
 	},
+	{tsName: "LedgerScope", goType: reflect.TypeOf(domain.LedgerScope{})},
 	{
 		tsName: "PaginatedTransactionsResponse",
 		goType: reflect.TypeOf(domain.PaginatedTransactionsResponse{}),

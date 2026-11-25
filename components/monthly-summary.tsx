@@ -9,7 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import type { MonthlySpendingSummary } from "@/lib/api"
+import type { MonthlySpendingSummary } from "@/lib/api/types.generated"
 import { formatMinorCurrency } from "@/lib/format"
 
 export function MonthlySummary({

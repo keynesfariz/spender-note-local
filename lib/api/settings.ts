@@ -1,15 +1,32 @@
 import { queryOptions } from "@tanstack/react-query"
 import { apiFetch } from "./client"
 import type {
-  AppSettingsView,
+  AppLocaleView,
+  ModelDiscoveryView,
+  SavedSettingsView,
   GmailStatusView,
   SenderRecord,
 } from "./types.generated"
 
 export const settingsQuery = () =>
   queryOptions({
-    queryKey: ["settings"] as const,
-    queryFn: () => apiFetch<AppSettingsView>("/api/settings"),
+    queryKey: ["settings", "saved"] as const,
+    queryFn: ({ signal }) =>
+      apiFetch<SavedSettingsView>("/api/settings?view=saved", { signal }),
+  })
+
+export const localeQuery = () =>
+  queryOptions({
+    queryKey: ["settings", "locale"] as const,
+    queryFn: ({ signal }) =>
+      apiFetch<AppLocaleView>("/api/settings?view=locale", { signal }),
+  })
+
+export const llmModelsQuery = () =>
+  queryOptions({
+    queryKey: ["settings", "models"] as const,
+    queryFn: ({ signal }) =>
+      apiFetch<ModelDiscoveryView>("/api/settings?view=models", { signal }),
   })
 
 export const sendersQuery = () =>
@@ -35,10 +52,11 @@ export const updateLocaleSettingsApi = (input: {
   })
 
 export const probeLlmModelsApi = (baseUrl: string) => {
-  const qs = baseUrl.trim()
-    ? `?llm_base_url=${encodeURIComponent(baseUrl.trim())}`
-    : ""
-  return apiFetch<AppSettingsView>(`/api/settings${qs}`)
+  const query = new URLSearchParams({
+    view: "models",
+    llm_base_url: baseUrl.trim(),
+  })
+  return apiFetch<ModelDiscoveryView>(`/api/settings?${query}`)
 }
 
 export const updateLlmSettingsApi = (input: {

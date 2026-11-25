@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -53,6 +55,110 @@ func seedLegacySkippedEmail(t *testing.T, gdb *gorm.DB, id string, senderID *str
 	).Error; err != nil {
 		t.Fatalf("seed extraction %s: %v", id, err)
 	}
+}
+
+func TestListIgnoredEmails_FilteringAndPagination(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	const receivedAt = "2026-11-24T05:10:00Z"
+	for _, row := range []struct {
+		id, sender, subject, body, rawStatus, triageState string
+	}{
+		{"a", `"Shop" <SHOP@example.com>`, "ÉTÉ %_", "", "non_transaction", "ignored"},
+		{"b", "bad, header <SHOP@example.com>", "ÉTÉ %_", strings.Repeat("large email body ", 10000), "non_transaction", "ignored"},
+		{"c", "another@example.com", "ÉTÉ XX", "ÉTÉ %_", "non_transaction", "ignored"},
+		{"d", "other@example.com", "ÉTÉ %_", "excluded by raw status", "extracted", "ignored"},
+		{"e", "other@example.com", "ÉTÉ %_", "excluded by triage state", "non_transaction", "promoted"},
+	} {
+		seedLegacySkippedEmail(t, gdb, row.id, nil, row.sender, row.subject, row.body, 1795501000000, receivedAt, "policy:ignore", "{}")
+		if err := gdb.Exec("UPDATE raw_emails SET status = ? WHERE id = ?", row.rawStatus, row.id).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := gdb.Exec("UPDATE email_extractions SET triage_state = ? WHERE email_id = ?", row.triageState, row.id).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("literal unicode search sorted by id for equal timestamps", func(t *testing.T) {
+		for page, wantID := range []string{"b", "a", ""} {
+			result, err := ListIgnoredEmails(gdb, ListIgnoredEmailsParams{Search: " été %_ ", Page: page + 1, PageSize: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.TotalCount != 2 || !slices.Equal(result.AvailableSenders, []string{"another@example.com", "shop@example.com"}) {
+				t.Fatalf("page %d: total=%d senders=%v", page+1, result.TotalCount, result.AvailableSenders)
+			}
+			if wantID == "" {
+				if len(result.Items) != 0 {
+					t.Fatalf("expected empty page, got %+v", result.Items)
+				}
+				continue
+			}
+			if len(result.Items) != 1 || result.Items[0].EmailID != wantID || result.Items[0].SenderEmail != "shop@example.com" {
+				t.Fatalf("page %d: expected %s from shop@example.com, got %+v", page+1, wantID, result.Items)
+			}
+		}
+	})
+
+	t.Run("sender options are global", func(t *testing.T) {
+		result, err := ListIgnoredEmails(gdb, ListIgnoredEmailsParams{SenderEmail: "Another <ANOTHER@example.com>"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.TotalCount != 1 || len(result.Items) != 1 || result.Items[0].EmailID != "c" ||
+			!slices.Equal(result.AvailableSenders, []string{"another@example.com", "shop@example.com"}) {
+			t.Fatalf("unexpected sender-filtered result: %+v", result)
+		}
+	})
+
+	t.Run("only the legacy list includes inline bodies", func(t *testing.T) {
+		for _, summary := range []bool{false, true} {
+			result, err := ListIgnoredEmails(gdb, ListIgnoredEmailsParams{
+				SenderEmail: "shop@example.com",
+				Page:        2,
+				PageSize:    1,
+				SummaryOnly: summary,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Items) != 1 || result.Items[0].EmailID != "a" || !result.Items[0].PreLlmSkipped {
+				t.Fatalf("expected the older pre-LLM ignored item, got %+v", result.Items)
+			}
+			data, err := json.Marshal(result.Items[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if summary && strings.Contains(string(data), `"cleaned_text"`) {
+				t.Fatalf("summary exposed cleaned text: %s", data)
+			}
+			if !summary && !strings.Contains(string(data), `"cleaned_text":""`) {
+				t.Fatalf("legacy response omitted empty cleaned text: %s", data)
+			}
+		}
+	})
+
+	t.Run("body is available only for currently ignored emails", func(t *testing.T) {
+		body, err := GetIgnoredEmailBody(gdb, "b")
+		if err != nil || body != strings.Repeat("large email body ", 10000) {
+			t.Fatalf("expected intact cleaned body, got %d bytes and error %v", len(body), err)
+		}
+		for _, id := range []string{"d", "e", "missing"} {
+			var notFound *NotFoundError
+			if _, err := GetIgnoredEmailBody(gdb, id); !errors.As(err, &notFound) {
+				t.Fatalf("%s: expected NotFoundError, got %v", id, err)
+			}
+		}
+	})
+
+	t.Run("large page returns empty rather than overflowing offset", func(t *testing.T) {
+		result, err := ListIgnoredEmails(gdb, ListIgnoredEmailsParams{Page: math.MaxInt/25 + 2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.TotalCount != 3 || len(result.Items) != 0 {
+			t.Fatalf("unexpected out-of-range result: %+v", result)
+		}
+	})
 }
 
 func TestBackfillSkippedEmailTriageData_LenientLegacyJSONAndExclusions(t *testing.T) {

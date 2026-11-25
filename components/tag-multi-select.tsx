@@ -14,7 +14,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { createTagApi, type TagSummary } from "@/lib/api"
+import { createTagApi } from "@/lib/api/tags"
+import { type TagSummary } from "@/lib/api/types.generated"
 
 const EMPTY_DRAFT_TAG_NAMES: string[] = []
 
@@ -63,9 +64,10 @@ export function TagMultiSelect({
 
   const selectedTags = useMemo(
     () =>
-      selectedTagIds
-        .map((id) => tagById.get(id))
-        .filter((t): t is TagSummary => Boolean(t)),
+      selectedTagIds.flatMap((id) => {
+        const tag = tagById.get(id)
+        return tag ? [tag] : []
+      }),
     [selectedTagIds, tagById]
   )
 
@@ -107,11 +109,11 @@ export function TagMultiSelect({
     )
   }, [popoverDraftNames, trimmedSearch])
 
-  const hasExactMatch = useMemo(() => {
-    if (!trimmedSearch) return true
-    const needle = trimmedSearch.toLowerCase()
-    return persistedNamesLower.has(needle) || activeDraftSet.has(needle)
-  }, [persistedNamesLower, activeDraftSet, trimmedSearch])
+  const searchName = trimmedSearch.toLowerCase()
+  const hasExactMatch =
+    !searchName ||
+    persistedNamesLower.has(searchName) ||
+    activeDraftSet.has(searchName)
 
   const createTagMutation = useMutation({
     mutationFn: (name: string) => createTagApi({ name }),

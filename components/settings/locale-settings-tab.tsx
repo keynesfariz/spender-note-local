@@ -21,12 +21,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { updateLocaleSettingsApi, type AppSettingsView } from "@/lib/api"
+import { updateLocaleSettingsApi } from "@/lib/api/settings"
+import { type SavedSettingsView } from "@/lib/api/types.generated"
 
 export function LocaleSettingsTab({
   settings,
 }: {
-  settings: AppSettingsView | undefined
+  settings: SavedSettingsView | undefined
 }) {
   const queryClient = useQueryClient()
   const [countryDraft, setCountryDraft] = useState<string | null>(null)
@@ -53,14 +54,16 @@ export function LocaleSettingsTab({
 
   const countryItems = useMemo(
     () =>
-      (settings?.countryCatalog ?? [])
-        .filter((c) =>
-          canRepairLockedCountry ? c.currency === settings?.currency : true
-        )
-        .map((c) => ({
-          value: c.code,
-          label: `${c.name} (${c.currency})`,
-        })),
+      (settings?.countryCatalog ?? []).flatMap((c) =>
+        canRepairLockedCountry && c.currency !== settings?.currency
+          ? []
+          : [
+              {
+                value: c.code,
+                label: `${c.name} (${c.currency})`,
+              },
+            ]
+      ),
     [settings?.countryCatalog, settings?.currency, canRepairLockedCountry]
   )
 
@@ -85,6 +88,9 @@ export function LocaleSettingsTab({
       setLocaleMessage("Locale settings saved.")
       void queryClient.invalidateQueries({ queryKey: ["settings"] })
       void queryClient.invalidateQueries({ queryKey: ["spending"] })
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] })
+      void queryClient.invalidateQueries({ queryKey: ["triage"] })
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] })
     },
     onError: (err) => {
       setLocaleMessage(

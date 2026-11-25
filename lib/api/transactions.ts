@@ -3,7 +3,6 @@ import { apiFetch } from "./client"
 import type {
   MonthlySpendingSummary,
   PaginatedTransactionsResponse,
-  TransactionDetailView,
   TransactionEnrichmentPreview,
   TransactionListItem,
 } from "./types.generated"
@@ -17,8 +16,18 @@ export const monthlySummaryQuery = (month?: string) =>
     },
   })
 
+export const TRANSACTIONS_PAGE_SIZE = 25
+
+export const DEFAULT_LEDGER_PARAMS = {
+  ledgerRange: "dates",
+  showSkipped: false,
+  page: 1,
+  pageSize: TRANSACTIONS_PAGE_SIZE,
+} as const
+
 export const transactionsQuery = (params?: {
   month?: string
+  ledgerRange?: "all" | "dates"
   startDate?: string
   endDate?: string
   category?: string
@@ -32,8 +41,9 @@ export const transactionsQuery = (params?: {
 }) =>
   queryOptions({
     queryKey: ["transactions", "list", params ?? {}] as const,
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       const sp = new URLSearchParams()
+      if (params?.ledgerRange) sp.set("ledgerRange", params.ledgerRange)
       if (params?.month) sp.set("month", params.month)
       if (params?.startDate) sp.set("startDate", params.startDate)
       if (params?.endDate) sp.set("endDate", params.endDate)
@@ -47,18 +57,10 @@ export const transactionsQuery = (params?: {
       if (params?.pageSize) sp.set("pageSize", String(params.pageSize))
       const qs = sp.toString()
       return apiFetch<PaginatedTransactionsResponse>(
-        `/api/transactions${qs ? `?${qs}` : ""}`
+        `/api/transactions${qs ? `?${qs}` : ""}`,
+        { signal }
       )
     },
-  })
-
-export const transactionDetailQuery = (id: string) =>
-  queryOptions({
-    queryKey: ["transactions", "detail", id] as const,
-    queryFn: () =>
-      apiFetch<TransactionDetailView>(
-        `/api/transactions/${encodeURIComponent(id)}`
-      ),
   })
 
 export const addManualTransactionApi = (input: {

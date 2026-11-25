@@ -22,11 +22,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { mergeAccountsApi } from "@/lib/api/accounts"
 import {
-  mergeAccountsApi,
   type AccountSummary,
   type AccountType,
-} from "@/lib/api"
+} from "@/lib/api/types.generated"
 import { formatMinorCurrency } from "@/lib/format"
 
 const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {

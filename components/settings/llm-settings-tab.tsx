@@ -24,14 +24,17 @@ import {
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import {
-  dismissPendingQueueApi,
+  llmModelsQuery,
   probeLlmModelsApi,
-  retryFailedExtractionsApi,
-  syncStatusQuery,
   testLlmModelApi,
   updateLlmSettingsApi,
-  type AppSettingsView,
-} from "@/lib/api"
+} from "@/lib/api/settings"
+import {
+  dismissPendingQueueApi,
+  retryFailedExtractionsApi,
+  syncStatusQuery,
+} from "@/lib/api/sync"
+import { type SavedSettingsView } from "@/lib/api/types.generated"
 
 const DEFAULT_LLM_BASE_URL = "http://localhost:9931/v1"
 const EMPTY_MODELS: readonly string[] = []
@@ -39,10 +42,11 @@ const EMPTY_MODELS: readonly string[] = []
 export function LlmSettingsTab({
   settings,
 }: {
-  settings: AppSettingsView | undefined
+  settings: SavedSettingsView | undefined
 }) {
   const queryClient = useQueryClient()
   const syncStatus = useQuery(syncStatusQuery())
+  const models = useQuery(llmModelsQuery())
 
   const [baseUrlDraft, setBaseUrlDraft] = useState<string | null>(null)
   const [modelDraft, setModelDraft] = useState<string | null>(null)
@@ -64,11 +68,14 @@ export function LlmSettingsTab({
 
   const activeProbe =
     probedState && probedState.baseUrl === baseUrl.trim() ? probedState : null
-  const availableModels =
-    activeProbe?.availableModels ?? settings?.availableModels ?? EMPTY_MODELS
-  const serverReachable =
-    activeProbe?.serverReachable ?? settings?.serverReachable ?? false
-  const serverError = activeProbe?.serverError ?? settings?.serverError ?? null
+  const savedProbe =
+    !baseUrlDraft || baseUrlDraft.trim() === settings?.llm_base_url
+      ? models.data
+      : undefined
+  const probe = activeProbe ?? savedProbe
+  const availableModels = probe?.availableModels ?? EMPTY_MODELS
+  const serverReachable = probe?.serverReachable ?? false
+  const serverError = probe?.serverError ?? null
 
   const modelItems = useMemo(() => {
     const base = availableModels.map((id) => ({

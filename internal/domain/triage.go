@@ -2,12 +2,14 @@ package domain
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
-	"sort"
 	"strings"
 	"time"
 
+	"github.com/glebarez/go-sqlite"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
@@ -127,7 +129,7 @@ type IgnoredEmailItem struct {
 	FromAddress          string  `json:"from_address"`
 	SenderEmail          string  `json:"sender_email"`
 	Subject              string  `json:"subject"`
-	CleanedText          string  `json:"cleaned_text"`
+	CleanedText          *string `json:"cleaned_text,omitempty"`
 	ReceivedAtUtc        string  `json:"received_at_utc"`
 	AmountMinor          *int64  `json:"amount_minor"`
 	Currency             *string `json:"currency"`
@@ -146,6 +148,7 @@ type ListIgnoredEmailsParams struct {
 	Search      string
 	Page        int
 	PageSize    int
+	SummaryOnly bool
 }
 
 type PaginatedIgnoredEmailsResponse struct {
@@ -639,6 +642,10 @@ type PaginatedSkippedTransactionsResponse struct {
 }
 
 func ListSkippedTransactions(gdb *gorm.DB, page, pageSize int) (*PaginatedSkippedTransactionsResponse, error) {
+	return ListSkippedTransactionsWithBackfill(gdb, page, pageSize, nil)
+}
+
+func ListSkippedTransactionsWithBackfill(gdb *gorm.DB, page, pageSize int, backfill *TriageBackfill) (*PaginatedSkippedTransactionsResponse, error) {
 	page = max(1, page)
 	if pageSize <= 0 {
 		pageSize = 25
@@ -655,7 +662,7 @@ func ListSkippedTransactions(gdb *gorm.DB, page, pageSize int) (*PaginatedSkippe
 	if timezone == nil || *timezone == "" || currency == nil || *currency == "" {
 		return &result, nil
 	}
-	if err := BackfillSkippedEmailTriageData(gdb); err != nil {
+	if err := backfill.ensure(gdb); err != nil {
 		return nil, err
 	}
 
@@ -1411,133 +1418,126 @@ func DeleteTriagePolicy(gdb *gorm.DB, id string) (*DeleteTriagePolicyResult, err
 	return &DeleteTriagePolicyResult{Ok: true, RestoredGhostCount: restored}, nil
 }
 
+// SQLite's built-in lower() folds ASCII only. Use the domain's sender
+// normalization and Go's Unicode case folding for the existing search rules.
+func init() {
+	sqlite.MustRegisterDeterministicScalarFunction("spender_normalized_sender", 1,
+		func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			return NormalizeSenderEmail(args[0].(string)), nil
+		})
+	sqlite.MustRegisterDeterministicScalarFunction("spender_unicode_lower", 1,
+		func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			return strings.ToLower(args[0].(string)), nil
+		})
+}
+
+const ignoredEmailBase = `
+	FROM raw_emails re
+	JOIN email_extractions ee ON ee.email_id = re.id
+	WHERE re.status = 'non_transaction'
+	  AND ee.triage_state = 'ignored'`
+
 func ListIgnoredEmails(gdb *gorm.DB, params ListIgnoredEmailsParams) (*PaginatedIgnoredEmailsResponse, error) {
-	page := params.Page
-	if page < 1 {
-		page = 1
-	}
 	pageSize := params.PageSize
 	if pageSize <= 0 {
 		pageSize = 25
 	}
-	if pageSize > 100 {
-		pageSize = 100
+
+	result := PaginatedIgnoredEmailsResponse{
+		Items:            []IgnoredEmailItem{},
+		Page:             max(1, params.Page),
+		PageSize:         min(100, pageSize),
+		AvailableSenders: []string{},
+	}
+	base := ignoredEmailBase
+	var args []any
+	if sender := NormalizeSenderEmail(params.SenderEmail); sender != "" {
+		base += " AND spender_normalized_sender(re.from_address) = ?"
+		args = append(args, sender)
+	}
+	if search := strings.ToLower(strings.TrimSpace(params.Search)); search != "" {
+		base += ` AND instr(spender_unicode_lower(
+			re.subject || char(10) || re.from_address || char(10) ||
+			TRIM(COALESCE(ee.merchant_raw, '')) || char(10) ||
+			COALESCE(ee.triage_subject_pattern, '') || char(10) ||
+			COALESCE(ee.triage_body_cue, '')), ?) > 0`
+		args = append(args, search)
 	}
 
-	type rawIgnoredRow struct {
-		EmailID              string  `gorm:"column:email_id"`
-		FromAddress          string  `gorm:"column:from_address"`
-		Subject              string  `gorm:"column:subject"`
-		CleanedText          string  `gorm:"column:cleaned_text"`
-		ReceivedAtUtc        string  `gorm:"column:received_at_utc"`
-		AmountMinor          *int64  `gorm:"column:amount_minor"`
-		Currency             *string `gorm:"column:currency"`
-		OccurredAtUtc        *string `gorm:"column:occurred_at_utc"`
-		MerchantRaw          *string `gorm:"column:merchant_raw"`
-		Category             *string `gorm:"column:category"`
-		ExtractionModel      string  `gorm:"column:extraction_model"`
-		TriageSignatureKey   string  `gorm:"column:triage_signature_key"`
-		TriageSubjectPattern string  `gorm:"column:triage_subject_pattern"`
-		TriageBodyCue        string  `gorm:"column:triage_body_cue"`
-	}
+	err := gdb.Transaction(func(tx *gorm.DB) error {
+		var senders []string
+		if err := tx.Raw(`
+			SELECT DISTINCT spender_normalized_sender(from_address) AS email
+			FROM (SELECT DISTINCT re.from_address` + ignoredEmailBase + `)
+			ORDER BY email`).Scan(&senders).Error; err != nil {
+			return err
+		}
+		for _, sender := range senders {
+			if sender != "" {
+				result.AvailableSenders = append(result.AvailableSenders, sender)
+			}
+		}
 
-	var rows []rawIgnoredRow
-	if err := gdb.Raw(`
-		SELECT
-			re.id AS email_id,
-			re.from_address,
-			re.subject,
-			re.cleaned_text,
-			re.received_at_utc,
-			ee.amount_minor,
-			ee.currency,
-			ee.occurred_at_utc,
-			NULLIF(TRIM(COALESCE(ee.merchant_raw, '')), '') AS merchant_raw,
-			ee.category,
-			ee.extraction_model,
-			COALESCE(ee.triage_signature_key, '') AS triage_signature_key,
-			COALESCE(ee.triage_subject_pattern, '') AS triage_subject_pattern,
-			COALESCE(ee.triage_body_cue, '') AS triage_body_cue
-		FROM raw_emails re
-		JOIN email_extractions ee ON ee.email_id = re.id
-		WHERE re.status = 'non_transaction'
-		  AND ee.triage_state = 'ignored'
-		ORDER BY COALESCE(ee.occurred_at_utc, re.received_at_utc) DESC, re.internal_date_ms DESC, re.id DESC`,
-	).Scan(&rows).Error; err != nil {
+		if err := tx.Raw("SELECT COUNT(*) "+base, args...).Scan(&result.TotalCount).Error; err != nil {
+			return err
+		}
+		if result.TotalCount == 0 || int64(result.Page-1) > (result.TotalCount-1)/int64(result.PageSize) {
+			return nil
+		}
+
+		offset := int64(result.Page-1) * int64(result.PageSize)
+		if err := tx.Raw(`
+			SELECT re.id AS email_id, re.from_address,
+				spender_normalized_sender(re.from_address) AS sender_email,
+				re.subject, re.received_at_utc, ee.amount_minor, ee.currency, ee.occurred_at_utc,
+				NULLIF(TRIM(COALESCE(ee.merchant_raw, '')), '') AS merchant_raw,
+				ee.category, ee.extraction_model,
+				COALESCE(ee.triage_signature_key, '') AS triage_signature_key,
+				COALESCE(ee.triage_subject_pattern, '') AS triage_subject_pattern,
+				COALESCE(ee.triage_body_cue, '') AS triage_body_cue,
+				ee.extraction_model = 'policy:ignore' AS pre_llm_skipped
+			`+base+`
+			ORDER BY COALESCE(ee.occurred_at_utc, re.received_at_utc) DESC, re.internal_date_ms DESC, re.id DESC
+			LIMIT ? OFFSET ?`, append(args, result.PageSize, offset)...).Scan(&result.Items).Error; err != nil {
+			return err
+		}
+		if params.SummaryOnly || len(result.Items) == 0 {
+			return nil
+		}
+
+		emailIDs := make([]string, len(result.Items))
+		for i, item := range result.Items {
+			emailIDs[i] = item.EmailID
+		}
+		var bodies []struct {
+			ID          string
+			CleanedText string
+		}
+		if err := tx.Raw("SELECT id, cleaned_text FROM raw_emails WHERE id IN ?", emailIDs).Scan(&bodies).Error; err != nil {
+			return err
+		}
+		byEmailID := make(map[string]*string, len(bodies))
+		for i := range bodies {
+			byEmailID[bodies[i].ID] = &bodies[i].CleanedText
+		}
+		for i := range result.Items {
+			result.Items[i].CleanedText = byEmailID[result.Items[i].EmailID]
+		}
+		return nil
+	}, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
 		return nil, err
 	}
+	return &result, nil
+}
 
-	senderSet := map[string]struct{}{}
-	wantSender := NormalizeSenderEmail(params.SenderEmail)
-	searchLower := strings.ToLower(strings.TrimSpace(params.Search))
-
-	filtered := make([]IgnoredEmailItem, 0, len(rows))
-	for _, r := range rows {
-		senderEmail := NormalizeSenderEmail(r.FromAddress)
-		if senderEmail != "" {
-			senderSet[senderEmail] = struct{}{}
-		}
-		if wantSender != "" && senderEmail != wantSender {
-			continue
-		}
-		if searchLower != "" {
-			merchStr := ""
-			if r.MerchantRaw != nil {
-				merchStr = *r.MerchantRaw
-			}
-			haystack := strings.ToLower(r.Subject + "\n" + r.FromAddress + "\n" + merchStr + "\n" + r.TriageSubjectPattern + "\n" + r.TriageBodyCue)
-			if !strings.Contains(haystack, searchLower) {
-				continue
-			}
-		}
-		filtered = append(filtered, IgnoredEmailItem{
-			EmailID:              r.EmailID,
-			FromAddress:          r.FromAddress,
-			SenderEmail:          senderEmail,
-			Subject:              r.Subject,
-			CleanedText:          r.CleanedText,
-			ReceivedAtUtc:        r.ReceivedAtUtc,
-			AmountMinor:          r.AmountMinor,
-			Currency:             r.Currency,
-			OccurredAtUtc:        r.OccurredAtUtc,
-			MerchantRaw:          r.MerchantRaw,
-			Category:             r.Category,
-			ExtractionModel:      r.ExtractionModel,
-			TriageSignatureKey:   r.TriageSignatureKey,
-			TriageSubjectPattern: r.TriageSubjectPattern,
-			TriageBodyCue:        r.TriageBodyCue,
-			PreLlmSkipped:        r.ExtractionModel == "policy:ignore",
-		})
+func GetIgnoredEmailBody(gdb *gorm.DB, emailID string) (string, error) {
+	var body string
+	err := gdb.Raw("SELECT re.cleaned_text "+ignoredEmailBase+" AND re.id = ?", emailID).Row().Scan(&body)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", &NotFoundError{Message: "Ignored email not found."}
 	}
-
-	availableSenders := make([]string, 0, len(senderSet))
-	for s := range senderSet {
-		availableSenders = append(availableSenders, s)
-	}
-	sort.Strings(availableSenders)
-
-	totalCount := int64(len(filtered))
-	startIdx := (page - 1) * pageSize
-	if startIdx >= len(filtered) {
-		return &PaginatedIgnoredEmailsResponse{
-			Items:            []IgnoredEmailItem{},
-			TotalCount:       totalCount,
-			Page:             page,
-			PageSize:         pageSize,
-			AvailableSenders: availableSenders,
-		}, nil
-	}
-	endIdx := startIdx + pageSize
-	if endIdx > len(filtered) {
-		endIdx = len(filtered)
-	}
-	return &PaginatedIgnoredEmailsResponse{
-		Items:            filtered[startIdx:endIdx],
-		TotalCount:       totalCount,
-		Page:             page,
-		PageSize:         pageSize,
-		AvailableSenders: availableSenders,
-	}, nil
+	return body, err
 }
 
 func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*PromoteIgnoredEmailResult, error) {

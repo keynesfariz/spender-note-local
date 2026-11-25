@@ -18,20 +18,32 @@ import (
 
 var strictEmailRe = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 
+type AppLocaleView struct {
+	Timezone *string `json:"timezone"`
+	Currency *string `json:"currency"`
+}
+
+type SavedSettingsView struct {
+	AppLocaleView
+	CountryCode    *string             `json:"country_code"`
+	LlmProvider    string              `json:"llm_provider"`
+	LlmBaseURL     string              `json:"llm_base_url"`
+	LlmModel       *string             `json:"llm_model"`
+	LlmTimeoutMs   int                 `json:"llm_timeout_ms"`
+	SyncBatchLimit int                 `json:"sync_batch_limit"`
+	CurrencyLocked bool                `json:"currencyLocked"`
+	CountryCatalog []CountryLocaleInfo `json:"countryCatalog"`
+}
+
+type ModelDiscoveryView struct {
+	AvailableModels []string `json:"availableModels"`
+	ServerReachable bool     `json:"serverReachable"`
+	ServerError     *string  `json:"serverError"`
+}
+
 type AppSettingsView struct {
-	CountryCode     *string             `json:"country_code"`
-	Timezone        *string             `json:"timezone"`
-	Currency        *string             `json:"currency"`
-	LlmProvider     string              `json:"llm_provider"`
-	LlmBaseURL      string              `json:"llm_base_url"`
-	LlmModel        *string             `json:"llm_model"`
-	LlmTimeoutMs    int                 `json:"llm_timeout_ms"`
-	SyncBatchLimit  int                 `json:"sync_batch_limit"`
-	CurrencyLocked  bool                `json:"currencyLocked"`
-	AvailableModels []string            `json:"availableModels"`
-	ServerReachable bool                `json:"serverReachable"`
-	ServerError     *string             `json:"serverError"`
-	CountryCatalog  []CountryLocaleInfo `json:"countryCatalog"`
+	SavedSettingsView
+	ModelDiscoveryView
 }
 
 type GmailStatusView struct {
@@ -57,58 +69,78 @@ func IsCurrencyLocked(gdb *gorm.DB) bool {
 	return txCnt > 0
 }
 
-func GetAppSettings(ctx context.Context, gdb *gorm.DB, probeBaseURLOverride string) (*AppSettingsView, error) {
+func GetAppLocale(gdb *gorm.DB) (AppLocaleView, error) {
+	timezone, currency, err := getLocaleConfig(gdb)
+	return AppLocaleView{Timezone: timezone, Currency: currency}, err
+}
+
+func settingsModelBaseURL(raw string) string {
+	baseURL := strings.TrimSpace(raw)
+	if baseURL == "" {
+		return db.DefaultLlmBaseURL
+	}
+	return baseURL
+}
+
+func GetSavedSettings(gdb *gorm.DB) (*SavedSettingsView, error) {
 	var row db.AppSetting
 	if err := gdb.First(&row, 1).Error; err != nil {
 		return nil, errors.New("Application settings row is missing")
 	}
+	return &SavedSettingsView{
+		AppLocaleView:  AppLocaleView{Timezone: row.Timezone, Currency: row.Currency},
+		CountryCode:    row.CountryCode,
+		LlmProvider:    row.LlmProvider,
+		LlmBaseURL:     settingsModelBaseURL(row.LlmBaseURL),
+		LlmModel:       row.LlmModel,
+		LlmTimeoutMs:   row.LlmTimeoutMs,
+		SyncBatchLimit: row.SyncBatchLimit,
+		CurrencyLocked: IsCurrencyLocked(gdb),
+		CountryCatalog: ListCountryCatalog(),
+	}, nil
+}
 
-	savedBaseURL := strings.TrimSpace(row.LlmBaseURL)
-	if savedBaseURL == "" {
-		savedBaseURL = db.DefaultLlmBaseURL
-	}
-
-	probeTarget := savedBaseURL
-	if strings.TrimSpace(probeBaseURLOverride) != "" {
-		probeTarget = strings.TrimSpace(probeBaseURLOverride)
-	}
-
-	availableModels := []string{}
-	serverReachable := false
-	var serverError *string
-
+func discoverModels(ctx context.Context, baseURL string) ModelDiscoveryView {
+	result := ModelDiscoveryView{AvailableModels: []string{}}
 	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	client, err := llm.NewClient(probeTarget, 2*time.Second)
-	if err != nil {
-		msg := err.Error()
-		serverError = &msg
-	} else {
-		models, listErr := client.ListModels(probeCtx)
-		if listErr != nil {
-			msg := listErr.Error()
-			serverError = &msg
-		} else {
-			availableModels = models
-			serverReachable = true
+	client, err := llm.NewClient(baseURL, 2*time.Second)
+	if err == nil {
+		var models []string
+		models, err = client.ListModels(probeCtx)
+		if err == nil {
+			result.AvailableModels = models
+			result.ServerReachable = true
+			return result
 		}
 	}
+	message := err.Error()
+	result.ServerError = &message
+	return result
+}
 
-	return &AppSettingsView{
-		CountryCode:     row.CountryCode,
-		Timezone:        row.Timezone,
-		Currency:        row.Currency,
-		LlmProvider:     row.LlmProvider,
-		LlmBaseURL:      savedBaseURL,
-		LlmModel:        row.LlmModel,
-		LlmTimeoutMs:    row.LlmTimeoutMs,
-		SyncBatchLimit:  row.SyncBatchLimit,
-		CurrencyLocked:  IsCurrencyLocked(gdb),
-		AvailableModels: availableModels,
-		ServerReachable: serverReachable,
-		ServerError:     serverError,
-		CountryCatalog:  ListCountryCatalog(),
-	}, nil
+func GetModelDiscovery(ctx context.Context, gdb *gorm.DB, baseURL string) (ModelDiscoveryView, error) {
+	target := strings.TrimSpace(baseURL)
+	if target == "" {
+		var row db.AppSetting
+		if err := gdb.Select("llm_base_url").First(&row, 1).Error; err != nil {
+			return ModelDiscoveryView{}, errors.New("Application settings row is missing")
+		}
+		target = settingsModelBaseURL(row.LlmBaseURL)
+	}
+	return discoverModels(ctx, target), nil
+}
+
+func GetAppSettings(ctx context.Context, gdb *gorm.DB, probeBaseURLOverride string) (*AppSettingsView, error) {
+	saved, err := GetSavedSettings(gdb)
+	if err != nil {
+		return nil, err
+	}
+	target := strings.TrimSpace(probeBaseURLOverride)
+	if target == "" {
+		target = saved.LlmBaseURL
+	}
+	return &AppSettingsView{SavedSettingsView: *saved, ModelDiscoveryView: discoverModels(ctx, target)}, nil
 }
 
 type UpdateLocaleInput struct {

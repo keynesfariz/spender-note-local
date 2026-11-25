@@ -10,7 +10,7 @@ import {
   RotateCcwIcon,
   Trash2Icon,
 } from "lucide-react"
-import { useMemo } from "react"
+import { memo, useMemo } from "react"
 
 import { DynamicIcon } from "@/components/dynamic-icon"
 import { PaginationControls } from "@/components/pagination-controls"
@@ -31,7 +31,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Input } from "@/components/ui/input"
+import { DebouncedSearchInput } from "@/components/debounced-search-input"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -43,12 +43,12 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { IconTooltip } from "@/components/ui/tooltip"
+import { categoriesQuery } from "@/lib/api/categories"
+import { tagsQuery } from "@/lib/api/tags"
 import {
-  categoriesQuery,
-  tagsQuery,
-  type AccountSummary,
+  type AccountOption,
   type TransactionListItem,
-} from "@/lib/api"
+} from "@/lib/api/types.generated"
 import {
   buildCategoryIconMap,
   buildCategorySelectOptions,
@@ -126,6 +126,7 @@ export function TransactionList({
   isLoading,
   errorMessage,
   search,
+  searchResetKey,
   onSearchChange,
   category,
   onCategoryChange,
@@ -136,7 +137,7 @@ export function TransactionList({
   unreviewedOnly,
   onUnreviewedOnlyChange,
   onResetFilters,
-  selectedIds,
+  selectedTransactions,
   onToggleRow,
   onToggleSelectAllPage,
   onSelectTransaction,
@@ -156,11 +157,12 @@ export function TransactionList({
   onPageChange,
 }: {
   transactions: TransactionListItem[]
-  accounts: AccountSummary[]
+  accounts: AccountOption[]
   timezone: string | null | undefined
   isLoading: boolean
   errorMessage: string | null
   search: string
+  searchResetKey: number
   onSearchChange: (value: string) => void
   category: string
   onCategoryChange: (value: string) => void
@@ -171,7 +173,7 @@ export function TransactionList({
   unreviewedOnly: boolean
   onUnreviewedOnlyChange: (value: boolean) => void
   onResetFilters: () => void
-  selectedIds: string[]
+  selectedTransactions: TransactionListItem[]
   onToggleRow: (id: string, checked: boolean) => void
   onToggleSelectAllPage: (checked: boolean) => void
   onSelectTransaction: (id: string) => void
@@ -193,10 +195,9 @@ export function TransactionList({
   const catListQuery = useQuery(categoriesQuery())
   const tagListQuery = useQuery(tagsQuery())
 
-  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
-  const selectedTransactions = useMemo(
-    () => transactions.filter((tx) => selectedSet.has(tx.id)),
-    [transactions, selectedSet]
+  const selectedSet = useMemo(
+    () => new Set(selectedTransactions.map((tx) => tx.id)),
+    [selectedTransactions]
   )
 
   const allOnPageSelected =
@@ -266,12 +267,12 @@ export function TransactionList({
     <Card>
       <CardHeader className="space-y-3">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))_auto]">
-          <Input
-            type="search"
-            aria-label="Search transactions"
+          <DebouncedSearchInput
+            key={searchResetKey}
+            label="Search transactions"
             placeholder="Search remarks, merchants, or notes..."
             value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
+            onSearch={onSearchChange}
           />
 
           <Select
@@ -551,119 +552,20 @@ export function TransactionList({
         ) : (
           <>
             <ul className="space-y-1">
-              {transactions.map((tx, idx) => {
-                const title = tx.remark ?? tx.merchant
-                const formattedAmount = formatMinorCurrency(
-                  tx.amount_minor,
-                  tx.currency
-                )
-                const isSelected = selectedSet.has(tx.id)
-                return (
-                  <li key={tx.id}>
-                    {idx > 0 && <Separator className="my-1" />}
-                    <div
-                      data-selected={isSelected}
-                      className="flex items-center gap-2 rounded-lg p-3 transition-colors hover:bg-muted data-[selected=true]:bg-secondary/60 data-[selected=true]:hover:bg-secondary"
-                    >
-                      <Checkbox
-                        aria-label={`Select ${title} (${formattedAmount})`}
-                        checked={isSelected}
-                        onCheckedChange={(checked) =>
-                          onToggleRow(tx.id, Boolean(checked))
-                        }
-                        className="mt-1 self-start"
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        aria-label={`Inspect ${title} (${formattedAmount})${tx.manual_override === 1 ? ", edited" : ""}`}
-                        onClick={() => onSelectTransaction(tx.id)}
-                        className="grid h-auto min-w-0 flex-1 grid-cols-1 items-start gap-x-4 gap-y-2 px-2 text-left font-normal whitespace-normal hover:bg-transparent sm:grid-cols-[minmax(0,1fr)_auto] dark:hover:bg-transparent"
-                      >
-                        <span className="min-w-0 space-y-1">
-                          <span className="flex items-center gap-2">
-                            <span className="truncate font-semibold">
-                              {title}
-                            </span>
-                            {tx.manual_override === 1 && (
-                              <IconTooltip label="Edited">
-                                <span className="text-muted-foreground">
-                                  <PencilIcon
-                                    className="size-3"
-                                    aria-hidden="true"
-                                  />
-                                </span>
-                              </IconTooltip>
-                            )}
-                          </span>
-                          <span className="block text-xs text-muted-foreground">
-                            {tx.account_name ??
-                              (tx.payment_method_raw
-                                ? `Unassigned (${tx.payment_method_raw})`
-                                : "Unassigned")}{" "}
-                            ·{" "}
-                            {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
-                          </span>
-                        </span>
-                        <span className="flex flex-wrap items-center gap-1.5 sm:col-start-1 sm:row-start-2">
-                          <Badge variant="secondary" className="gap-1">
-                            <DynamicIcon
-                              name={categoryIconMap.get(tx.category)}
-                              className="size-3"
-                            />
-                            {tx.category}
-                          </Badge>
-                          {(tx.tags ?? []).map((tag) => (
-                            <Badge
-                              key={tag.id}
-                              variant="outline"
-                              className="text-muted-foreground"
-                            >
-                              #{tag.name}
-                            </Badge>
-                          ))}
-                        </span>
-                        <span className="min-w-0 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:text-right">
-                          <span className="block font-semibold break-all tabular-nums">
-                            {formattedAmount}
-                          </span>
-                          <span className="block text-xs text-muted-foreground">
-                            {sourceBadgeLabel(tx)}
-                            {tx.isForeignCurrency
-                              ? ` · Foreign (${tx.currency})`
-                              : ""}
-                          </span>
-                        </span>
-                      </Button>
-                      {tx.reviewed === 1 ? (
-                        <IconTooltip label="Reviewed">
-                          <span className="grid size-9 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                            <CheckCircle2Icon
-                              className="size-4"
-                              aria-hidden="true"
-                            />
-                            <span className="sr-only">Reviewed</span>
-                          </span>
-                        </IconTooltip>
-                      ) : (
-                        <IconTooltip label="Needs review · Mark reviewed">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`Mark ${title} as reviewed`}
-                            disabled={isMarkingReviewed || isDeleting}
-                            onClick={() => onMarkReviewed([tx.id])}
-                            className="rounded-full bg-amber-100 text-amber-800 hover:bg-amber-200 hover:text-amber-950 dark:bg-amber-950 dark:text-amber-300 dark:hover:bg-amber-900"
-                          >
-                            <Clock3Icon className="size-4" aria-hidden="true" />
-                          </Button>
-                        </IconTooltip>
-                      )}
-                    </div>
-                  </li>
-                )
-              })}
+              {transactions.map((tx, idx) => (
+                <TransactionRow
+                  key={tx.id}
+                  tx={tx}
+                  categoryIcon={categoryIconMap.get(tx.category)}
+                  timezone={timezone}
+                  isSelected={selectedSet.has(tx.id)}
+                  separated={idx > 0}
+                  actionsDisabled={isMarkingReviewed || isDeleting}
+                  onToggleRow={onToggleRow}
+                  onSelectTransaction={onSelectTransaction}
+                  onMarkReviewed={onMarkReviewed}
+                />
+              ))}
             </ul>
           </>
         )}
@@ -689,3 +591,117 @@ export function TransactionList({
     </Card>
   )
 }
+
+const TransactionRow = memo(function TransactionRow({
+  tx,
+  categoryIcon,
+  timezone,
+  isSelected,
+  separated,
+  actionsDisabled,
+  onToggleRow,
+  onSelectTransaction,
+  onMarkReviewed,
+}: {
+  tx: TransactionListItem
+  categoryIcon: string | undefined
+  timezone: string | null | undefined
+  isSelected: boolean
+  separated: boolean
+  actionsDisabled: boolean
+  onToggleRow: (id: string, checked: boolean) => void
+  onSelectTransaction: (id: string) => void
+  onMarkReviewed: (ids: string[]) => void
+}) {
+  const title = tx.remark ?? tx.merchant
+  const formattedAmount = formatMinorCurrency(tx.amount_minor, tx.currency)
+  return (
+    <li>
+      {separated && <Separator className="my-1" />}
+      <div
+        data-selected={isSelected}
+        className="flex items-center gap-2 rounded-lg p-3 transition-colors hover:bg-muted data-[selected=true]:bg-secondary/60 data-[selected=true]:hover:bg-secondary"
+      >
+        <Checkbox
+          aria-label={`Select ${title} (${formattedAmount})`}
+          checked={isSelected}
+          onCheckedChange={(checked) => onToggleRow(tx.id, Boolean(checked))}
+          className="mt-1 self-start"
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          aria-label={`Inspect ${title} (${formattedAmount})${tx.manual_override === 1 ? ", edited" : ""}`}
+          onClick={() => onSelectTransaction(tx.id)}
+          className="grid h-auto min-w-0 flex-1 grid-cols-1 items-start gap-x-4 gap-y-2 px-2 text-left font-normal whitespace-normal hover:bg-transparent sm:grid-cols-[minmax(0,1fr)_auto] dark:hover:bg-transparent"
+        >
+          <span className="min-w-0 space-y-1">
+            <span className="flex items-center gap-2">
+              <span className="truncate font-semibold">{title}</span>
+              {tx.manual_override === 1 && (
+                <IconTooltip label="Edited">
+                  <span className="text-muted-foreground">
+                    <PencilIcon className="size-3" aria-hidden="true" />
+                  </span>
+                </IconTooltip>
+              )}
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              {tx.account_name ??
+                (tx.payment_method_raw
+                  ? `Unassigned (${tx.payment_method_raw})`
+                  : "Unassigned")}{" "}
+              · {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
+            </span>
+          </span>
+          <span className="flex flex-wrap items-center gap-1.5 sm:col-start-1 sm:row-start-2">
+            <Badge variant="secondary" className="gap-1">
+              <DynamicIcon name={categoryIcon} className="size-3" />
+              {tx.category}
+            </Badge>
+            {(tx.tags ?? []).map((tag) => (
+              <Badge
+                key={tag.id}
+                variant="outline"
+                className="text-muted-foreground"
+              >
+                #{tag.name}
+              </Badge>
+            ))}
+          </span>
+          <span className="min-w-0 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:text-right">
+            <span className="block font-semibold break-all tabular-nums">
+              {formattedAmount}
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              {sourceBadgeLabel(tx)}
+              {tx.isForeignCurrency ? ` · Foreign (${tx.currency})` : ""}
+            </span>
+          </span>
+        </Button>
+        {tx.reviewed === 1 ? (
+          <IconTooltip label="Reviewed">
+            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+              <CheckCircle2Icon className="size-4" aria-hidden="true" />
+              <span className="sr-only">Reviewed</span>
+            </span>
+          </IconTooltip>
+        ) : (
+          <IconTooltip label="Needs review · Mark reviewed">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`Mark ${title} as reviewed`}
+              disabled={actionsDisabled}
+              onClick={() => onMarkReviewed([tx.id])}
+              className="rounded-full bg-amber-100 text-amber-800 hover:bg-amber-200 hover:text-amber-950 dark:bg-amber-950 dark:text-amber-300 dark:hover:bg-amber-900"
+            >
+              <Clock3Icon className="size-4" aria-hidden="true" />
+            </Button>
+          </IconTooltip>
+        )}
+      </div>
+    </li>
+  )
+})

@@ -39,17 +39,28 @@ export const triageIgnoredEmailsQuery = (params?: {
 }) =>
   queryOptions({
     queryKey: ["triage", "ignored", params ?? {}] as const,
-    queryFn: () => {
-      const sp = new URLSearchParams()
+    queryFn: ({ signal }) => {
+      const sp = new URLSearchParams({ view: "summary" })
       if (params?.senderEmail) sp.set("senderEmail", params.senderEmail)
       if (params?.search) sp.set("search", params.search)
       if (params?.page) sp.set("page", String(params.page))
       if (params?.pageSize) sp.set("pageSize", String(params.pageSize))
-      const qs = sp.toString()
       return apiFetch<PaginatedIgnoredEmailsResponse>(
-        `/api/triage/ignored${qs ? `?${qs}` : ""}`
+        `/api/triage/ignored?${sp}`,
+        { signal }
       )
     },
+  })
+
+export const triageIgnoredEmailBodyQuery = (emailId: string) =>
+  queryOptions({
+    queryKey: ["triage", "ignored-body", emailId] as const,
+    queryFn: ({ signal }) =>
+      apiFetch<{ cleaned_text: string }>(
+        `/api/triage/ignored/${encodeURIComponent(emailId)}`,
+        { signal }
+      ),
+    retry: false,
   })
 
 export const triageSkippedTransactionsQuery = (
@@ -58,13 +69,14 @@ export const triageSkippedTransactionsQuery = (
 ) =>
   queryOptions({
     queryKey: ["triage", "skipped", page, pageSize] as const,
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       const sp = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
       })
       return apiFetch<PaginatedSkippedTransactionsResponse>(
-        `/api/triage/skipped?${sp}`
+        `/api/triage/skipped?${sp}`,
+        { signal }
       )
     },
   })

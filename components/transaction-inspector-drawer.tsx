@@ -58,19 +58,27 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs"
+import { categoriesQuery } from "@/lib/api/categories"
+import { tagsQuery } from "@/lib/api/tags"
 import {
-  categoriesQuery,
   deleteTransactionApi,
   invalidateTransactionRelatedQueries,
   markTransactionsReviewedApi,
   splitTransactionSourceApi,
-  tagsQuery,
-  transactionDetailQuery,
   updateTransactionApi,
-  type AccountSummary,
-  type TransactionDetailView,
+} from "@/lib/api/transactions"
+import {
+  type AccountOption,
+  type CategorySummary,
+  type TagSummary,
+  type TransactionInspectorSource,
+  type TransactionInspectorView,
   type TransactionListItem,
-} from "@/lib/api"
+} from "@/lib/api/types.generated"
+import {
+  transactionInspectorQuery,
+  transactionSourceBodyQuery,
+} from "@/lib/api/transaction-inspector"
 import {
   DEFAULT_CATEGORY,
   buildCategoryIconMap,
@@ -105,63 +113,223 @@ function groupAmountInput(value: string): string {
   return match[1].replace(/\B(?=(\d{3})+(?!\d))/g, ",") + (match[2] ?? "")
 }
 
-function InspectorBody({
+function SourceEmailBody({
+  transactionId,
+  emailId,
+}: {
+  transactionId: string
+  emailId: string
+}) {
+  const body = useQuery(transactionSourceBodyQuery(transactionId, emailId))
+
+  if (body.isPending) {
+    return (
+      <p role="status" className="text-xs text-muted-foreground">
+        Loading email…
+      </p>
+    )
+  }
+
+  if (body.isError) {
+    return (
+      <div className="space-y-2">
+        <p role="alert" className="text-xs text-destructive">
+          {body.error.message}
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void body.refetch()}
+        >
+          Retry
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <pre className="max-h-64 overflow-auto rounded-md border bg-muted p-3 font-mono text-xs break-words whitespace-pre-wrap">
+      {body.data.cleaned_text}
+    </pre>
+  )
+}
+
+function SourceEmail({
+  source,
+  transactionId,
+  timezone,
+  onSplit,
+  splitDisabled,
+}: {
+  source: TransactionInspectorSource
+  transactionId: string
+  timezone: string | null | undefined
+  onSplit?: () => void
+  splitDisabled: boolean
+}) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <Card>
+      <CardContent className="space-y-2 py-3 text-sm">
+        <details
+          className="group"
+          onToggle={(event) => setOpen(event.currentTarget.open)}
+        >
+          <summary className="flex cursor-pointer list-none items-start gap-3 rounded outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+            <div className="min-w-0 flex-1 break-words">
+              <p className="font-medium">
+                {source.subject || "Untitled email"}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {source.from_address} ·{" "}
+                {formatUtcInTimezone(source.received_at_utc, timezone)}
+              </p>
+            </div>
+            <span className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180">
+              <ChevronDownIcon className="size-4" aria-hidden />
+            </span>
+          </summary>
+          <div className="mt-3 space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Role: {source.role} · State: {source.match_state}
+            </p>
+            {open ? (
+              <SourceEmailBody
+                transactionId={transactionId}
+                emailId={source.email_id}
+              />
+            ) : null}
+            {onSplit ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={splitDisabled}
+                onClick={onSplit}
+              >
+                Split email
+              </Button>
+            ) : null}
+          </div>
+        </details>
+      </CardContent>
+    </Card>
+  )
+}
+
+type InspectorProps = {
+  transactionId: string
+  accounts: AccountOption[]
+  localCurrency: string
+  timezone: string | null | undefined
+  onClose: () => void
+  onTransactionMutated?: () => void
+}
+
+function InspectorBody(props: InspectorProps) {
+  const detailQuery = useQuery(transactionInspectorQuery(props.transactionId))
+  const { data: categories } = useQuery(categoriesQuery())
+  const { data: tags } = useQuery(tagsQuery())
+  if (detailQuery.isPending) {
+    return (
+      <div className="space-y-3 py-4">
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-24 w-full" />
+      </div>
+    )
+  }
+
+  const detail = detailQuery.data
+  if (!detail) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription>
+          {detailQuery.error instanceof Error
+            ? detailQuery.error.message
+            : "Transaction not found."}
+        </AlertDescription>
+      </Alert>
+    )
+  }
+
+  return (
+    <InspectorForm
+      {...props}
+      detail={detail}
+      categories={categories}
+      tags={tags}
+    />
+  )
+}
+
+function InspectorForm({
   transactionId,
   accounts,
   localCurrency,
   timezone,
   onClose,
   onTransactionMutated,
-}: {
-  transactionId: string
-  accounts: AccountSummary[]
-  localCurrency: string
-  timezone: string | null | undefined
-  onClose: () => void
-  onTransactionMutated?: () => void
+  detail,
+  categories,
+  tags,
+}: InspectorProps & {
+  detail: TransactionInspectorView
+  categories?: CategorySummary[]
+  tags?: TagSummary[]
 }) {
   const queryClient = useQueryClient()
-  const detailQuery = useQuery(transactionDetailQuery(transactionId))
-  const catListQuery = useQuery(categoriesQuery())
-  const tagListQuery = useQuery(tagsQuery())
 
-  const [remark, setRemark] = useState("")
-  const [merchant, setMerchant] = useState("")
-  const [remarkUserEdited, setRemarkUserEdited] = useState(false)
+  const tx = detail.transaction
+  const [remark, setRemark] = useState(tx.remark ?? tx.merchant)
+  const [merchant, setMerchant] = useState(tx.merchant)
+  const [remarkUserEdited, setRemarkUserEdited] = useState(
+    tx.remark_user_edited
+  )
   const noteId = useId()
   const detailFormId = useId()
   const remarkId = useId()
-  const [amount, setAmount] = useState("")
-  const [category, setCategory] = useState<string>(DEFAULT_CATEGORY)
-  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+  const [amount, setAmount] = useState(() =>
+    groupAmountInput(minorToDecimalInput(tx.amount_minor, tx.currency))
+  )
+  const [category, setCategory] = useState(tx.category)
+  const [selectedTagIds, setSelectedTagIds] = useState(() =>
+    (tx.tags ?? []).map((tag) => tag.id)
+  )
   const [draftTagNames, setDraftTagNames] = useState<string[]>([])
   const [hasUnsavedMagicEdits, setHasUnsavedMagicEdits] = useState(false)
-  const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT)
-  const [date, setDate] = useState("")
-  const [time, setTime] = useState("")
-  const [note, setNote] = useState("")
+  const [accountId, setAccountId] = useState(
+    tx.account_id ?? UNASSIGNED_ACCOUNT
+  )
+  const [date, setDate] = useState(() =>
+    utcToDateInputValue(tx.occurred_at_utc, timezone)
+  )
+  const [time, setTime] = useState(() =>
+    utcToTimeInputValue(tx.occurred_at_utc, timezone)
+  )
+  const [note, setNote] = useState(tx.note ?? "")
   const [convertToLocalCurrency, setConvertToLocalCurrency] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
 
-  const { isEnriching, abortEnrichment, runEnrichment } = useMagicEnrich()
-  const lastLoadedTxRef = useRef<{
-    id: string
-    key: string
-    currency: string
-    date: string
-    time: string
-    timezone: string | null | undefined
-  } | null>(null)
+  const { isEnriching, runEnrichment } = useMagicEnrich()
+  const lastLoadedTxRef = useRef({
+    key: `${tx.updated_at_utc}|${timezone ?? ""}`,
+    currency: tx.currency,
+    date,
+    time,
+    timezone,
+  })
   const editedFields = useRef(new Set<DraftField>())
 
   const syncFormFromTransaction = useCallback(
     (tx: TransactionListItem) => {
-      const nextKey = `${tx.id}:${tx.updated_at_utc}|${timezone ?? ""}`
+      const nextKey = `${tx.updated_at_utc}|${timezone ?? ""}`
       const date = utcToDateInputValue(tx.occurred_at_utc, timezone)
       const time = utcToTimeInputValue(tx.occurred_at_utc, timezone)
       lastLoadedTxRef.current = {
-        id: tx.id,
         key: nextKey,
         currency: tx.currency,
         date,
@@ -189,29 +357,15 @@ function InspectorBody({
   )
 
   useEffect(() => {
-    const tx = detailQuery.data?.transaction
-    if (!tx) return
-    const nextKey = `${tx.id}:${tx.updated_at_utc}|${timezone ?? ""}`
-    const isSameTx = lastLoadedTxRef.current?.id === tx.id
+    const nextKey = `${tx.updated_at_utc}|${timezone ?? ""}`
     if (
-      isSameTx &&
-      (editedFields.current.size > 0 ||
-        isEnriching ||
-        lastLoadedTxRef.current?.key === nextKey)
+      editedFields.current.size === 0 &&
+      !isEnriching &&
+      lastLoadedTxRef.current.key !== nextKey
     ) {
-      return
+      syncFormFromTransaction(tx)
     }
-    if (!isSameTx) {
-      abortEnrichment()
-    }
-    syncFormFromTransaction(tx)
-  }, [
-    detailQuery.data?.transaction,
-    timezone,
-    isEnriching,
-    abortEnrichment,
-    syncFormFromTransaction,
-  ])
+  }, [tx, timezone, isEnriching, syncFormFromTransaction])
 
   const invalidateAll = () => {
     invalidateTransactionRelatedQueries(queryClient)
@@ -222,8 +376,8 @@ function InspectorBody({
     mutationFn: updateTransactionApi,
     onSuccess: (updatedTx) => {
       syncFormFromTransaction(updatedTx)
-      queryClient.setQueryData<TransactionDetailView>(
-        transactionDetailQuery(updatedTx.id).queryKey,
+      queryClient.setQueryData<TransactionInspectorView>(
+        transactionInspectorQuery(updatedTx.id).queryKey,
         (prev) => (prev ? { ...prev, transaction: updatedTx } : prev)
       )
       patchTagsQueryCache(
@@ -285,20 +439,18 @@ function InspectorBody({
     },
   })
 
-  const detailTx = detailQuery.data?.transaction
-
   const categoryIconMap = useMemo(
-    () => buildCategoryIconMap(catListQuery.data),
-    [catListQuery.data]
+    () => buildCategoryIconMap(categories),
+    [categories]
   )
 
   const categoryOptions = useMemo(
-    () => buildCategorySelectOptions(catListQuery.data, category),
-    [catListQuery.data, category]
+    () => buildCategorySelectOptions(categories, category),
+    [categories, category]
   )
 
-  const detailAccountId = detailTx?.account_id
-  const detailAccountName = detailTx?.account_name
+  const detailAccountId = tx.account_id
+  const detailAccountName = tx.account_name
   const accountItems = useMemo(() => {
     const base = [
       { value: UNASSIGNED_ACCOUNT, label: "Unassigned" },
@@ -316,31 +468,6 @@ function InspectorBody({
     }
     return base
   }, [accounts, accountId, detailAccountId, detailAccountName])
-
-  if (detailQuery.isPending) {
-    return (
-      <div className="space-y-3 py-4">
-        <Skeleton className="h-9 w-full" />
-        <Skeleton className="h-9 w-full" />
-        <Skeleton className="h-24 w-full" />
-      </div>
-    )
-  }
-
-  const detail = detailQuery.data
-  if (!detail) {
-    return (
-      <Alert variant="destructive">
-        <AlertDescription>
-          {detailQuery.error instanceof Error
-            ? detailQuery.error.message
-            : "Transaction not found."}
-        </AlertDescription>
-      </Alert>
-    )
-  }
-
-  const tx = detail.transaction
 
   function editDraft<Value>(
     field: DraftField,
@@ -426,7 +553,7 @@ function InspectorBody({
           },
           preview,
           queryClient,
-          tagListQuery.data ?? [],
+          tags ?? [],
           lastLoadedTxRef.current?.timezone
         )
 
@@ -591,7 +718,7 @@ function InspectorBody({
               <Field className="sm:col-span-2">
                 <FieldLabel>Tags</FieldLabel>
                 <TagMultiSelect
-                  tags={tagListQuery.data ?? []}
+                  tags={tags ?? []}
                   selectedTagIds={selectedTagIds}
                   onChange={(ids) => editDraft("tags", setSelectedTagIds, ids)}
                   draftTagNames={draftTagNames}
@@ -766,51 +893,21 @@ function InspectorBody({
             <ul className="space-y-3">
               {detail.sources.map((source) => (
                 <li key={source.id}>
-                  <Card>
-                    <CardContent className="space-y-2 py-3 text-sm">
-                      <details className="group">
-                        <summary className="flex cursor-pointer list-none items-start gap-3 rounded outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-                          <div className="min-w-0 flex-1 break-words">
-                            <p className="font-medium">
-                              {source.subject || "Untitled email"}
-                            </p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {source.from_address} ·{" "}
-                              {formatUtcInTimezone(
-                                source.received_at_utc,
-                                timezone
-                              )}
-                            </p>
-                          </div>
-                          <ChevronDownIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-                        </summary>
-                        <div className="mt-3 space-y-3">
-                          <p className="text-xs text-muted-foreground">
-                            Role: {source.role} · State: {source.match_state}
-                          </p>
-                          <pre className="max-h-64 overflow-auto rounded-md border bg-muted p-3 font-mono text-xs break-words whitespace-pre-wrap">
-                            {source.cleaned_text}
-                          </pre>
-                          {detail.sources.length > 1 && (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={splitMutation.isPending || isEnriching}
-                              onClick={() =>
-                                splitMutation.mutate({
-                                  transactionId: tx.id,
-                                  emailId: source.email_id,
-                                })
-                              }
-                            >
-                              Split email
-                            </Button>
-                          )}
-                        </div>
-                      </details>
-                    </CardContent>
-                  </Card>
+                  <SourceEmail
+                    source={source}
+                    transactionId={tx.id}
+                    timezone={timezone}
+                    onSplit={
+                      detail.sources.length > 1
+                        ? () =>
+                            splitMutation.mutate({
+                              transactionId: tx.id,
+                              emailId: source.email_id,
+                            })
+                        : undefined
+                    }
+                    splitDisabled={splitMutation.isPending || isEnriching}
+                  />
                 </li>
               ))}
             </ul>
@@ -830,7 +927,7 @@ export function TransactionInspectorDrawer({
   onTransactionMutated,
 }: {
   transactionId: string | null
-  accounts: AccountSummary[]
+  accounts: AccountOption[]
   localCurrency: string
   timezone: string | null | undefined
   onClose: () => void

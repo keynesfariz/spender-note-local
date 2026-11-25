@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -221,6 +222,8 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 }
 
 type ListTransactionsParams struct {
+	Backfill       *TriageBackfill
+	LedgerRange    string
 	Month          string
 	StartDate      string
 	EndDate        string
@@ -234,7 +237,17 @@ type ListTransactionsParams struct {
 	PageSize       int
 }
 
+type LedgerScope struct {
+	Configured bool   `json:"configured"`
+	Timezone   string `json:"timezone"`
+	Today      string `json:"today"`
+	NextDayUtc string `json:"nextDayUtc"`
+	StartDate  string `json:"startDate"`
+	EndDate    string `json:"endDate"`
+}
+
 type PaginatedTransactionsResponse struct {
+	Ledger                 *LedgerScope          `json:"ledger,omitempty"`
 	Items                  []TransactionListItem `json:"items"`
 	TotalCount             int64                 `json:"totalCount"`
 	Page                   int                   `json:"page"`
@@ -248,6 +261,14 @@ type PaginatedTransactionsResponse struct {
 }
 
 func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTransactionsResponse, error) {
+	return listTransactionsAt(gdb, params, time.Now())
+}
+
+func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Time) (*PaginatedTransactionsResponse, error) {
+	var ledger *LedgerScope
+	if params.LedgerRange != "" {
+		ledger = &LedgerScope{}
+	}
 	page := params.Page
 	if page < 1 {
 		page = 1
@@ -266,6 +287,7 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 	}
 	if tzPtr == nil || *tzPtr == "" || curPtr == nil || *curPtr == "" {
 		return &PaginatedTransactionsResponse{
+			Ledger:    ledger,
 			Items:     []TransactionListItem{},
 			GhostRows: []GhostRowItem{},
 			Page:      page,
@@ -274,8 +296,29 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 	}
 	tz := *tzPtr
 	currency := *curPtr
+	if ledger != nil {
+		loc, err := LoadTimezone(tz)
+		if err != nil {
+			return nil, err
+		}
+		local := now.In(loc)
+		nextDay := localDayStart(local.Year(), local.Month(), local.Day()+1, loc)
+		ledger.Configured = true
+		ledger.Timezone = tz
+		ledger.Today = local.Format(time.DateOnly)
+		ledger.NextDayUtc = ToUtcIsoSeconds(nextDay)
+		if params.LedgerRange == "dates" {
+			if params.StartDate == "" {
+				params.StartDate = ledger.Today
+			}
+			if params.EndDate == "" {
+				params.EndDate = params.StartDate
+			}
+			ledger.StartDate, ledger.EndDate = params.StartDate, params.EndDate
+		}
+	}
 
-	if err := BackfillSkippedEmailTriageData(gdb); err != nil {
+	if err := params.Backfill.ensure(gdb); err != nil {
 		return nil, err
 	}
 
@@ -522,6 +565,7 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 	}
 
 	return &PaginatedTransactionsResponse{
+		Ledger:                 ledger,
 		Items:                  out,
 		TotalCount:             totalCount,
 		Page:                   page,
@@ -536,6 +580,10 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 }
 
 func GetTransactionDetail(gdb *gorm.DB, id string) (*TransactionDetailView, error) {
+	return getTransactionDetail(gdb, id, true)
+}
+
+func getTransactionDetail(gdb *gorm.DB, id string, includeSourceContent bool) (*TransactionDetailView, error) {
 	_, curPtr, err := getLocaleConfig(gdb)
 	if err != nil {
 		return nil, err
@@ -573,15 +621,18 @@ func GetTransactionDetail(gdb *gorm.DB, id string) (*TransactionDetailView, erro
 	}
 	txRow := rows[0]
 
+	const sourceColumns = `ts.id, ts.email_id, ts.role, ts.match_state, re.from_address, re.subject, re.received_at_utc`
+	columns, extractionJoin := sourceColumns, ""
+	if includeSourceContent {
+		columns += ", ts.match_score, re.cleaned_text, ee.extraction_model, ee.raw_llm_json"
+		extractionJoin = "LEFT JOIN email_extractions ee ON ee.email_id = ts.email_id"
+	}
 	sources := []TransactionSourceView{}
 	if err := gdb.Raw(`
-		SELECT
-			ts.id, ts.email_id, ts.role, ts.match_score, ts.match_state,
-			re.from_address, re.subject, re.cleaned_text, re.received_at_utc,
-			ee.extraction_model, ee.raw_llm_json
+		SELECT `+columns+`
 		FROM transaction_sources ts
 		JOIN raw_emails re ON re.id = ts.email_id
-		LEFT JOIN email_extractions ee ON ee.email_id = ts.email_id
+		`+extractionJoin+`
 		WHERE ts.transaction_id = ?
 		ORDER BY re.internal_date_ms ASC`, id).Scan(&sources).Error; err != nil {
 		return nil, err

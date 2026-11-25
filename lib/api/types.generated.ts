@@ -73,20 +73,68 @@ export interface CountryLocaleInfo {
   timezones: string[]
 }
 
-export interface AppSettingsView {
-  country_code: string | null
+export interface AccountOption {
+  id: string
+  name: string
+}
+
+export interface TransactionInspectorSource {
+  id: string
+  email_id: string
+  role: string
+  match_state: string
+  from_address: string
+  subject: string
+  received_at_utc: string
+}
+
+export interface TransactionInspectorView {
+  transaction: TransactionListItem
+  sources: TransactionInspectorSource[]
+}
+
+export interface TransactionSourceBody {
+  cleaned_text: string
+}
+
+export interface AppLocaleView {
   timezone: string | null
   currency: string | null
+}
+
+export interface SavedSettingsView {
+  timezone: string | null
+  currency: string | null
+  country_code: string | null
   llm_provider: "openai_compatible"
   llm_base_url: string
   llm_model: string | null
   llm_timeout_ms: number
   sync_batch_limit: number
   currencyLocked: boolean
+  countryCatalog: CountryLocaleInfo[]
+}
+
+export interface ModelDiscoveryView {
   availableModels: string[]
   serverReachable: boolean
   serverError: string | null
+}
+
+export interface AppSettingsView {
+  timezone: string | null
+  currency: string | null
+  country_code: string | null
+  llm_provider: "openai_compatible"
+  llm_base_url: string
+  llm_model: string | null
+  llm_timeout_ms: number
+  sync_batch_limit: number
+  currencyLocked: boolean
   countryCatalog: CountryLocaleInfo[]
+  availableModels: string[]
+  serverReachable: boolean
+  serverError: string | null
 }
 
 export interface SenderRecord {
@@ -202,7 +250,17 @@ export interface PaginatedSkippedTransactionsResponse {
   pageSize: number
 }
 
+export interface LedgerScope {
+  configured: boolean
+  timezone: string
+  today: string
+  nextDayUtc: string
+  startDate: string
+  endDate: string
+}
+
 export interface PaginatedTransactionsResponse {
+  ledger?: LedgerScope | null
   items: TransactionListItem[]
   totalCount: number
   page: number
@@ -285,7 +343,7 @@ export interface IgnoredEmailItem {
   from_address: string
   sender_email: string
   subject: string
-  cleaned_text: string
+  cleaned_text?: string | null
   received_at_utc: string
   amount_minor: number | null
   currency: string | null

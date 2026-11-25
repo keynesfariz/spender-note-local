@@ -39,8 +39,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { accountsQuery } from "@/lib/api/accounts"
 import {
-  accountsQuery,
   createSenderApi,
   deleteSenderApi,
   disconnectGmailApi,
@@ -48,8 +48,8 @@ import {
   sendersQuery,
   updateSenderApi,
   updateSyncSettingsApi,
-  type AppSettingsView,
-} from "@/lib/api"
+} from "@/lib/api/settings"
+import { type SavedSettingsView } from "@/lib/api/types.generated"
 import {
   dateInputToUtcIso,
   formatRelativeUtc,
@@ -68,7 +68,7 @@ const SENDER_ROLE_OPTIONS = [
 export function GmailSendersTab({
   settings,
 }: {
-  settings: AppSettingsView | undefined
+  settings: SavedSettingsView | undefined
 }) {
   const queryClient = useQueryClient()
   const senders = useQuery(sendersQuery())

@@ -6,7 +6,10 @@ import { useEffect, useRef, useState } from "react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import type { ApplyTriageVerdictInput, TriageVerdictResult } from "@/lib/api"
+import type {
+  ApplyTriageVerdictInput,
+  TriageVerdictResult,
+} from "@/lib/api/types.generated"
 
 const UNDO_TIMEOUT_MS = 12_000
 

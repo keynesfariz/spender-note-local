@@ -24,14 +24,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { createAccountApi, updateAccountApi } from "@/lib/api/accounts"
 import {
-  createAccountApi,
-  updateAccountApi,
   type AccountIdentifierInput,
   type AccountIdentifierKind,
   type AccountSummary,
   type AccountType,
-} from "@/lib/api"
+} from "@/lib/api/types.generated"
 import {
   dateInputToUtcIso,
   getTodayDateString,

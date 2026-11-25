@@ -11,7 +11,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { parseAsStringLiteral, useQueryState } from "nuqs"
-import { useMemo, useState, type SubmitEvent } from "react"
+import { memo, useCallback, useMemo, useState, type SubmitEvent } from "react"
 
 import { CATEGORY_ICON_OPTIONS, DynamicIcon } from "@/components/dynamic-icon"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -47,17 +47,24 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   categoriesQuery,
   createCategoryApi,
-  createTagApi,
   deleteCategoryApi,
+  updateCategoryApi,
+} from "@/lib/api/categories"
+import {
+  createTagApi,
   deleteTagApi,
   tagsQuery,
-  updateCategoryApi,
   updateTagApi,
+} from "@/lib/api/tags"
+import {
   type CategorySummary,
   type TagSummary,
-} from "@/lib/api"
+} from "@/lib/api/types.generated"
 import { DEFAULT_CATEGORY } from "@/lib/categories"
 import { cn } from "@/lib/utils"
+
+const EMPTY_CATEGORIES: CategorySummary[] = []
+const EMPTY_TAGS: TagSummary[] = []
 
 const TAB_VALUES = ["categories", "tags"] as const
 
@@ -79,8 +86,8 @@ export function CategoriesTagsView() {
   const catQuery = useQuery(categoriesQuery())
   const tagQuery = useQuery(tagsQuery())
 
-  const categories = useMemo(() => catQuery.data ?? [], [catQuery.data])
-  const tags = useMemo(() => tagQuery.data ?? [], [tagQuery.data])
+  const categories = catQuery.data ?? EMPTY_CATEGORIES
+  const tags = tagQuery.data ?? EMPTY_TAGS
 
   const [catDialogOpen, setCatDialogOpen] = useState(false)
   const [editingCategory, setEditingCategory] =
@@ -191,21 +198,29 @@ export function CategoriesTagsView() {
     setCatDialogOpen(true)
   }
 
-  const openEditCategory = (cat: CategorySummary) => {
-    setEditingCategory(cat)
-    setCatName(cat.name)
-    setCatIcon(cat.icon || "Tag")
-    setCatFormError(null)
-    saveCategoryMutation.reset()
-    setCatDialogOpen(true)
-  }
+  const resetEditCategory = saveCategoryMutation.reset
+  const openEditCategory = useCallback(
+    (cat: CategorySummary) => {
+      setEditingCategory(cat)
+      setCatName(cat.name)
+      setCatIcon(cat.icon || "Tag")
+      setCatFormError(null)
+      resetEditCategory()
+      setCatDialogOpen(true)
+    },
+    [resetEditCategory]
+  )
 
-  const openDeleteCategory = (cat: CategorySummary) => {
-    setDeletingCategory(cat)
-    setReplacementCategory(DEFAULT_CATEGORY)
-    setDeleteCatError(null)
-    deleteCategoryMutation.reset()
-  }
+  const resetDeleteCategory = deleteCategoryMutation.reset
+  const openDeleteCategory = useCallback(
+    (cat: CategorySummary) => {
+      setDeletingCategory(cat)
+      setReplacementCategory(DEFAULT_CATEGORY)
+      setDeleteCatError(null)
+      resetDeleteCategory()
+    },
+    [resetDeleteCategory]
+  )
 
   const openCreateTag = () => {
     setEditingTag(null)
@@ -215,19 +230,27 @@ export function CategoriesTagsView() {
     setTagDialogOpen(true)
   }
 
-  const openEditTag = (tag: TagSummary) => {
-    setEditingTag(tag)
-    setTagName(tag.name)
-    setTagFormError(null)
-    saveTagMutation.reset()
-    setTagDialogOpen(true)
-  }
+  const resetEditTag = saveTagMutation.reset
+  const openEditTag = useCallback(
+    (tag: TagSummary) => {
+      setEditingTag(tag)
+      setTagName(tag.name)
+      setTagFormError(null)
+      resetEditTag()
+      setTagDialogOpen(true)
+    },
+    [resetEditTag]
+  )
 
-  const openDeleteTag = (tag: TagSummary) => {
-    setDeletingTag(tag)
-    setDeleteTagError(null)
-    deleteTagMutation.reset()
-  }
+  const resetDeleteTag = deleteTagMutation.reset
+  const openDeleteTag = useCallback(
+    (tag: TagSummary) => {
+      setDeletingTag(tag)
+      setDeleteTagError(null)
+      resetDeleteTag()
+    },
+    [resetDeleteTag]
+  )
 
   const handleCategorySubmit = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -259,10 +282,11 @@ export function CategoriesTagsView() {
   }
 
   const replacementItems = useMemo(() => {
-    const filtered = categories.filter(
-      (cat) => !deletingCategory || cat.id !== deletingCategory.id
+    const items = categories.flatMap((cat) =>
+      cat.id === deletingCategory?.id
+        ? []
+        : [{ value: cat.name, label: cat.name }]
     )
-    const items = filtered.map((cat) => ({ value: cat.name, label: cat.name }))
     if (!items.some((item) => item.value === DEFAULT_CATEGORY)) {
       items.push({ value: DEFAULT_CATEGORY, label: DEFAULT_CATEGORY })
     }
@@ -355,73 +379,11 @@ export function CategoriesTagsView() {
                   No categories found.
                 </div>
               ) : (
-                <div className="divide-y divide-border border-t border-border">
-                  {categories.map((cat) => {
-                    const isSystem = cat.is_system === 1
-                    return (
-                      <div
-                        key={cat.id}
-                        className="flex flex-wrap items-center justify-between gap-3 px-6 py-3"
-                      >
-                        <div className="flex min-w-0 items-center gap-3">
-                          <div className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted/40">
-                            <DynamicIcon
-                              name={cat.icon}
-                              className="size-4 text-foreground"
-                            />
-                          </div>
-                          <div className="flex min-w-0 flex-wrap items-center gap-2">
-                            <span className="font-medium text-foreground">
-                              {cat.name}
-                            </span>
-                            {isSystem ? (
-                              <Badge variant="secondary">System default</Badge>
-                            ) : null}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <Link
-                            href={`/transactions?category=${encodeURIComponent(cat.name)}&range=all`}
-                            className={buttonVariants({
-                              variant: "ghost",
-                              size: "xs",
-                            })}
-                          >
-                            {formatTxCount(cat.transaction_count)}
-                          </Link>
-
-                          {isSystem ? (
-                            <span className="px-2 text-xs text-muted-foreground">
-                              Read-only
-                            </span>
-                          ) : (
-                            <>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="xs"
-                                onClick={() => openEditCategory(cat)}
-                              >
-                                <PencilIcon className="mr-1 size-3" />
-                                Edit
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="xs"
-                                onClick={() => openDeleteCategory(cat)}
-                              >
-                                <Trash2Icon className="mr-1 size-3" />
-                                Delete
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
+                <CategoryRows
+                  items={categories}
+                  onEdit={openEditCategory}
+                  onDelete={openDeleteCategory}
+                />
               )}
             </CardContent>
           </Card>
@@ -470,54 +432,11 @@ export function CategoriesTagsView() {
                   </Button>
                 </div>
               ) : (
-                <div className="divide-y divide-border border-t border-border">
-                  {tags.map((tag) => (
-                    <div
-                      key={tag.id}
-                      className="flex flex-wrap items-center justify-between gap-3 px-6 py-3"
-                    >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted/40">
-                          <TagIcon className="size-4 text-muted-foreground" />
-                        </div>
-                        <span className="font-medium text-foreground">
-                          {tag.name}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <Link
-                          href={`/transactions?tag=${encodeURIComponent(tag.name)}&range=all`}
-                          className={buttonVariants({
-                            variant: "ghost",
-                            size: "xs",
-                          })}
-                        >
-                          {formatTxCount(tag.transaction_count)}
-                        </Link>
-
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="xs"
-                          onClick={() => openEditTag(tag)}
-                        >
-                          <PencilIcon className="mr-1 size-3" />
-                          Rename
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="xs"
-                          onClick={() => openDeleteTag(tag)}
-                        >
-                          <Trash2Icon className="mr-1 size-3" />
-                          Delete
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <TagRows
+                  items={tags}
+                  onEdit={openEditTag}
+                  onDelete={openDeleteTag}
+                />
               )}
             </CardContent>
           </Card>
@@ -769,3 +688,140 @@ export function CategoriesTagsView() {
     </div>
   )
 }
+
+const CategoryRows = memo(function CategoryRows({
+  items,
+  onEdit,
+  onDelete,
+}: {
+  items: CategorySummary[]
+  onEdit: (item: CategorySummary) => void
+  onDelete: (item: CategorySummary) => void
+}) {
+  return (
+    <div className="divide-y divide-border border-t border-border">
+      {items.map((cat) => {
+        const isSystem = cat.is_system === 1
+        return (
+          <div
+            key={cat.id}
+            className="flex flex-wrap items-center justify-between gap-3 px-6 py-3"
+          >
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted/40">
+                <DynamicIcon
+                  name={cat.icon}
+                  className="size-4 text-foreground"
+                />
+              </div>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="font-medium text-foreground">{cat.name}</span>
+                {isSystem ? (
+                  <Badge variant="secondary">System default</Badge>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Link
+                href={`/transactions?category=${encodeURIComponent(cat.name)}&range=all`}
+                className={buttonVariants({
+                  variant: "ghost",
+                  size: "xs",
+                })}
+              >
+                {formatTxCount(cat.transaction_count)}
+              </Link>
+
+              {isSystem ? (
+                <span className="px-2 text-xs text-muted-foreground">
+                  Read-only
+                </span>
+              ) : (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => onEdit(cat)}
+                  >
+                    <PencilIcon className="mr-1 size-3" />
+                    Edit
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => onDelete(cat)}
+                  >
+                    <Trash2Icon className="mr-1 size-3" />
+                    Delete
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+})
+
+const TagRows = memo(function TagRows({
+  items,
+  onEdit,
+  onDelete,
+}: {
+  items: TagSummary[]
+  onEdit: (item: TagSummary) => void
+  onDelete: (item: TagSummary) => void
+}) {
+  return (
+    <div className="divide-y divide-border border-t border-border">
+      {items.map((tag) => (
+        <div
+          key={tag.id}
+          className="flex flex-wrap items-center justify-between gap-3 px-6 py-3"
+        >
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted/40">
+              <TagIcon className="size-4 text-muted-foreground" />
+            </div>
+            <span className="font-medium text-foreground">{tag.name}</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/transactions?tag=${encodeURIComponent(tag.name)}&range=all`}
+              className={buttonVariants({
+                variant: "ghost",
+                size: "xs",
+              })}
+            >
+              {formatTxCount(tag.transaction_count)}
+            </Link>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={() => onEdit(tag)}
+            >
+              <PencilIcon className="mr-1 size-3" />
+              Rename
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={() => onDelete(tag)}
+            >
+              <Trash2Icon className="mr-1 size-3" />
+              Delete
+            </Button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+})

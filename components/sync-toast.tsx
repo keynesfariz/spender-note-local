@@ -19,7 +19,7 @@ import {
   cancelSyncApi,
   retryFailedExtractionsApi,
   syncStatusQuery,
-} from "@/lib/api"
+} from "@/lib/api/sync"
 
 function formatPhase(phase: string): string {
   switch (phase) {

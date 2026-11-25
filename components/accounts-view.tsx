@@ -8,12 +8,11 @@ import {
   HistoryIcon,
   WalletIcon,
 } from "lucide-react"
+import dynamic from "next/dynamic"
 import Link from "next/link"
 import { useState } from "react"
+import { useHasOpened } from "@/hooks/use-has-opened"
 
-import { AccountFormDialog } from "@/components/account-form-dialog"
-import { MergeAccountDialog } from "@/components/merge-account-dialog"
-import { ReconcileAccountDialog } from "@/components/reconcile-account-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -50,18 +49,47 @@ import {
   accountsQuery,
   confirmAccountApi,
   deleteAccountApi,
-  settingsQuery,
+} from "@/lib/api/accounts"
+import { localeQuery } from "@/lib/api/settings"
+import {
   type AccountSummary,
   type AccountType,
-} from "@/lib/api"
+} from "@/lib/api/types.generated"
 import {
   formatDateRangeLabel,
   formatMinorCurrency,
   formatSignedMinor,
   formatUtcInTimezone,
 } from "@/lib/format"
-
 import { cn } from "@/lib/utils"
+
+const AccountFormDialog = dynamic(() =>
+  import("@/components/account-form-dialog").then(
+    (mod) => mod.AccountFormDialog
+  )
+)
+const ReconcileAccountDialog = dynamic(() =>
+  import("@/components/reconcile-account-dialog").then(
+    (mod) => mod.ReconcileAccountDialog
+  )
+)
+const MergeAccountDialog = dynamic(() =>
+  import("@/components/merge-account-dialog").then(
+    (mod) => mod.MergeAccountDialog
+  )
+)
+
+function preloadAccountFormDialog() {
+  void import("@/components/account-form-dialog").catch(() => {})
+}
+
+function preloadReconcileAccountDialog() {
+  void import("@/components/reconcile-account-dialog").catch(() => {})
+}
+
+function preloadMergeAccountDialog() {
+  void import("@/components/merge-account-dialog").catch(() => {})
+}
 
 const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   credit_card: "Credit Card",
@@ -180,7 +208,7 @@ function AccountBillingDrawer({
 export function AccountsView() {
   const queryClient = useQueryClient()
   const accounts = useQuery(accountsQuery())
-  const settings = useQuery(settingsQuery())
+  const settings = useQuery(localeQuery())
 
   const [formOpen, setFormOpen] = useState(false)
   const [editingAccount, setEditingAccount] = useState<AccountSummary | null>(
@@ -191,12 +219,16 @@ export function AccountsView() {
   const [mergingAccount, setMergingAccount] = useState<AccountSummary | null>(
     null
   )
+  const hasOpenedForm = useHasOpened(formOpen)
+  const hasOpenedReconcile = useHasOpened(reconcilingAccount !== null)
+  const hasOpenedMerge = useHasOpened(mergingAccount !== null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const hasCurrency = Boolean(settings.data?.currency)
-  const provisionalCount = (accounts.data ?? []).filter(
-    (a) => a.status === "provisional"
-  ).length
+  const provisionalCount = (accounts.data ?? []).reduce(
+    (count, account) => count + Number(account.status === "provisional"),
+    0
+  )
 
   const confirmMutation = useMutation({
     mutationFn: confirmAccountApi,
@@ -241,6 +273,8 @@ export function AccountsView() {
         <Button
           type="button"
           disabled={!hasCurrency}
+          onPointerEnter={preloadAccountFormDialog}
+          onFocus={preloadAccountFormDialog}
           onClick={() => {
             setEditingAccount(null)
             setFormOpen(true)
@@ -460,6 +494,8 @@ export function AccountsView() {
                     type="button"
                     variant="outline"
                     size="sm"
+                    onPointerEnter={preloadAccountFormDialog}
+                    onFocus={preloadAccountFormDialog}
                     onClick={() => {
                       setEditingAccount(account)
                       setFormOpen(true)
@@ -471,6 +507,8 @@ export function AccountsView() {
                     type="button"
                     variant="outline"
                     size="sm"
+                    onPointerEnter={preloadReconcileAccountDialog}
+                    onFocus={preloadReconcileAccountDialog}
                     onClick={() => setReconcilingAccount(account)}
                   >
                     {account.computed_balance_minor === null
@@ -481,6 +519,8 @@ export function AccountsView() {
                     type="button"
                     variant="outline"
                     size="sm"
+                    onPointerEnter={preloadMergeAccountDialog}
+                    onFocus={preloadMergeAccountDialog}
                     onClick={() => setMergingAccount(account)}
                   >
                     Merge into...
@@ -525,34 +565,40 @@ export function AccountsView() {
         </div>
       )}
 
-      <AccountFormDialog
-        open={formOpen}
-        onOpenChange={(open) => {
-          setFormOpen(open)
-          if (!open) setEditingAccount(null)
-        }}
-        account={editingAccount}
-        currency={settings.data?.currency ?? "USD"}
-        timezone={settings.data?.timezone}
-      />
+      {hasOpenedForm && (
+        <AccountFormDialog
+          open={formOpen}
+          onOpenChange={(open) => {
+            setFormOpen(open)
+            if (!open) setEditingAccount(null)
+          }}
+          account={editingAccount}
+          currency={settings.data?.currency ?? "USD"}
+          timezone={settings.data?.timezone}
+        />
+      )}
 
-      <ReconcileAccountDialog
-        open={reconcilingAccount !== null}
-        onOpenChange={(open) => {
-          if (!open) setReconcilingAccount(null)
-        }}
-        account={reconcilingAccount}
-        timezone={settings.data?.timezone}
-      />
+      {hasOpenedReconcile && (
+        <ReconcileAccountDialog
+          open={reconcilingAccount !== null}
+          onOpenChange={(open) => {
+            if (!open) setReconcilingAccount(null)
+          }}
+          account={reconcilingAccount}
+          timezone={settings.data?.timezone}
+        />
+      )}
 
-      <MergeAccountDialog
-        open={mergingAccount !== null}
-        onOpenChange={(open) => {
-          if (!open) setMergingAccount(null)
-        }}
-        sourceAccount={mergingAccount}
-        allAccounts={accounts.data ?? []}
-      />
+      {hasOpenedMerge && (
+        <MergeAccountDialog
+          open={mergingAccount !== null}
+          onOpenChange={(open) => {
+            if (!open) setMergingAccount(null)
+          }}
+          sourceAccount={mergingAccount}
+          allAccounts={accounts.data ?? []}
+        />
+      )}
     </div>
   )
 }

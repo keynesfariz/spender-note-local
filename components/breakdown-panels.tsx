@@ -2,7 +2,10 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
-import type { MonthlySpendingSummary, SpendingGroupRow } from "@/lib/api"
+import type {
+  MonthlySpendingSummary,
+  SpendingGroupRow,
+} from "@/lib/api/types.generated"
 import { formatMinorCurrency } from "@/lib/format"
 
 function BreakdownCard({

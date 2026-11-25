@@ -5,13 +5,13 @@ import { Loader2Icon, SparklesIcon } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
+import { tagsQuery } from "@/lib/api/tags"
+import { enrichTransactionsApi } from "@/lib/api/transactions"
 import {
-  enrichTransactionsApi,
-  tagsQuery,
   type TagSummary,
   type TransactionEnrichmentPreview,
   type TransactionTagItem,
-} from "@/lib/api"
+} from "@/lib/api/types.generated"
 import { utcToDateInputValue, utcToTimeInputValue } from "@/lib/format"
 
 export function isAbortError(err: unknown): boolean {
@@ -125,9 +125,11 @@ export function patchTagsQueryCache(
       return prev
     }
     const next = [...prev]
+    const knownIds = new Set(prev.map((tag) => tag.id))
     let changed = false
     for (const tag of tags) {
-      if (!next.some((existing) => existing.id === tag.id)) {
+      if (!knownIds.has(tag.id)) {
+        knownIds.add(tag.id)
         next.push({
           id: tag.id,
           name: tag.name,
@@ -193,8 +195,9 @@ export function resolveMagicDraft(
   if (draft.note.trim() !== next.note.trim()) changed.add("Note")
   if (
     draft.selectedTagIds.length !== next.selectedTagIds.length ||
-    JSON.stringify([...draft.draftTagNames].sort()) !==
-      JSON.stringify([...next.draftTagNames].sort())
+    draft.draftTagNames.length !== next.draftTagNames.length ||
+    JSON.stringify(draft.draftTagNames.toSorted()) !==
+      JSON.stringify(next.draftTagNames.toSorted())
   ) {
     changed.add("Tags")
   }
@@ -298,7 +301,9 @@ export function MagicEnrichButton({
     >
       {isEnriching ? (
         <>
-          <Loader2Icon className="mr-1.5 size-3.5 animate-spin" />
+          <span className="mr-1.5 animate-spin">
+            <Loader2Icon className="size-3.5" />
+          </span>
           Enriching...
         </>
       ) : (

@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { monthlySummaryQuery } from "@/lib/api"
+import { monthlySummaryQuery } from "@/lib/api/transactions"
 import { shiftYearMonth } from "@/lib/format"
 
 const MONTH_OPTIONS = [

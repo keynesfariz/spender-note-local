@@ -753,7 +753,7 @@ func TestEnrichTransactionsFromSources_SynthesizesMultipleEmailsWithoutMutatingD
 		Currency:      "IDR",
 		OccurredAtUtc: "2026-11-23T05:14:00Z",
 		Merchant:      "GOPAY*GOFOOD",
-		Category:      "Food",
+		CategoryID:    "cat-food",
 		CreatedAtUtc:  "2026-11-23T05:14:00Z",
 		UpdatedAtUtc:  "2026-11-23T05:14:00Z",
 	}).Error; err != nil {
@@ -768,7 +768,7 @@ func TestEnrichTransactionsFromSources_SynthesizesMultipleEmailsWithoutMutatingD
 	for _, name := range []string{"historical-user", "historical-magic", "historical-category-edit"} {
 		if err := gdb.Create(&db.Transaction{
 			ID: name, SourceType: "gmail", AmountMinor: 1000, Currency: "IDR",
-			Merchant: "GoFood", Category: "Food", ManualOverride: 1,
+			Merchant: "GoFood", CategoryID: "cat-food", ManualOverride: 1,
 			OccurredAtUtc: "2026-11-22T05:00:00Z", CreatedAtUtc: "2026-11-22T05:00:00Z", UpdatedAtUtc: "2026-11-22T05:00:00Z",
 		}).Error; err != nil {
 			t.Fatal(err)
@@ -852,7 +852,7 @@ func TestEnrichTransactionsFromSources_SynthesizesMultipleEmailsWithoutMutatingD
 	}
 	var persisted db.Transaction
 	gdb.Where("id = ?", txID).First(&persisted)
-	if persisted.Merchant != "GOPAY*GOFOOD" || persisted.Category != "Food" || persisted.Note != nil || persisted.Remark != nil {
+	if persisted.Merchant != "GOPAY*GOFOOD" || persisted.CategoryID != "cat-food" || persisted.Note != nil || persisted.Remark != nil {
 		t.Fatalf("expected transaction row untouched by preview, got %+v", persisted)
 	}
 }
@@ -863,7 +863,7 @@ func TestEnrichTransactionsFromSources_UsesOnlyServiceWhenVendorIsMissing(t *tes
 	for _, id := range []string{"previous-order", "service-only-order"} {
 		if err := gdb.Create(&db.Transaction{
 			ID: id, SourceType: "gmail", AmountMinor: 45000, Currency: "IDR",
-			Merchant: "GrabFood", Category: "Food", OccurredAtUtc: stamp,
+			Merchant: "GrabFood", CategoryID: "cat-food", OccurredAtUtc: stamp,
 			CreatedAtUtc: stamp, UpdatedAtUtc: stamp,
 		}).Error; err != nil {
 			t.Fatal(err)
@@ -914,7 +914,7 @@ func TestEnrichTransactionsFromSources_CardChargeTimestampAndSenderRoleHintPrece
 	txID := "tx-role-hint"
 	if err := gdb.Create(&db.Transaction{
 		ID: txID, SourceType: "gmail", AmountMinor: 50000, Currency: "IDR",
-		OccurredAtUtc: "2026-11-23T05:14:00Z", Merchant: "MERCHANT", Category: "Food",
+		OccurredAtUtc: "2026-11-23T05:14:00Z", Merchant: "MERCHANT", CategoryID: "cat-food",
 		CreatedAtUtc: "2026-11-23T05:14:00Z", UpdatedAtUtc: "2026-11-23T05:14:00Z",
 	}).Error; err != nil {
 		t.Fatalf("create tx: %v", err)
@@ -966,7 +966,7 @@ func TestEnrichTransactionsFromSources_MultipleTransactionsEarliestCardCharge(t 
 	for _, id := range ids {
 		if err := gdb.Create(&db.Transaction{
 			ID: id, SourceType: "gmail", AmountMinor: 25000, Currency: "IDR",
-			OccurredAtUtc: "2026-11-23T08:00:00Z", Merchant: id, Category: "Food",
+			OccurredAtUtc: "2026-11-23T08:00:00Z", Merchant: id, CategoryID: "cat-food",
 			CreatedAtUtc: "2026-11-23T08:00:00Z", UpdatedAtUtc: "2026-11-23T08:00:00Z",
 		}).Error; err != nil {
 			t.Fatalf("create %s: %v", id, err)
@@ -1006,7 +1006,7 @@ func TestEnrichTransactionsFromSources_MissingCardChargeTimeFallsBackToLlmOrNil(
 	txID := "tx-fallback-ts"
 	if err := gdb.Create(&db.Transaction{
 		ID: txID, SourceType: "gmail", AmountMinor: 40000, Currency: "IDR",
-		OccurredAtUtc: "2026-11-23T05:00:00Z", Merchant: "Cafe", Category: "Food",
+		OccurredAtUtc: "2026-11-23T05:00:00Z", Merchant: "Cafe", CategoryID: "cat-food",
 		CreatedAtUtc: "2026-11-23T05:00:00Z", UpdatedAtUtc: "2026-11-23T05:00:00Z",
 	}).Error; err != nil {
 		t.Fatalf("create tx: %v", err)
@@ -1196,7 +1196,6 @@ func TestListTransactions_WindowAnchoredGhostRowPaginationAndBounds(t *testing.T
 		}
 	}
 
-	// Seed 3 Ghost Rows: newer than page 1 (15:00), between page 1 and page 2 (12:30), older than page 3 (08:00).
 	ghostSeeds := []struct {
 		id, occ string
 		ms      int64
@@ -1206,13 +1205,10 @@ func TestListTransactions_WindowAnchoredGhostRowPaginationAndBounds(t *testing.T
 		{"g-old", "2026-11-24T08:00:00Z", 800},
 	}
 	for _, g := range ghostSeeds {
-		seedLegacySkippedEmail(
+		seedSkippedEmail(
 			t, gdb, g.id, &sender.ID, "alerts@bank.test", "Transfer "+g.id, "Body "+g.id, g.ms, g.occ, "qwen",
 			`{"email_kind":"non_transaction","amount_decimal":"20000","currency":"IDR","transaction_date":"`+g.occ+`","merchant":"Merchant `+g.id+`","category":"Other"}`,
 		)
-	}
-	if err := BackfillSkippedEmailTriageData(gdb); err != nil {
-		t.Fatal(err)
 	}
 
 	seen := map[string]int{}

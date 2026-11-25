@@ -20,6 +20,7 @@ import (
 )
 
 const DefaultLlmBaseURL = "http://localhost:9931/v1"
+const baselineVersion = 7
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
@@ -100,19 +101,6 @@ func tableExists(sqlDB *sql.DB, tableName string) (bool, error) {
 }
 
 func runMigrations(sqlDB *sql.DB) error {
-	hasSchemaMigrations, err := tableExists(sqlDB, "schema_migrations")
-	if err != nil {
-		return err
-	}
-	needsBaseline := false
-	if !hasSchemaMigrations {
-		hasAppSettings, err := tableExists(sqlDB, "app_settings")
-		if err != nil {
-			return err
-		}
-		needsBaseline = hasAppSettings
-	}
-
 	srcDriver, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {
 		return fmt.Errorf("init embedded migration source: %w", err)
@@ -129,9 +117,20 @@ func runMigrations(sqlDB *sql.DB) error {
 		return fmt.Errorf("create migrate instance: %w", err)
 	}
 
-	if needsBaseline {
-		if err := m.Force(1); err != nil {
-			return fmt.Errorf("baseline existing database at v1: %w", err)
+	version, _, err := dbDriver.Version()
+	if err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if version > 0 && version < baselineVersion {
+		return errors.New("database schema predates the new baseline; set DATABASE_PATH to a new database file")
+	}
+	if version < 1 {
+		hasAppSettings, err := tableExists(sqlDB, "app_settings")
+		if err != nil {
+			return err
+		}
+		if hasAppSettings {
+			return errors.New("database schema is unversioned; set DATABASE_PATH to a new database file")
 		}
 	}
 

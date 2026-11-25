@@ -64,19 +64,15 @@ func TestListTransactions_GhostRowFilteringAndDateOnlyInRangeCount(t *testing.T)
 		t.Fatal(err)
 	}
 
-	seedLegacySkippedEmail(
+	seedSkippedEmail(
 		t, gdb, "g-match", &sender.ID, "wallet@pay.test", "Coffee Transfer", "Body", 2000, "2026-11-24T04:00:00Z", "qwen",
 		`{"email_kind":"non_transaction","amount_decimal":"25000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"11:00:00","timezone_offset":"+07:00","merchant":"Kopi Kenangan","category":"Dining Out","payment_method":"Main Wallet"}`,
 	)
-	seedLegacySkippedEmail(
+	seedSkippedEmail(
 		t, gdb, "g-other-date", &sender.ID, "wallet@pay.test", "Older Transfer", "Body", 1500, "2026-11-20T04:00:00Z", "qwen",
 		`{"email_kind":"non_transaction","amount_decimal":"30000","currency":"IDR","transaction_date":"2026-11-20","transaction_time":"11:00:00","timezone_offset":"+07:00","merchant":"Bakery","category":"Dining Out"}`,
 	)
-	if err := BackfillSkippedEmailTriageData(gdb); err != nil {
-		t.Fatal(err)
-	}
 
-	// Search mismatch does NOT collapse date-bounded ghostInRangeCount.
 	searchMiss, err := ListTransactions(gdb, ListTransactionsParams{
 		StartDate: "2026-11-24", EndDate: "2026-11-24", Search: "nonexistent-term",
 	})

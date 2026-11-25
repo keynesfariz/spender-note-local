@@ -76,7 +76,7 @@ func TestCategories_CreateUpdateCaseInsensitiveUniquenessAndRenamePropagation(t 
 		Currency:      "IDR",
 		OccurredAtUtc: "2026-11-21T08:50:00Z",
 		MerchantRaw:   "Kopi Kenangan",
-		Category:      "Coffee & Tea",
+		Category:      " coffee & tea ",
 	})
 	if err != nil {
 		t.Fatalf("SaveExtractedTransaction: %v", err)
@@ -101,8 +101,12 @@ func TestCategories_CreateUpdateCaseInsensitiveUniquenessAndRenamePropagation(t 
 	if err := gdb.First(&tx, "id = ?", txID).Error; err != nil {
 		t.Fatalf("load tx: %v", err)
 	}
-	if tx.Category != "Cafe & Drinks" {
-		t.Fatalf("expected transaction category updated to 'Cafe & Drinks', got %q", tx.Category)
+	if tx.CategoryID != created.ID {
+		t.Fatalf("expected transaction to keep category ID %q, got %q", created.ID, tx.CategoryID)
+	}
+	item, err := GetTransactionDetail(gdb, txID)
+	if err != nil || item.Transaction.Category != renamed {
+		t.Fatalf("expected transaction to show renamed category %q, got %+v, %v", renamed, item, err)
 	}
 
 	var ext db.EmailExtraction
@@ -155,8 +159,8 @@ func TestCategories_DeleteReassignsTransactionsAndExtractions(t *testing.T) {
 	if err := gdb.First(&gotTx1, "id = ?", tx1).Error; err != nil {
 		t.Fatalf("load tx1: %v", err)
 	}
-	if gotTx1.Category != "Other" {
-		t.Fatalf("expected tx1 reassigned to 'Other', got %q", gotTx1.Category)
+	if gotTx1.CategoryID != "cat-other" {
+		t.Fatalf("expected tx1 reassigned to 'Other', got %q", gotTx1.CategoryID)
 	}
 	var gotExt1 db.EmailExtraction
 	if err := gdb.First(&gotExt1, "email_id = ?", "email-del-1").Error; err != nil {
@@ -173,8 +177,8 @@ func TestCategories_DeleteReassignsTransactionsAndExtractions(t *testing.T) {
 	if err := gdb.First(&gotTx2, "id = ?", tx2.ID).Error; err != nil {
 		t.Fatalf("load tx2: %v", err)
 	}
-	if gotTx2.Category != "Shopping" {
-		t.Fatalf("expected tx2 reassigned to 'Shopping', got %q", gotTx2.Category)
+	if gotTx2.CategoryID != "cat-shopping" {
+		t.Fatalf("expected tx2 reassigned to 'Shopping', got %q", gotTx2.CategoryID)
 	}
 }
 

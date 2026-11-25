@@ -7,15 +7,15 @@ export interface DefaultCategoryDefinition {
 export const DEFAULT_CATEGORY_DEFINITIONS: ReadonlyArray<DefaultCategoryDefinition> =
   [
     { name: "Housing", icon: "Home" },
+    { name: "Bills & Utilities", icon: "Zap" },
     { name: "Food", icon: "ShoppingCart" },
-    { name: "Utilities", icon: "Zap" },
-    { name: "Transportation", icon: "Car" },
-    { name: "Healthcare", icon: "HeartPulse" },
-    { name: "Entertainment", icon: "Ticket" },
     { name: "Dining Out", icon: "Utensils" },
+    { name: "Entertainment", icon: "Ticket" },
     { name: "Shopping", icon: "ShoppingBag" },
+    { name: "Health & Personal Care", icon: "HeartPulse" },
     { name: "Education", icon: "GraduationCap" },
-    { name: "Personal Care", icon: "Sparkles" },
+    { name: "Transport", icon: "Car" },
+    { name: "Travel", icon: "Plane" },
     { name: "Other", icon: "Ellipsis", isSystem: true },
   ]
 

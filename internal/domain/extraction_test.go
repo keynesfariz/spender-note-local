@@ -148,8 +148,8 @@ func TestSplitTransactionSource_DetachedTransactionStartsUnreviewedAndPreservesP
 		t.Fatalf("tag parent tx: %v", err)
 	}
 	if err := gdb.Exec(`
-		INSERT INTO email_extractions (id, email_id, email_kind, amount_minor, currency, occurred_at_utc, merchant_raw, merchant_norm, category, extraction_model, raw_llm_json)
-		VALUES ('ext-s2', 'email-s2', 'receipt', 10000, 'IDR', '2026-11-21T08:51:00Z', 'GrabFood Tip', 'grabfood tip', 'Food', 'sync', '{}')
+		INSERT INTO email_extractions (id, email_id, email_kind, amount_minor, currency, occurred_at_utc, merchant_raw, category, extraction_model, raw_llm_json)
+		VALUES ('ext-s2', 'email-s2', 'receipt', 10000, 'IDR', '2026-11-21T08:51:00Z', 'GrabFood Tip', 'Food', 'sync', '{}')
 	`).Error; err != nil {
 		t.Fatalf("insert extraction 2: %v", err)
 	}

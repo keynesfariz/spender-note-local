@@ -267,7 +267,7 @@ func seedAccountTx(t *testing.T, gdb *gorm.DB, id, accountID string, amountMinor
 		Currency:      currency,
 		OccurredAtUtc: occurredAtUtc,
 		Merchant:      "Test Merchant",
-		Category:      "Other",
+		CategoryID:    "cat-other",
 		Reviewed:      1,
 		CreatedAtUtc:  "2026-11-01T00:00:00Z",
 		UpdatedAtUtc:  "2026-11-01T00:00:00Z",

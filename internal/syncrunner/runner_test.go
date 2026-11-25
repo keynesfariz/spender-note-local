@@ -891,10 +891,11 @@ func waitForRunDone(t *testing.T, gdb *gorm.DB, runID string) {
 
 func TestRunExtractionWorker_UsesCustomCategoriesFromDatabase(t *testing.T) {
 	gdb := openTestDB(t)
-	if _, err := domain.CreateCategory(gdb, domain.CreateCategoryInput{
+	category, err := domain.CreateCategory(gdb, domain.CreateCategoryInput{
 		Name: "Pet Supplies",
 		Icon: "PawPrint",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("create custom category: %v", err)
 	}
 
@@ -979,8 +980,8 @@ func TestRunExtractionWorker_UsesCustomCategoriesFromDatabase(t *testing.T) {
 	if err := gdb.First(&tx, "merchant = ?", "Pet Kingdom").Error; err != nil {
 		t.Fatalf("load created transaction: %v", err)
 	}
-	if tx.Category != "Pet Supplies" {
-		t.Fatalf("expected persisted transaction category 'Pet Supplies', got %q", tx.Category)
+	if tx.CategoryID != category.ID {
+		t.Fatalf("expected persisted category ID %q, got %q", category.ID, tx.CategoryID)
 	}
 }
 
@@ -1060,7 +1061,7 @@ func TestRunExtractionWorker_LearnedPoliciesPrecedenceGhostStateAndRace(t *testi
 		case strings.Contains(userPrompt, "email-admit-ok"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{
-					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"5000","currency":"IDR","transaction_date":"2026-11-23","transaction_time":"20:14:00","timezone_offset":"+07:00","merchant":"","category":"Transportation","card_last4":"6039","payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"credit_card","reference_code":null}`}},
+					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"5000","currency":"IDR","transaction_date":"2026-11-23","transaction_time":"20:14:00","timezone_offset":"+07:00","merchant":"","category":"Transport","card_last4":"6039","payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"credit_card","reference_code":null}`}},
 				},
 			})
 		case strings.Contains(userPrompt, "email-ghost"):

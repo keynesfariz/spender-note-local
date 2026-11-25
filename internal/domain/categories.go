@@ -43,7 +43,7 @@ func ListCategories(gdb *gorm.DB) ([]CategorySummary, error) {
 			c.created_at_utc,
 			COUNT(t.id) AS transaction_count
 		FROM categories c
-		LEFT JOIN transactions t ON t.category = c.name
+		LEFT JOIN transactions t ON t.category_id = c.id
 		GROUP BY c.id
 		ORDER BY c.is_system ASC, c.sort_order ASC, LOWER(c.name) ASC`,
 	).Scan(&rows).Error; err != nil {
@@ -64,15 +64,7 @@ func ListCategoryNames(gdb *gorm.DB) ([]string, error) {
 	return llm.ResolveCategories(names), nil
 }
 
-func reassignCategoryReferences(tx *gorm.DB, fromName, toName, nowUtc string) error {
-	if err := tx.Model(&db.Transaction{}).
-		Where("category = ?", fromName).
-		Updates(map[string]any{
-			"category":       toName,
-			"updated_at_utc": nowUtc,
-		}).Error; err != nil {
-		return err
-	}
+func reassignExtractionCategory(tx *gorm.DB, fromName, toName string) error {
 	return tx.Model(&db.EmailExtraction{}).
 		Where("category = ?", fromName).
 		Update("category", toName).Error
@@ -98,6 +90,14 @@ func ResolveKnownCategory(gdb *gorm.DB, raw string) string {
 	return DefaultCategory
 }
 
+func resolveTransactionCategory(tx *gorm.DB, name string) (*db.Category, error) {
+	cat, err := lookupCategoryByName(tx, name)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return lookupCategoryByName(tx, DefaultCategory)
+	}
+	return cat, err
+}
+
 func getCategorySummaryByID(gdb *gorm.DB, id string) (*CategorySummary, error) {
 	var rows []CategorySummary
 	if err := gdb.Raw(`
@@ -110,7 +110,7 @@ func getCategorySummaryByID(gdb *gorm.DB, id string) (*CategorySummary, error) {
 			c.created_at_utc,
 			COUNT(t.id) AS transaction_count
 		FROM categories c
-		LEFT JOIN transactions t ON t.category = c.name
+		LEFT JOIN transactions t ON t.category_id = c.id
 		WHERE c.id = ?
 		GROUP BY c.id`,
 		id,
@@ -215,7 +215,7 @@ func UpdateCategory(gdb *gorm.DB, id string, input UpdateCategoryInput) (*Catego
 		}
 
 		if nextName != current.Name {
-			if err := reassignCategoryReferences(tx, current.Name, nextName, NowUtcIsoSeconds()); err != nil {
+			if err := reassignExtractionCategory(tx, current.Name, nextName); err != nil {
 				return err
 			}
 		}
@@ -274,7 +274,15 @@ func DeleteCategory(gdb *gorm.DB, id string, replaceWithCategory string) error {
 			return errors.New("Replacement category must be a different existing category.")
 		}
 
-		if err := reassignCategoryReferences(tx, current.Name, replacement.Name, NowUtcIsoSeconds()); err != nil {
+		if err := tx.Model(&db.Transaction{}).
+			Where("category_id = ?", current.ID).
+			Updates(map[string]any{
+				"category_id":    replacement.ID,
+				"updated_at_utc": NowUtcIsoSeconds(),
+			}).Error; err != nil {
+			return err
+		}
+		if err := reassignExtractionCategory(tx, current.Name, replacement.Name); err != nil {
 			return err
 		}
 

@@ -4,15 +4,15 @@ import "strings"
 
 var DefaultCategories = []string{
 	"Housing",
+	"Bills & Utilities",
 	"Food",
-	"Utilities",
-	"Transportation",
-	"Healthcare",
-	"Entertainment",
 	"Dining Out",
+	"Entertainment",
 	"Shopping",
+	"Health & Personal Care",
 	"Education",
-	"Personal Care",
+	"Transport",
+	"Travel",
 	"Other",
 }
 

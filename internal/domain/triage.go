@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -165,8 +164,6 @@ type PromoteIgnoredEmailResult struct {
 	UsedLlm     bool                `json:"usedLlm"`
 }
 
-const unbackfilledCondition = `re.status = 'non_transaction' AND (ee.email_id IS NULL OR (COALESCE(ee.extraction_model, '') != 'rule:billing_statement' AND (ee.triage_signature_key IS NULL OR ee.triage_signature_key = '')))`
-
 const triageCandidateColumns = `
 	re.id AS email_id, re.sender_id, s.role_hint AS sender_role_hint,
 	re.from_address, re.subject, re.cleaned_text, re.received_at_utc,
@@ -183,221 +180,6 @@ func strPtrOrNil(s string) *string {
 		return nil
 	}
 	return &trimmed
-}
-
-// BackfillSkippedEmailTriageData populates template signatures and draft fields
-// for existing non_transaction emails lazily inside a single immediate write lock.
-func BackfillSkippedEmailTriageData(gdb *gorm.DB) error {
-	var needsWork int
-	if err := gdb.Raw(`
-		SELECT 1
-		FROM raw_emails re
-		LEFT JOIN email_extractions ee ON ee.email_id = re.id
-		WHERE ` + unbackfilledCondition + `
-		LIMIT 1`,
-	).Scan(&needsWork).Error; err != nil {
-		return err
-	}
-	if needsWork == 0 {
-		return nil
-	}
-
-	return db.RunImmediateTx(gdb, func(tx *gorm.DB) error {
-		type backfillRow struct {
-			EmailID          string  `gorm:"column:email_id"`
-			FromAddress      string  `gorm:"column:from_address"`
-			Subject          string  `gorm:"column:subject"`
-			CleanedText      string  `gorm:"column:cleaned_text"`
-			ReceivedAtUtc    string  `gorm:"column:received_at_utc"`
-			ExtractionID     *string `gorm:"column:extraction_id"`
-			AmountMinor      *int64  `gorm:"column:amount_minor"`
-			Currency         *string `gorm:"column:currency"`
-			OccurredAtUtc    *string `gorm:"column:occurred_at_utc"`
-			MerchantRaw      *string `gorm:"column:merchant_raw"`
-			Category         *string `gorm:"column:category"`
-			CardLast4        *string `gorm:"column:card_last4"`
-			PaymentMethodRaw *string `gorm:"column:payment_method_raw"`
-			BankAccountHint  *string `gorm:"column:bank_account_hint"`
-			LlmAccountID     *string `gorm:"column:llm_account_id"`
-			AccountTypeGuess *string `gorm:"column:account_type_guess"`
-			ReferenceCode    *string `gorm:"column:reference_code"`
-			ExtractionModel  *string `gorm:"column:extraction_model"`
-			RawLlmJSON       *string `gorm:"column:raw_llm_json"`
-			TriageState      *string `gorm:"column:triage_state"`
-		}
-
-		var candidates []backfillRow
-		if err := tx.Raw(`
-			SELECT
-				re.id AS email_id, re.from_address, re.subject, re.cleaned_text, re.received_at_utc,
-				ee.id AS extraction_id, ee.amount_minor, ee.currency, ee.occurred_at_utc,
-				ee.merchant_raw, ee.category, ee.card_last4, ee.payment_method_raw,
-				ee.bank_account_hint, ee.llm_account_id, ee.account_type_guess, ee.reference_code,
-				ee.extraction_model, ee.raw_llm_json, ee.triage_state
-			FROM raw_emails re
-			LEFT JOIN email_extractions ee ON ee.email_id = re.id
-			WHERE ` + unbackfilledCondition,
-		).Scan(&candidates).Error; err != nil {
-			return err
-		}
-		if len(candidates) == 0 {
-			return nil
-		}
-
-		tzPtr, curPtr, err := getLocaleConfig(tx)
-		if err != nil {
-			return err
-		}
-		userTimezone := "UTC"
-		if tzPtr != nil && strings.TrimSpace(*tzPtr) != "" && !strings.EqualFold(strings.TrimSpace(*tzPtr), "Local") {
-			userTimezone = strings.TrimSpace(*tzPtr)
-		}
-		catNames, err := ListCategoryNames(tx)
-		if err != nil {
-			return err
-		}
-
-		for _, row := range candidates {
-			sig := DeriveEmailTemplateSignature(row.FromAddress, row.Subject, row.CleanedText)
-
-			amt := row.AmountMinor
-			cur := row.Currency
-			occ := row.OccurredAtUtc
-			merchRaw := row.MerchantRaw
-			var merchNorm *string
-			if merchRaw != nil {
-				if norm := strings.TrimSpace(NormalizeMerchant(*merchRaw)); norm != "" {
-					merchNorm = &norm
-				} else {
-					merchRaw = nil
-				}
-			}
-			cat := row.Category
-			cardLast4 := row.CardLast4
-			pmRaw := row.PaymentMethodRaw
-			bankHint := row.BankAccountHint
-			llmAcct := row.LlmAccountID
-			acctType := row.AccountTypeGuess
-			refCode := row.ReferenceCode
-
-			rawJSON := "{}"
-			if row.RawLlmJSON != nil && strings.TrimSpace(*row.RawLlmJSON) != "" {
-				rawJSON = *row.RawLlmJSON
-			}
-			cleaned := llm.StripThinkBlocks(rawJSON)
-			if strings.HasPrefix(cleaned, "{") {
-				var parsed llm.RawExtraction
-				if json.Unmarshal([]byte(cleaned), &parsed) == nil {
-					parsed.EmailKind = "non_transaction"
-					res, normErr := llm.NormalizeExtractedResult(&parsed, rawJSON, llm.ExtractInput{
-						EmailID:       row.EmailID,
-						FromAddress:   row.FromAddress,
-						Subject:       row.Subject,
-						CleanedText:   row.CleanedText,
-						ReceivedAtUtc: row.ReceivedAtUtc,
-						UserTimezone:  userTimezone,
-						UserCurrency:  curPtr,
-						Categories:    catNames,
-					})
-					if normErr == nil && res != nil {
-						if res.AmountMinor > 0 && len(res.Currency) == 3 {
-							a := res.AmountMinor
-							c := res.Currency
-							amt = &a
-							cur = &c
-							if res.OccurredAtUtc != "" {
-								o := res.OccurredAtUtc
-								occ = &o
-							}
-							resolvedCat := ResolveKnownCategory(tx, res.Category)
-							cat = &resolvedCat
-						}
-						if merchRaw == nil {
-							if p := strPtrOrNil(res.MerchantRaw); p != nil {
-								merchRaw = p
-								if norm := strings.TrimSpace(NormalizeMerchant(*p)); norm != "" {
-									merchNorm = &norm
-								}
-							}
-						}
-						if cardLast4 == nil && res.CardLast4 != nil {
-							cardLast4 = res.CardLast4
-						}
-						if pmRaw == nil && res.PaymentMethodRaw != nil {
-							pmRaw = res.PaymentMethodRaw
-						}
-						if bankHint == nil && res.BankAccountHint != nil {
-							bankHint = res.BankAccountHint
-						}
-						if llmAcct == nil && res.MatchedAccountID != nil {
-							llmAcct = res.MatchedAccountID
-						}
-						if acctType == nil && res.AccountTypeGuess != nil {
-							acctType = res.AccountTypeGuess
-						}
-						if refCode == nil && res.ReferenceCode != nil {
-							refCode = res.ReferenceCode
-						}
-					}
-				}
-			}
-
-			var triageState *string
-			if row.TriageState != nil && *row.TriageState != "" {
-				s := *row.TriageState
-				triageState = &s
-			} else if amt != nil && *amt > 0 && cur != nil && len(strings.TrimSpace(*cur)) == 3 {
-				s := "ghost"
-				triageState = &s
-			}
-
-			if row.ExtractionID == nil {
-				if err := tx.Exec(`
-					INSERT INTO email_extractions (
-						id, email_id, email_kind, amount_minor, currency, occurred_at_utc,
-						merchant_raw, merchant_norm, category, card_last4, payment_method_raw,
-						bank_account_hint, llm_account_id, reference_code, extraction_model, raw_llm_json,
-						account_type_guess, triage_signature_key, triage_subject_pattern, triage_body_cue, triage_state
-					) VALUES (?, ?, 'non_transaction', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'legacy_backfill', ?, ?, ?, ?, ?, ?)`,
-					uuid.NewString(), row.EmailID, amt, cur, occ,
-					merchRaw, merchNorm, cat, cardLast4, pmRaw,
-					bankHint, llmAcct, refCode, rawJSON,
-					acctType, sig.SignatureKey, sig.SubjectPattern, sig.BodyCue, triageState,
-				).Error; err != nil {
-					return err
-				}
-			} else {
-				if err := tx.Exec(`
-					UPDATE email_extractions
-					SET amount_minor = ?,
-						currency = ?,
-						occurred_at_utc = ?,
-						merchant_raw = ?,
-						merchant_norm = ?,
-						category = ?,
-						card_last4 = ?,
-						payment_method_raw = ?,
-						bank_account_hint = ?,
-						llm_account_id = ?,
-						reference_code = ?,
-						account_type_guess = ?,
-						triage_signature_key = ?,
-						triage_subject_pattern = ?,
-						triage_body_cue = ?,
-						triage_state = ?
-					WHERE id = ?`,
-					amt, cur, occ,
-					merchRaw, merchNorm, cat, cardLast4, pmRaw,
-					bankHint, llmAcct, refCode,
-					acctType, sig.SignatureKey, sig.SubjectPattern, sig.BodyCue, triageState,
-					*row.ExtractionID,
-				).Error; err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
 }
 
 const maxGhostRowsPerPage = 100
@@ -642,10 +424,6 @@ type PaginatedSkippedTransactionsResponse struct {
 }
 
 func ListSkippedTransactions(gdb *gorm.DB, page, pageSize int) (*PaginatedSkippedTransactionsResponse, error) {
-	return ListSkippedTransactionsWithBackfill(gdb, page, pageSize, nil)
-}
-
-func ListSkippedTransactionsWithBackfill(gdb *gorm.DB, page, pageSize int, backfill *TriageBackfill) (*PaginatedSkippedTransactionsResponse, error) {
 	page = max(1, page)
 	if pageSize <= 0 {
 		pageSize = 25
@@ -661,9 +439,6 @@ func ListSkippedTransactionsWithBackfill(gdb *gorm.DB, page, pageSize int, backf
 	}
 	if timezone == nil || *timezone == "" || currency == nil || *currency == "" {
 		return &result, nil
-	}
-	if err := backfill.ensure(gdb); err != nil {
-		return nil, err
 	}
 
 	var rows []rawGhostRow
@@ -1665,7 +1440,7 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 			amountMinor = extracted.AmountMinor
 			currency = strings.ToUpper(strings.TrimSpace(extracted.Currency))
 			occurredAt = extracted.OccurredAtUtc
-			merchant = strings.TrimSpace(extracted.MerchantRaw)
+			merchant = extracted.MerchantRaw
 			category = ResolveKnownCategory(tx, extracted.Category)
 			rawKind = extracted.EmailKind
 			cardLast4 = extracted.CardLast4
@@ -1706,28 +1481,35 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 		}
 		effectiveRole := ResolveEffectiveEmailRole(curRow.SenderRoleHint, rawKind, cardLast4, bankHint)
 
-		var merchantRawPtr, merchantNormPtr *string
 		if usedLlm {
-			if p := strPtrOrNil(extracted.MerchantRaw); p != nil {
-				merchantRawPtr = p
-				if norm := strings.TrimSpace(NormalizeMerchant(*p)); norm != "" {
-					merchantNormPtr = &norm
-				}
+			var merchantRaw *string
+			if extracted.MerchantRaw != "" {
+				merchantRaw = &extracted.MerchantRaw
 			}
 			sig := DeriveEmailTemplateSignature(curRow.FromAddress, curRow.Subject, curRow.CleanedText)
-			if err := tx.Exec(`
-				INSERT OR REPLACE INTO email_extractions (
-					id, email_id, email_kind, amount_minor, currency, occurred_at_utc,
-					merchant_raw, merchant_norm, category, card_last4,
-					payment_method_raw, bank_account_hint, llm_account_id, reference_code,
-					extraction_model, raw_llm_json,
-					account_type_guess, triage_signature_key, triage_subject_pattern, triage_body_cue, triage_state
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'promoted')`,
-				uuid.NewString(), emailID, effectiveRole, amountMinor, currency, occurredAt,
-				merchantRawPtr, merchantNormPtr, category, cardLast4,
-				pmRaw, bankHint, llmAcctID, refCode, llmModelName, extracted.RawJSON,
-				acctTypeGuess, sig.SignatureKey, sig.SubjectPattern, sig.BodyCue,
-			).Error; err != nil {
+			promoted := "promoted"
+			if err := db.ReplaceEmailExtraction(tx, db.EmailExtraction{
+				ID:                   uuid.NewString(),
+				EmailID:              emailID,
+				EmailKind:            effectiveRole,
+				AmountMinor:          &amountMinor,
+				Currency:             &currency,
+				OccurredAtUtc:        &occurredAt,
+				MerchantRaw:          merchantRaw,
+				Category:             &category,
+				CardLast4:            cardLast4,
+				PaymentMethodRaw:     pmRaw,
+				BankAccountHint:      bankHint,
+				LlmAccountID:         llmAcctID,
+				ReferenceCode:        refCode,
+				ExtractionModel:      llmModelName,
+				RawLlmJSON:           extracted.RawJSON,
+				AccountTypeGuess:     acctTypeGuess,
+				TriageSignatureKey:   &sig.SignatureKey,
+				TriageSubjectPattern: &sig.SubjectPattern,
+				TriageBodyCue:        &sig.BodyCue,
+				TriageState:          &promoted,
+			}); err != nil {
 				return err
 			}
 		} else {

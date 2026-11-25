@@ -132,11 +132,13 @@ func MatchAccountForExtraction(gdb *gorm.DB, params MatchAccountParams) *string 
 
 	// 5. Sender default account
 	if params.SenderID != nil && *params.SenderID != "" {
-		var sender db.Sender
-		if err := gdb.Select("default_account_id").Where("id = ?", *params.SenderID).First(&sender).Error; err == nil {
-			if sender.DefaultAccountID != nil && *sender.DefaultAccountID != "" {
-				return sender.DefaultAccountID
-			}
+		var accountID string
+		if err := gdb.Raw(`
+			SELECT accounts.id
+			FROM senders
+			JOIN accounts ON accounts.id = senders.default_account_id
+			WHERE senders.id = ?`, *params.SenderID).Scan(&accountID).Error; err == nil && accountID != "" {
+			return &accountID
 		}
 	}
 

@@ -140,8 +140,9 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 	}
 	var monthRows []summaryTxRow
 	if err := gdb.Raw(`
-		SELECT t.amount_minor, t.currency, t.category, t.merchant, t.account_id, a.name AS account_name
+		SELECT t.amount_minor, t.currency, c.name AS category, t.merchant, t.account_id, a.name AS account_name
 		FROM transactions t
+		JOIN categories c ON c.id = t.category_id
 		LEFT JOIN accounts a ON a.id = t.account_id
 		WHERE t.occurred_at_utc >= ? AND t.occurred_at_utc < ?`,
 		startUtc, endUtc,
@@ -222,7 +223,6 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 }
 
 type ListTransactionsParams struct {
-	Backfill       *TriageBackfill
 	LedgerRange    string
 	Month          string
 	StartDate      string
@@ -318,10 +318,6 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 		}
 	}
 
-	if err := params.Backfill.ensure(gdb); err != nil {
-		return nil, err
-	}
-
 	var rangeConds []string
 	var rangeArgs []any
 	var rangeStartUtc, rangeEndUtc string
@@ -348,7 +344,7 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 	args := append([]any{}, rangeArgs...)
 
 	if params.Category != "" {
-		conds = append(conds, "t.category = ?")
+		conds = append(conds, "t.category_id = (SELECT id FROM categories WHERE name = ?)")
 		args = append(args, params.Category)
 	}
 	if t := strings.TrimSpace(params.Tag); t != "" {
@@ -434,9 +430,10 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 	var rows []rawTxRow
 	query := `
 		SELECT
-			t.*,
+			t.*, c.name AS category,
 			a.name AS account_name
 		FROM transactions t
+		JOIN categories c ON c.id = t.category_id
 		LEFT JOIN accounts a ON a.id = t.account_id
 		` + whereClause + `
 		ORDER BY t.occurred_at_utc DESC, t.created_at_utc DESC, t.id DESC
@@ -610,8 +607,9 @@ func getTransactionDetail(gdb *gorm.DB, id string, includeSourceContent bool) (*
 	}
 	var rows []rawTxRow
 	if err := gdb.Raw(`
-		SELECT t.*, a.name AS account_name, `+paymentMethodSubquery+` AS payment_method_raw
+		SELECT t.*, c.name AS category, a.name AS account_name, `+paymentMethodSubquery+` AS payment_method_raw
 		FROM transactions t
+		JOIN categories c ON c.id = t.category_id
 		LEFT JOIN accounts a ON a.id = t.account_id
 		WHERE t.id = ?`, id).Scan(&rows).Error; err != nil {
 		return nil, err

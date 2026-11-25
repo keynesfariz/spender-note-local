@@ -9,8 +9,6 @@ import (
 	"portspendernote/internal/httpx"
 )
 
-var triageBackfill domain.TriageBackfill
-
 func GET(w http.ResponseWriter, r *http.Request) {
 	gdb, err := db.GetDB()
 	if err != nil {
@@ -26,7 +24,6 @@ func GET(w http.ResponseWriter, r *http.Request) {
 		showSkippedPtr = &v
 	}
 	res, err := domain.ListTransactions(gdb.WithContext(r.Context()), domain.ListTransactionsParams{
-		Backfill:       &triageBackfill,
 		LedgerRange:    q.Get("ledgerRange"),
 		Month:          q.Get("month"),
 		StartDate:      q.Get("startDate"),

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -13,21 +12,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"portspendernote/internal/db"
 	"portspendernote/internal/domain"
 	"portspendernote/internal/llm"
 )
 
-func openIntegrationV6DB(t *testing.T, name string) *gorm.DB {
+func openIntegrationDB(t *testing.T, name string) *gorm.DB {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), name)
 	gdb, err := db.OpenDatabase(dbPath, false)
 	if err != nil {
-		t.Fatalf("open v6 db: %v", err)
+		t.Fatalf("open integration db: %v", err)
 	}
 	sqlDB, err := gdb.DB()
 	if err != nil {
@@ -97,41 +94,12 @@ func runIntegrationExtractionWorker(t *testing.T, gdb *gorm.DB, tz, currency, ba
 	}
 }
 
-func TestTriageIntegration_BackfillPromoteRippleAndUndo(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "v5-triage.db")
-
-	rawDB, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		t.Fatalf("open raw sqlite: %v", err)
-	}
-	for _, migFile := range []string{
-		"000001_baseline.up.sql",
-		"000002_performance_indexes.up.sql",
-		"000003_categories_and_tags.up.sql",
-		"000004_repair_ledger_and_sender_state.up.sql",
-		"000005_transaction_remarks.up.sql",
-	} {
-		content, err := os.ReadFile(filepath.Join("..", "db", "migrations", migFile))
-		if err != nil {
-			t.Fatalf("read migration %s: %v", migFile, err)
-		}
-		if err := rawDB.Exec(string(content)).Error; err != nil {
-			t.Fatalf("exec migration %s: %v", migFile, err)
-		}
-	}
-	if err := rawDB.Exec(`
-		CREATE TABLE IF NOT EXISTS schema_migrations (version uint64, dirty bool);
-		CREATE UNIQUE INDEX IF NOT EXISTS version_unique ON schema_migrations (version);
-		INSERT INTO schema_migrations (version, dirty) VALUES (5, 0);
-		INSERT OR REPLACE INTO app_settings (id, timezone, currency) VALUES (1, 'Asia/Jakarta', 'IDR');
-	`).Error; err != nil {
-		t.Fatalf("seed v5 schema_migrations: %v", err)
-	}
+func TestTriageIntegration_PromoteRippleAndUndo(t *testing.T) {
+	gdb := openIntegrationDB(t, "triage.db")
+	configureIntegrationSettings(t, gdb, "Asia/Jakarta", "IDR", "")
 
 	const bcaCursor int64 = 1795524154000
-	if err := rawDB.Exec(`
+	if err := gdb.Exec(`
 		INSERT INTO accounts (id, name, type, currency, status, initial_balance_minor, initial_balance_as_of_utc, created_at_utc)
 		VALUES ('acct-bca', 'BCA Main', 'debit_card', 'IDR', 'confirmed', 5000000, '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z');
 
@@ -139,13 +107,12 @@ func TestTriageIntegration_BackfillPromoteRippleAndUndo(t *testing.T) {
 		VALUES
 		  ('s-bca', 'bca@bca.co.id', 'auto', 'acct-bca', 1, '2026-10-01T00:00:00Z', ?),
 		  ('s-jenius', 'jenius_noreply@smbci.com', 'auto', NULL, 1, '2026-10-01T00:00:00Z', 1795520000000),
-		  ('s-grab', 'no-reply@grab.com', 'auto', NULL, 1, '2026-10-01T00:00:00Z', 1795520000000),
-		  ('s-shopee', 'info@mail.shopee.co.id', 'auto', NULL, 1, '2026-10-01T00:00:00Z', 1795520000000);
+		  ('s-grab', 'no-reply@grab.com', 'auto', NULL, 1, '2026-10-01T00:00:00Z', 1795520000000);
 	`, bcaCursor).Error; err != nil {
-		t.Fatalf("seed v5 senders/accounts: %v", err)
+		t.Fatalf("seed senders/accounts: %v", err)
 	}
 
-	type legacyFixture struct {
+	type skippedFixture struct {
 		emailID     string
 		senderID    string
 		from        string
@@ -155,7 +122,7 @@ func TestTriageIntegration_BackfillPromoteRippleAndUndo(t *testing.T) {
 		receivedUtc string
 		rawJSON     string
 	}
-	fixtures := []legacyFixture{
+	fixtures := []skippedFixture{
 		{
 			emailID:     "01b8eb35-fb08-421f-b683-f735db694b6c",
 			senderID:    "s-bca",
@@ -204,64 +171,54 @@ func TestTriageIntegration_BackfillPromoteRippleAndUndo(t *testing.T) {
 			cleanedText: "Grab Tips E-Receipt\nGrabFood\nRp 5.000",
 			internalMs:  1795461240000,
 			receivedUtc: "2026-11-23T13:14:00Z",
-			rawJSON:     `{"email_kind":"non_transaction","amount_decimal":"5000","currency":"IDR","transaction_date":"2026-11-23T20:14:00+07:00","merchant":"Grab Tip","category":"Transportation"}`,
-		},
-		{
-			emailID:     "4f1ddad2-848c-4597-bea4-fad6813c5078",
-			senderID:    "s-shopee",
-			from:        "info@mail.shopee.co.id",
-			subject:     "Kami mendeteksi Aktivitas Penautan Akun baru di Akun Shopee Anda",
-			cleanedText: "Hai keynesfariz,\nSebuah akun Migoo ditautkan.",
-			internalMs:  1795460000000,
-			receivedUtc: "2026-11-23T12:00:00Z",
-			rawJSON:     `{"email_kind":"non_transaction","amount_decimal":null,"currency":null}`,
+			rawJSON:     `{"email_kind":"non_transaction","amount_decimal":"5000","currency":"IDR","transaction_date":"2026-11-23T20:14:00+07:00","merchant":"Grab Tip","category":"Transport"}`,
 		},
 	}
 
 	for _, f := range fixtures {
-		if err := rawDB.Exec(`
+		if err := gdb.Exec(`
 			INSERT INTO raw_emails (id, gmail_message_id, sender_id, from_address, subject, cleaned_text, internal_date_ms, received_at_utc, status)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'non_transaction')`,
 			f.emailID, "gm-"+f.emailID, f.senderID, f.from, f.subject, f.cleanedText, f.internalMs, f.receivedUtc,
 		).Error; err != nil {
-			t.Fatalf("seed legacy raw_email %s: %v", f.emailID, err)
+			t.Fatalf("seed raw_email %s: %v", f.emailID, err)
 		}
-		if err := rawDB.Exec(`
-			INSERT INTO email_extractions (id, email_id, email_kind, extraction_model, raw_llm_json)
-			VALUES (?, ?, 'non_transaction', 'qwen2.5', ?)`,
-			"ext-"+f.emailID, f.emailID, f.rawJSON,
-		).Error; err != nil {
-			t.Fatalf("seed legacy extraction %s: %v", f.emailID, err)
+		var raw llm.RawExtraction
+		if err := json.Unmarshal([]byte(f.rawJSON), &raw); err != nil {
+			t.Fatal(err)
+		}
+		draft, err := llm.NormalizeExtractedResult(&raw, f.rawJSON, llm.ExtractInput{
+			EmailID: f.emailID, ReceivedAtUtc: f.receivedUtc, UserTimezone: "Asia/Jakarta",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sig := domain.DeriveEmailTemplateSignature(f.from, f.subject, f.cleanedText)
+		extraction := db.EmailExtraction{
+			ID: "ext-" + f.emailID, EmailID: f.emailID, EmailKind: "non_transaction",
+			ExtractionModel: "qwen2.5", RawLlmJSON: f.rawJSON,
+			TriageSignatureKey: &sig.SignatureKey, TriageSubjectPattern: &sig.SubjectPattern, TriageBodyCue: &sig.BodyCue,
+		}
+		if draft.AmountMinor > 0 && draft.Currency != "" {
+			ghost := "ghost"
+			extraction.AmountMinor, extraction.Currency = &draft.AmountMinor, &draft.Currency
+			extraction.OccurredAtUtc, extraction.MerchantRaw = &draft.OccurredAtUtc, &draft.MerchantRaw
+			extraction.Category, extraction.PaymentMethodRaw = &draft.Category, draft.PaymentMethodRaw
+			extraction.TriageState = &ghost
+		}
+		if err := gdb.Create(&extraction).Error; err != nil {
+			t.Fatalf("seed extraction %s: %v", f.emailID, err)
 		}
 	}
-	if sqlDB, err := rawDB.DB(); err == nil {
-		_ = sqlDB.Close()
-	}
-
-	gdb, err := db.OpenDatabase(dbPath, false)
-	if err != nil {
-		t.Fatalf("upgrade v5 db via OpenDatabase: %v", err)
-	}
-	sqlUp, err := gdb.DB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = sqlUp.Close() })
 
 	listBefore, err := domain.ListTransactions(gdb, domain.ListTransactionsParams{Month: "2026-11", Page: 1, PageSize: 25})
 	if err != nil {
-		t.Fatalf("ListTransactions on upgraded db: %v", err)
+		t.Fatalf("ListTransactions: %v", err)
 	}
 	if listBefore.TotalCount != 0 || len(listBefore.GhostRows) != 5 || listBefore.GhostInRangeCount != 5 || listBefore.TotalGhostCount != 5 {
 		t.Fatalf("expected 0 txs and 5 ghost rows, got total=%d ghosts=%d inRange=%d totalGhost=%d",
 			listBefore.TotalCount, len(listBefore.GhostRows), listBefore.GhostInRangeCount, listBefore.TotalGhostCount)
 	}
-	for _, g := range listBefore.GhostRows {
-		if g.EmailID == "4f1ddad2-848c-4597-bea4-fad6813c5078" {
-			t.Fatalf("zero-amount Shopee security alert must never appear as Ghost Row")
-		}
-	}
-
 	summaryBefore, err := domain.GetMonthlySpendingSummary(gdb, "2026-11")
 	if err != nil || summaryBefore.TotalSpentMinor != 0 {
 		t.Fatalf("expected zero monthly spend while all skipped are Ghost Rows, got %+v err=%v", summaryBefore, err)
@@ -340,7 +297,7 @@ func TestTriageIntegration_BackfillPromoteRippleAndUndo(t *testing.T) {
 }
 
 func TestTriageIntegration_LearnedAdmitForUnknownBankFormat(t *testing.T) {
-	gdb := openIntegrationV6DB(t, "intl-bank.db")
+	gdb := openIntegrationDB(t, "intl-bank.db")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -439,7 +396,7 @@ func TestTriageIntegration_LearnedAdmitForUnknownBankFormat(t *testing.T) {
 }
 
 func TestTriageIntegration_IgnorePreLlmSkipSettingsDeleteAndRecover(t *testing.T) {
-	gdb := openIntegrationV6DB(t, "grab-triage.db")
+	gdb := openIntegrationDB(t, "grab-triage.db")
 
 	var mu sync.Mutex
 	var promptLog []string
@@ -472,7 +429,7 @@ func TestTriageIntegration_IgnorePreLlmSkipSettingsDeleteAndRecover(t *testing.T
 		case strings.Contains(userPrompt, "Grab Tips"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{
-					{"message": map[string]any{"content": `{"email_kind":"receipt","amount_decimal":"5000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"13:05:00","timezone_offset":"+07:00","merchant":"Grab Driver Tip","category":"Transportation","card_last4":null,"payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"digital_wallet","reference_code":null}`}},
+					{"message": map[string]any{"content": `{"email_kind":"receipt","amount_decimal":"5000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"13:05:00","timezone_offset":"+07:00","merchant":"Grab Driver Tip","category":"Transport","card_last4":null,"payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"digital_wallet","reference_code":null}`}},
 				},
 			})
 		default:
@@ -522,21 +479,21 @@ func TestTriageIntegration_IgnorePreLlmSkipSettingsDeleteAndRecover(t *testing.T
 	for _, em := range []db.RawEmail{
 		{
 			ID: "grab-voucher-2", GmailMessageID: "gm-gv-2", SenderID: &sender.ID,
-			FromAddress: "no-reply@grab.com",
-			Subject:     "Ride Cover Plus: Sorry for the long wait. Here's your Rp25.000 voucher.",
-			CleanedText: "Ride Cover\nHi Nagib Fariz,\nEnjoy this Rp25.000 voucher.",
+			FromAddress:    "no-reply@grab.com",
+			Subject:        "Ride Cover Plus: Sorry for the long wait. Here's your Rp25.000 voucher.",
+			CleanedText:    "Ride Cover\nHi Nagib Fariz,\nEnjoy this Rp25.000 voucher.",
 			InternalDateMs: 1795500001000, ReceivedAtUtc: "2026-11-24T06:00:00Z", Status: "pending",
 		},
 		{
 			ID: "grab-food-1", GmailMessageID: "gm-gf-1", SenderID: &sender.ID,
 			FromAddress: "no-reply@grab.com", Subject: "Your Grab E-Receipt",
-			CleanedText: "Selamat menikmati makanan anda!\nGrabFood\nRp 65.000",
+			CleanedText:    "Selamat menikmati makanan anda!\nGrabFood\nRp 65.000",
 			InternalDateMs: 1795500002000, ReceivedAtUtc: "2026-11-24T06:02:00Z", Status: "pending",
 		},
 		{
 			ID: "grab-tip-1", GmailMessageID: "gm-gt-1", SenderID: &sender.ID,
 			FromAddress: "no-reply@grab.com", Subject: "Your Grab E-Receipt",
-			CleanedText: "Grab Tips E-Receipt\nDriver Tip\nRp 5.000",
+			CleanedText:    "Grab Tips E-Receipt\nDriver Tip\nRp 5.000",
 			InternalDateMs: 1795500003000, ReceivedAtUtc: "2026-11-24T06:05:00Z", Status: "pending",
 		},
 	} {
@@ -603,9 +560,9 @@ func TestTriageIntegration_IgnorePreLlmSkipSettingsDeleteAndRecover(t *testing.T
 	// Future matching voucher now reaches the LLM again because the ignore policy was deleted.
 	if err := gdb.Create(&db.RawEmail{
 		ID: "grab-voucher-3", GmailMessageID: "gm-gv-3", SenderID: &sender.ID,
-		FromAddress: "no-reply@grab.com",
-		Subject:     "Ride Cover Plus: Sorry for the long wait. Here's your Rp30.000 voucher.",
-		CleanedText: "Ride Cover\nHi Nagib Fariz,\nEnjoy this Rp30.000 voucher.",
+		FromAddress:    "no-reply@grab.com",
+		Subject:        "Ride Cover Plus: Sorry for the long wait. Here's your Rp30.000 voucher.",
+		CleanedText:    "Ride Cover\nHi Nagib Fariz,\nEnjoy this Rp30.000 voucher.",
 		InternalDateMs: 1795500004000, ReceivedAtUtc: "2026-11-24T07:00:00Z", Status: "pending",
 	}).Error; err != nil {
 		t.Fatal(err)
@@ -622,7 +579,7 @@ func TestTriageIntegration_IgnorePreLlmSkipSettingsDeleteAndRecover(t *testing.T
 }
 
 func TestTriageIntegration_DeleteTransactionDoesNotCreateIgnorePolicy(t *testing.T) {
-	gdb := openIntegrationV6DB(t, "jenius-delete.db")
+	gdb := openIntegrationDB(t, "jenius-delete.db")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -640,7 +597,7 @@ func TestTriageIntegration_DeleteTransactionDoesNotCreateIgnorePolicy(t *testing
 	if err := gdb.Create(&db.RawEmail{
 		ID: "1e4bfdde-38a8-4ae3-aa41-492c5bfb7706", GmailMessageID: "gm-jc-1", SenderID: &sender.ID,
 		FromAddress: "jenius_noreply@smbci.com", Subject: "Credit Card Transaction Notification",
-		CleanedText: "You used card 437896******6039 for Rp 85.000",
+		CleanedText:    "You used card 437896******6039 for Rp 85.000",
 		InternalDateMs: 1795510000000, ReceivedAtUtc: "2026-11-24T09:00:00Z", Status: "pending",
 	}).Error; err != nil {
 		t.Fatal(err)
@@ -676,7 +633,7 @@ func TestTriageIntegration_DeleteTransactionDoesNotCreateIgnorePolicy(t *testing
 	if err := gdb.Create(&db.RawEmail{
 		ID: "jenius-charge-2", GmailMessageID: "gm-jc-2", SenderID: &sender.ID,
 		FromAddress: "jenius_noreply@smbci.com", Subject: "Credit Card Transaction Notification",
-		CleanedText: "You used card 437896******6039 for Rp 85.000",
+		CleanedText:    "You used card 437896******6039 for Rp 85.000",
 		InternalDateMs: 1795515000000, ReceivedAtUtc: "2026-11-24T10:00:00Z", Status: "pending",
 	}).Error; err != nil {
 		t.Fatal(err)
@@ -691,7 +648,7 @@ func TestTriageIntegration_DeleteTransactionDoesNotCreateIgnorePolicy(t *testing
 }
 
 func TestTriageIntegration_HistoricalGhostPromotionPreservesReconciledBalance(t *testing.T) {
-	gdb := openIntegrationV6DB(t, "reconcile-anchor.db")
+	gdb := openIntegrationDB(t, "reconcile-anchor.db")
 	configureIntegrationSettings(t, gdb, "Asia/Jakarta", "IDR", "")
 
 	acctID := "acct-reconciled"
@@ -728,7 +685,7 @@ func TestTriageIntegration_HistoricalGhostPromotionPreservesReconciledBalance(t 
 		Currency:      "IDR",
 		OccurredAtUtc: "2026-11-24T08:00:00Z",
 		Merchant:      "Post Rec Coffee",
-		Category:      "Dining Out",
+		CategoryID:    "cat-dining-out",
 		Reviewed:      1,
 		CreatedAtUtc:  "2026-11-24T08:00:00Z",
 		UpdatedAtUtc:  "2026-11-24T08:00:00Z",

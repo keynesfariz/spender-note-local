@@ -16,6 +16,8 @@ Most expense trackers either require manual entry for every purchase or ask you 
 
 The dev and production commands listen at `http://127.0.0.1:3000` by default.
 
+The consolidated SQLite migration initializes a fresh database. If you have a database from an earlier schema, set `DATABASE_PATH` to a new file to start with an empty ledger.
+
 ## TODO
 
 Ordered by priority.

@@ -1,5 +1,9 @@
+DROP TABLE IF EXISTS sender_triage_policies;
+DROP TABLE IF EXISTS transaction_tags;
+DROP TABLE IF EXISTS tags;
 DROP TABLE IF EXISTS transaction_sources;
 DROP TABLE IF EXISTS transactions;
+DROP TABLE IF EXISTS categories;
 DROP TABLE IF EXISTS email_extractions;
 DROP TABLE IF EXISTS raw_emails;
 DROP TABLE IF EXISTS sync_runs;

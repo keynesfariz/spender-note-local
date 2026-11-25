@@ -721,12 +721,9 @@ func runExtractionWorker(
 		txErr := db.RunImmediateTx(gdb, func(tx *gorm.DB) error {
 			liveAction, _ := lookupTriagePolicyAction(tx, sig.SenderEmail, sig.SignatureKey)
 
-			var merchantRawPtr, merchantNormPtr *string
-			if trimmed := strings.TrimSpace(extracted.MerchantRaw); trimmed != "" {
-				merchantRawPtr = &trimmed
-				if norm := domain.NormalizeMerchant(trimmed); norm != "" {
-					merchantNormPtr = &norm
-				}
+			var merchantRaw *string
+			if extracted.MerchantRaw != "" {
+				merchantRaw = &extracted.MerchantRaw
 			}
 
 			canonicalCategory := domain.DefaultCategory
@@ -734,72 +731,50 @@ func runExtractionWorker(
 				canonicalCategory = matched
 			}
 
-			if liveAction == "ignore" {
-				var amtPtr *int64
-				var curPtr, occPtr, catPtr *string
-				if extracted.AmountMinor > 0 && extracted.Currency != "" {
-					amtPtr = &extracted.AmountMinor
-					curPtr = &extracted.Currency
-					occPtr = &extracted.OccurredAtUtc
-					catPtr = &canonicalCategory
-				}
-				if err := tx.Exec(`
-					INSERT OR REPLACE INTO email_extractions (
-						id, email_id, email_kind, amount_minor, currency, occurred_at_utc,
-						merchant_raw, merchant_norm, category, card_last4,
-						payment_method_raw, bank_account_hint, llm_account_id, reference_code,
-						extraction_model, raw_llm_json,
-						account_type_guess, triage_signature_key, triage_subject_pattern, triage_body_cue, triage_state
-					) VALUES (?, ?, 'non_transaction', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ignored')`,
-					uuid.NewString(), email.ID, amtPtr, curPtr, occPtr,
-					merchantRawPtr, merchantNormPtr, catPtr, extracted.CardLast4,
-					extracted.PaymentMethodRaw, extracted.BankAccountHint, extracted.MatchedAccountID, extracted.ReferenceCode,
-					cfg.LlmModel, extracted.RawJSON,
-					extracted.AccountTypeGuess, sig.SignatureKey, sig.SubjectPattern, sig.BodyCue,
-				).Error; err != nil {
-					return err
-				}
-				if err := tx.Model(&db.RawEmail{}).Where("id = ?", email.ID).Updates(map[string]any{
-					"status":        "non_transaction",
-					"error_message": nil,
-				}).Error; err != nil {
-					return err
-				}
-				return tx.Exec(`UPDATE sync_runs SET skipped_count = skipped_count + 1 WHERE id = ?`, runID).Error
-			}
-
 			if liveAction == "admit" && extracted.AmountMinor <= 0 {
 				return errors.New("learned admit policy matched email without a positive transaction amount")
 			}
 
-			shouldAdmit := extracted.EmailKind != "non_transaction" || (liveAction == "admit" && extracted.AmountMinor > 0)
+			shouldAdmit := liveAction != "ignore" && (extracted.EmailKind != "non_transaction" || liveAction == "admit")
+			extraction := db.EmailExtraction{
+				ID:                   uuid.NewString(),
+				EmailID:              email.ID,
+				EmailKind:            "non_transaction",
+				MerchantRaw:          merchantRaw,
+				CardLast4:            extracted.CardLast4,
+				PaymentMethodRaw:     extracted.PaymentMethodRaw,
+				BankAccountHint:      extracted.BankAccountHint,
+				LlmAccountID:         extracted.MatchedAccountID,
+				ReferenceCode:        extracted.ReferenceCode,
+				ExtractionModel:      cfg.LlmModel,
+				RawLlmJSON:           extracted.RawJSON,
+				AccountTypeGuess:     extracted.AccountTypeGuess,
+				TriageSignatureKey:   &sig.SignatureKey,
+				TriageSubjectPattern: &sig.SubjectPattern,
+				TriageBodyCue:        &sig.BodyCue,
+			}
+			hasDraft := extracted.AmountMinor > 0 && extracted.Currency != ""
+			if shouldAdmit || hasDraft {
+				extraction.AmountMinor = &extracted.AmountMinor
+				extraction.Currency = &extracted.Currency
+				extraction.OccurredAtUtc = &extracted.OccurredAtUtc
+				extraction.Category = &canonicalCategory
+			}
+			switch {
+			case shouldAdmit:
+				extraction.EmailKind = domain.ResolveEffectiveEmailRole(email.RoleHint, extracted.EmailKind, extracted.CardLast4, extracted.BankAccountHint)
+			case liveAction == "ignore":
+				ignored := "ignored"
+				extraction.TriageState = &ignored
+			case hasDraft:
+				ghost := "ghost"
+				extraction.TriageState = &ghost
+			}
+			if err := db.ReplaceEmailExtraction(tx, extraction); err != nil {
+				return err
+			}
+
 			if !shouldAdmit {
-				var amtPtr *int64
-				var curPtr, occPtr, catPtr, statePtr *string
-				if extracted.AmountMinor > 0 && extracted.Currency != "" {
-					amtPtr = &extracted.AmountMinor
-					curPtr = &extracted.Currency
-					occPtr = &extracted.OccurredAtUtc
-					catPtr = &canonicalCategory
-					ghost := "ghost"
-					statePtr = &ghost
-				}
-				if err := tx.Exec(`
-					INSERT OR REPLACE INTO email_extractions (
-						id, email_id, email_kind, amount_minor, currency, occurred_at_utc,
-						merchant_raw, merchant_norm, category, card_last4,
-						payment_method_raw, bank_account_hint, llm_account_id, reference_code,
-						extraction_model, raw_llm_json,
-						account_type_guess, triage_signature_key, triage_subject_pattern, triage_body_cue, triage_state
-					) VALUES (?, ?, 'non_transaction', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-					uuid.NewString(), email.ID, amtPtr, curPtr, occPtr,
-					merchantRawPtr, merchantNormPtr, catPtr, extracted.CardLast4,
-					extracted.PaymentMethodRaw, extracted.BankAccountHint, extracted.MatchedAccountID, extracted.ReferenceCode,
-					cfg.LlmModel, extracted.RawJSON,
-					extracted.AccountTypeGuess, sig.SignatureKey, sig.SubjectPattern, sig.BodyCue, statePtr,
-				).Error; err != nil {
-					return err
-				}
 				if err := tx.Model(&db.RawEmail{}).Where("id = ?", email.ID).Updates(map[string]any{
 					"status":        "non_transaction",
 					"error_message": nil,
@@ -807,25 +782,6 @@ func runExtractionWorker(
 					return err
 				}
 				return tx.Exec(`UPDATE sync_runs SET skipped_count = skipped_count + 1 WHERE id = ?`, runID).Error
-			}
-
-			effectiveRole := domain.ResolveEffectiveEmailRole(email.RoleHint, extracted.EmailKind, extracted.CardLast4, extracted.BankAccountHint)
-
-			if err := tx.Exec(`
-				INSERT OR REPLACE INTO email_extractions (
-					id, email_id, email_kind, amount_minor, currency, occurred_at_utc,
-					merchant_raw, merchant_norm, category, card_last4,
-					payment_method_raw, bank_account_hint, llm_account_id, reference_code,
-					extraction_model, raw_llm_json,
-					account_type_guess, triage_signature_key, triage_subject_pattern, triage_body_cue, triage_state
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
-				uuid.NewString(), email.ID, effectiveRole, extracted.AmountMinor, extracted.Currency,
-				extracted.OccurredAtUtc, merchantRawPtr, merchantNormPtr,
-				canonicalCategory, extracted.CardLast4, extracted.PaymentMethodRaw, extracted.BankAccountHint,
-				extracted.MatchedAccountID, extracted.ReferenceCode, cfg.LlmModel, extracted.RawJSON,
-				extracted.AccountTypeGuess, sig.SignatureKey, sig.SubjectPattern, sig.BodyCue,
-			).Error; err != nil {
-				return err
 			}
 
 			accountID := domain.MatchAccountForExtraction(tx, domain.MatchAccountParams{
@@ -855,7 +811,7 @@ func runExtractionWorker(
 				}
 			}
 
-			txMerchant := strings.TrimSpace(extracted.MerchantRaw)
+			txMerchant := extracted.MerchantRaw
 			if txMerchant == "" {
 				txMerchant = strings.TrimSpace(email.Subject)
 			}
@@ -865,7 +821,7 @@ func runExtractionWorker(
 
 			if _, err := domain.SaveExtractedTransactionInTx(tx, domain.ExtractedTransactionInput{
 				EmailID:           email.ID,
-				EmailKind:         effectiveRole,
+				EmailKind:         extraction.EmailKind,
 				AmountMinor:       extracted.AmountMinor,
 				Currency:          extracted.Currency,
 				OccurredAtUtc:     extracted.OccurredAtUtc,

@@ -3,22 +3,12 @@ package domain
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"portspendernote/internal/db"
-)
-
-const maxStackedPrefixPasses = 2
-
-var (
-	processorPrefixRe = regexp.MustCompile(`(?i)^(?:sq\s*\*|tst\s*\*|paypal\s*\*|pp\s*\*|apl\s*\*|apple\s*pay\s*\*|amzn\s*mktp|amzn\s*\*|stripe\s*\*|sp\s*\*|goog\s*\*|pos\s*\*)\s*`)
-	storeIDRe         = regexp.MustCompile(`(?i)(?:#\s*\d+|\*\s*[a-z0-9]{3,}|\b(?:store|loc)\s*#?\s*\d+\b)`)
-	legalSuffixRe     = regexp.MustCompile(`(?i)\b(?:inc|llc|ltd|corp|co|plc|pt|tbk|sdn\s+bhd|pte|gmbh|s\.a\.|sa)\b\.?`)
-	nonAlnumRe        = regexp.MustCompile(`[^a-z0-9]+`)
 )
 
 type ExtractedTransactionInput struct {
@@ -28,23 +18,11 @@ type ExtractedTransactionInput struct {
 	Currency          string
 	OccurredAtUtc     string
 	MerchantRaw       string
-	MerchantNorm      string
 	Category          string
 	CardLast4         *string
 	ReferenceCode     *string
 	ResolvedAccountID *string
 	NowUtc            string
-}
-
-func NormalizeMerchant(raw string) string {
-	s := strings.ToLower(strings.TrimSpace(raw))
-	for i := 0; i < maxStackedPrefixPasses; i++ {
-		s = processorPrefixRe.ReplaceAllString(s, "")
-	}
-	s = storeIDRe.ReplaceAllString(s, " ")
-	s = legalSuffixRe.ReplaceAllString(s, " ")
-	s = nonAlnumRe.ReplaceAllString(s, " ")
-	return strings.TrimSpace(multiSpaceRe.ReplaceAllString(s, " "))
 }
 
 func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc string) error {
@@ -121,9 +99,9 @@ func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc s
 
 	category := DefaultCategory
 	if receipt != nil && receipt.Category != nil && *receipt.Category != "" {
-		category = ResolveKnownCategory(tx, *receipt.Category)
+		category = *receipt.Category
 	} else if primary.Category != nil && *primary.Category != "" {
-		category = ResolveKnownCategory(tx, *primary.Category)
+		category = *primary.Category
 	}
 
 	var accountID *string
@@ -155,6 +133,10 @@ func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc s
 	}
 
 	if primary.AmountMinor != nil && primary.Currency != nil && primary.OccurredAtUtc != nil {
+		resolvedCategory, err := resolveTransactionCategory(tx, category)
+		if err != nil {
+			return err
+		}
 		if err := tx.Exec(`
 			UPDATE transactions
 			SET account_id = COALESCE(?, account_id),
@@ -162,11 +144,11 @@ func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc s
 				currency = ?,
 				occurred_at_utc = ?,
 				merchant = ?,
-				category = ?,
+				category_id = ?,
 				updated_at_utc = ?
 			WHERE id = ?`,
 			accountID, *primary.AmountMinor, *primary.Currency, *primary.OccurredAtUtc,
-			merchant, category, nowUtc, transactionID,
+			merchant, resolvedCategory.ID, nowUtc, transactionID,
 		).Error; err != nil {
 			return err
 		}
@@ -210,31 +192,24 @@ func SaveExtractedTransactionInTx(tx *gorm.DB, input ExtractedTransactionInput) 
 	if nowUtc == "" {
 		nowUtc = NowUtcIsoSeconds()
 	}
-	merchantNorm := input.MerchantNorm
-	if merchantNorm == "" {
-		merchantNorm = NormalizeMerchant(input.MerchantRaw)
-	}
 	if _, err := UtcIsoToEpochMs(input.OccurredAtUtc); err != nil {
 		return "", err
 	}
+	category, err := resolveTransactionCategory(tx, input.Category)
+	if err != nil {
+		return "", err
+	}
 
-	var merchantRawPtr *string
-	if trimmed := strings.TrimSpace(input.MerchantRaw); trimmed != "" {
-		merchantRawPtr = &trimmed
-	}
-	var merchantNormPtr *string
-	if trimmed := strings.TrimSpace(merchantNorm); trimmed != "" {
-		merchantNormPtr = &trimmed
-	}
+	merchantRawPtr := strPtrOrNil(input.MerchantRaw)
 
 	if err := tx.Exec(`
 		INSERT OR IGNORE INTO email_extractions (
 			id, email_id, email_kind, amount_minor, currency, occurred_at_utc,
-			merchant_raw, merchant_norm, category, card_last4, reference_code,
+			merchant_raw, category, card_last4, reference_code,
 			extraction_model, raw_llm_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sync', '{}')`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sync', '{}')`,
 		uuid.NewString(), input.EmailID, input.EmailKind, input.AmountMinor, input.Currency,
-		input.OccurredAtUtc, merchantRawPtr, merchantNormPtr, input.Category, input.CardLast4, input.ReferenceCode,
+		input.OccurredAtUtc, merchantRawPtr, category.Name, input.CardLast4, input.ReferenceCode,
 	).Error; err != nil {
 		return "", err
 	}
@@ -244,12 +219,10 @@ func SaveExtractedTransactionInTx(tx *gorm.DB, input ExtractedTransactionInput) 
 		resolvedAccount = MatchAccountForExtraction(tx, MatchAccountParams{CardLast4: input.CardLast4})
 	}
 
-	merchant := strings.TrimSpace(input.MerchantRaw)
-	if merchant == "" {
-		merchant = "Unknown Merchant"
+	merchant := "Unknown Merchant"
+	if merchantRawPtr != nil {
+		merchant = *merchantRawPtr
 	}
-	category := ResolveKnownCategory(tx, input.Category)
-
 	txID := uuid.NewString()
 	if err := tx.Create(&db.Transaction{
 		ID:             txID,
@@ -259,7 +232,7 @@ func SaveExtractedTransactionInTx(tx *gorm.DB, input ExtractedTransactionInput) 
 		Currency:       input.Currency,
 		OccurredAtUtc:  input.OccurredAtUtc,
 		Merchant:       merchant,
-		Category:       category,
+		CategoryID:     category.ID,
 		ManualOverride: 0,
 		Reviewed:       0,
 		CreatedAtUtc:   nowUtc,
@@ -355,7 +328,12 @@ func SplitTransactionSource(gdb *gorm.DB, transactionID, emailID string) (string
 		}
 		category := DefaultCategory
 		if ext.Category != nil && *ext.Category != "" {
-			category = ResolveKnownCategory(tx, *ext.Category)
+			category = *ext.Category
+		}
+
+		resolvedCategory, err := resolveTransactionCategory(tx, category)
+		if err != nil {
+			return err
 		}
 
 		if err := tx.Create(&db.Transaction{
@@ -366,7 +344,7 @@ func SplitTransactionSource(gdb *gorm.DB, transactionID, emailID string) (string
 			Currency:       currency,
 			OccurredAtUtc:  occurred,
 			Merchant:       merchant,
-			Category:       category,
+			CategoryID:     resolvedCategory.ID,
 			ManualOverride: 0,
 			Reviewed:       0,
 			CreatedAtUtc:   nowUtc,

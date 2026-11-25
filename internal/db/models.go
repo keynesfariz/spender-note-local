@@ -1,5 +1,10 @@
 package db
 
+import (
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
 type AppSetting struct {
 	ID             int     `gorm:"column:id;primaryKey" json:"id"`
 	CountryCode    *string `gorm:"column:country_code" json:"country_code"`
@@ -130,7 +135,6 @@ type EmailExtraction struct {
 	Currency             *string `gorm:"column:currency" json:"currency"`
 	OccurredAtUtc        *string `gorm:"column:occurred_at_utc" json:"occurred_at_utc"`
 	MerchantRaw          *string `gorm:"column:merchant_raw" json:"merchant_raw"`
-	MerchantNorm         *string `gorm:"column:merchant_norm" json:"merchant_norm"`
 	Category             *string `gorm:"column:category" json:"category"`
 	CardLast4            *string `gorm:"column:card_last4" json:"card_last4"`
 	PaymentMethodRaw     *string `gorm:"column:payment_method_raw" json:"payment_method_raw"`
@@ -147,6 +151,10 @@ type EmailExtraction struct {
 }
 
 func (EmailExtraction) TableName() string { return "email_extractions" }
+
+func ReplaceEmailExtraction(tx *gorm.DB, extraction EmailExtraction) error {
+	return tx.Clauses(clause.Insert{Modifier: "OR REPLACE"}).Create(&extraction).Error
+}
 
 type SenderTriagePolicy struct {
 	ID             string `gorm:"column:id;primaryKey" json:"id"`
@@ -171,7 +179,7 @@ type Transaction struct {
 	Merchant         string  `gorm:"column:merchant;not null" json:"merchant"`
 	Remark           *string `gorm:"column:remark" json:"remark"`
 	RemarkUserEdited bool    `gorm:"column:remark_user_edited;not null;default:0" json:"remark_user_edited"`
-	Category         string  `gorm:"column:category;not null" json:"category"`
+	CategoryID       string  `gorm:"column:category_id;not null" json:"category_id"`
 	ManualOverride   int     `gorm:"column:manual_override;not null;default:0" json:"manual_override"`
 	Reviewed         int     `gorm:"column:reviewed;not null" json:"reviewed"`
 	Note             *string `gorm:"column:note" json:"note"`

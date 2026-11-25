@@ -20,7 +20,7 @@ type CreateManualTransactionInput struct {
 	Note          *string  `json:"note"`
 }
 
-func validateTransactionCategory(tx *gorm.DB, rawCategory string) (string, error) {
+func validateTransactionCategoryID(tx *gorm.DB, rawCategory string) (string, error) {
 	cat, err := lookupCategoryByName(tx, rawCategory)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -28,7 +28,7 @@ func validateTransactionCategory(tx *gorm.DB, rawCategory string) (string, error
 		}
 		return "", err
 	}
-	return cat.Name, nil
+	return cat.ID, nil
 }
 
 func validateSelectedTagIDs(tx *gorm.DB, tagIDs []string) error {
@@ -190,7 +190,7 @@ func CreateManualTransaction(gdb *gorm.DB, input CreateManualTransactionInput) (
 
 	var created TransactionListItem
 	err = gdb.Transaction(func(tx *gorm.DB) error {
-		canonicalCategory, err := validateTransactionCategory(tx, category)
+		categoryID, err := validateTransactionCategoryID(tx, category)
 		if err != nil {
 			return err
 		}
@@ -213,7 +213,7 @@ func CreateManualTransaction(gdb *gorm.DB, input CreateManualTransactionInput) (
 			Currency:       *curPtr,
 			OccurredAtUtc:  occurred,
 			Merchant:       merchant,
-			Category:       canonicalCategory,
+			CategoryID:     categoryID,
 			ManualOverride: 0,
 			Reviewed:       1,
 			Note:           note,
@@ -291,17 +291,17 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 			return errors.New("Merchant name is required.")
 		}
 
-		category := current.Category
+		categoryID := current.CategoryID
 		if patch.Category != nil {
 			rawCat := strings.TrimSpace(*patch.Category)
 			if rawCat == "" {
 				return errors.New("Category is required.")
 			}
-			canonicalCat, err := validateTransactionCategory(tx, rawCat)
+			selectedID, err := validateTransactionCategoryID(tx, rawCat)
 			if err != nil {
 				return err
 			}
-			category = canonicalCat
+			categoryID = selectedID
 		}
 
 		accountID := current.AccountID
@@ -351,7 +351,7 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 			"merchant":           merchant,
 			"remark":             remark,
 			"remark_user_edited": remarkUserEdited,
-			"category":           category,
+			"category_id":        categoryID,
 			"manual_override":    manualOverride,
 			"reviewed":           1,
 			"note":               note,
@@ -641,7 +641,7 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 			}
 		}
 
-		canonicalCategory, err := validateTransactionCategory(tx, category)
+		categoryID, err := validateTransactionCategoryID(tx, category)
 		if err != nil {
 			return err
 		}
@@ -685,7 +685,7 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 			"merchant":           merchant,
 			"remark":             remark,
 			"remark_user_edited": remarkUserEdited,
-			"category":           canonicalCategory,
+			"category_id":        categoryID,
 			"manual_override":    1,
 			"reviewed":           1,
 			"note":               note,

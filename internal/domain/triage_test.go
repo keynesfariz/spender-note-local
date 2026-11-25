@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"portspendernote/internal/db"
+	"portspendernote/internal/llm"
 )
 
 func seedSenderWithCursor(t *testing.T, gdb *gorm.DB, id, email string, cursorMs int64, roleHint string) db.Sender {
@@ -33,7 +34,7 @@ func seedSenderWithCursor(t *testing.T, gdb *gorm.DB, id, email string, cursorMs
 	return s
 }
 
-func seedLegacySkippedEmail(t *testing.T, gdb *gorm.DB, id string, senderID *string, from, subject, body string, internalMs int64, receivedUtc, extractionModel, rawJSON string) {
+func seedSkippedEmail(t *testing.T, gdb *gorm.DB, id string, senderID *string, from, subject, body string, internalMs int64, receivedUtc, extractionModel, rawJSON string) {
 	t.Helper()
 	if err := gdb.Create(&db.RawEmail{
 		ID:             id,
@@ -48,11 +49,39 @@ func seedLegacySkippedEmail(t *testing.T, gdb *gorm.DB, id string, senderID *str
 	}).Error; err != nil {
 		t.Fatalf("seed raw_email %s: %v", id, err)
 	}
-	if err := gdb.Exec(`
-		INSERT INTO email_extractions (id, email_id, email_kind, extraction_model, raw_llm_json)
-		VALUES (?, ?, 'non_transaction', ?, ?)`,
-		"ext-"+id, id, extractionModel, rawJSON,
-	).Error; err != nil {
+	var raw llm.RawExtraction
+	if err := json.Unmarshal([]byte(rawJSON), &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw.EmailKind = "non_transaction"
+	categories, err := ListCategoryNames(gdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := llm.NormalizeExtractedResult(&raw, rawJSON, llm.ExtractInput{
+		ReceivedAtUtc: receivedUtc, UserTimezone: "Asia/Jakarta", Categories: categories,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig := DeriveEmailTemplateSignature(from, subject, body)
+	extraction := db.EmailExtraction{
+		ID: "ext-" + id, EmailID: id, EmailKind: "non_transaction",
+		ExtractionModel: extractionModel, RawLlmJSON: rawJSON,
+		TriageSignatureKey: &sig.SignatureKey, TriageSubjectPattern: &sig.SubjectPattern, TriageBodyCue: &sig.BodyCue,
+	}
+	if draft.AmountMinor > 0 && draft.Currency != "" {
+		ghost := "ghost"
+		extraction.AmountMinor, extraction.Currency = &draft.AmountMinor, &draft.Currency
+		extraction.OccurredAtUtc = strPtrOrNil(draft.OccurredAtUtc)
+		extraction.MerchantRaw = strPtrOrNil(draft.MerchantRaw)
+		extraction.Category = &draft.Category
+		extraction.PaymentMethodRaw = draft.PaymentMethodRaw
+		extraction.CardLast4 = draft.CardLast4
+		extraction.AccountTypeGuess = draft.AccountTypeGuess
+		extraction.TriageState = &ghost
+	}
+	if err := gdb.Create(&extraction).Error; err != nil {
 		t.Fatalf("seed extraction %s: %v", id, err)
 	}
 }
@@ -69,11 +98,11 @@ func TestListIgnoredEmails_FilteringAndPagination(t *testing.T) {
 		{"d", "other@example.com", "ÉTÉ %_", "excluded by raw status", "extracted", "ignored"},
 		{"e", "other@example.com", "ÉTÉ %_", "excluded by triage state", "non_transaction", "promoted"},
 	} {
-		seedLegacySkippedEmail(t, gdb, row.id, nil, row.sender, row.subject, row.body, 1795501000000, receivedAt, "policy:ignore", "{}")
+		seedSkippedEmail(t, gdb, row.id, nil, row.sender, row.subject, row.body, 1795501000000, receivedAt, "policy:ignore", "{}")
 		if err := gdb.Exec("UPDATE raw_emails SET status = ? WHERE id = ?", row.rawStatus, row.id).Error; err != nil {
 			t.Fatal(err)
 		}
-		if err := gdb.Exec("UPDATE email_extractions SET triage_state = ? WHERE email_id = ?", row.triageState, row.id).Error; err != nil {
+		if err := gdb.Exec("UPDATE email_extractions SET triage_state = ?, triage_body_cue = '' WHERE email_id = ?", row.triageState, row.id).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -161,85 +190,6 @@ func TestListIgnoredEmails_FilteringAndPagination(t *testing.T) {
 	})
 }
 
-func TestBackfillSkippedEmailTriageData_LenientLegacyJSONAndExclusions(t *testing.T) {
-	gdb := openDomainTestDB(t)
-	bca := seedSenderWithCursor(t, gdb, "s-bca", "bca@bca.co.id", 1795520000000, "auto")
-	jenius := seedSenderWithCursor(t, gdb, "s-jenius", "jenius_noreply@smbci.com", 1795520000000, "auto")
-	grab := seedSenderWithCursor(t, gdb, "s-grab", "no-reply@grab.com", 1795520000000, "auto")
-	shopee := seedSenderWithCursor(t, gdb, "s-shopee", "info@mail.shopee.co.id", 1795520000000, "auto")
-
-	seedLegacySkippedEmail(
-		t, gdb, "01b8eb35-fb08-421f-b683-f735db694b6c", &bca.ID, "bca@bca.co.id", "Internet Transaction Journal",
-		"Hello MUHAMMAD FARIZ,\nTransaction Date\n:\n24 Nov 2026 11:34:40\nTransfer Type\n:\nTransfer to BCA Account",
-		1795494880000, "2026-11-24T04:34:40Z", "qwen",
-		`{"email_kind":"non_transaction","amount_decimal":"150000","currency":"IDR","transaction_date":"2026-11-24 11:34:40+07:00","merchant":"DINAR","category":"DeletedCustomCategory","unknown_legacy_field":"ignored"}`,
-	)
-	seedLegacySkippedEmail(
-		t, gdb, "5ac46a86-0d1e-4f29-99ef-cc8f9882cace", &bca.ID, "BCA <BCA@BCA.CO.ID>", "Internet Transaction Journal",
-		"Hello MUHAMMAD FARIZ,\nTransaction Date\n:\n24 Nov 2026 19:42:34\nTransaction Type\n:\nQRIS Payment",
-		1795524154000, "2026-11-24T12:42:34Z", "qwen",
-		`{"email_kind":"non_transaction","amount_decimal":"45000","currency":"IDR","transaction_date":"2026-11-24 19:42:34+07:00","merchant":"Ayam Keprabon Express","category":"Dining Out"}`,
-	)
-	seedLegacySkippedEmail(
-		t, gdb, "eb26eaca-ce81-4f8d-bedc-f13d4fa3456d", &bca.ID, "bca@bca.co.id", "Internet Transaction Journal",
-		"Hello MUHAMMAD FARIZ,\nTransaction Date\n:\n24 Nov 2026 19:38:41\nTransaction Type\n:\nQRIS Payment",
-		1795523921000, "2026-11-24T12:38:41Z", "qwen",
-		`{"email_kind":"non_transaction","amount_decimal":"75000","currency":"IDR","transaction_date":"2026-11-24 19:38:41+07:00","merchant":"TIONG INDOGROSIR -HO","category":"Groceries"}`,
-	)
-	seedLegacySkippedEmail(
-		t, gdb, "9e83e37c-d03a-4ff2-a1d3-eb3bed1202ed", &jenius.ID, "jenius_noreply@smbci.com", "You've transferred money from your Jenius account",
-		"Hi Muhammad,\nYou have just transferred IDR100,000 to ANKIE ERTMA RAHFREEL.",
-		1795491000000, "2026-11-24T03:30:00Z", "qwen",
-		`{"email_kind":"non_transaction","amount_decimal":"100000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"10:30:00","timezone_offset":"+07:00","merchant":null,"category":null}`,
-	)
-	seedLegacySkippedEmail(
-		t, gdb, "f9e81377-d39a-4bec-a3b5-67366146df45", &grab.ID, "no-reply@grab.com", "Your Grab E-Receipt",
-		"Grab Tips E-Receipt\nGrabFood\nRp 5000",
-		1795461240000, "2026-11-23T13:14:00Z", "qwen",
-		`{"email_kind":"non_transaction","amount_decimal":"5000","currency":"IDR","transaction_date":"2026-11-23T20:14:00+07:00","merchant":"Grab Tip","category":"Transportation"}`,
-	)
-	seedLegacySkippedEmail(
-		t, gdb, "4f1ddad2-848c-4597-bea4-fad6813c5078", &shopee.ID, "info@mail.shopee.co.id", "Kami mendeteksi Aktivitas Penautan Akun baru di Akun Shopee Anda",
-		"Hai keynesfariz,\nSebuah akun Migoo ditautkan.",
-		1795460000000, "2026-11-23T12:00:00Z", "qwen",
-		`{"email_kind":"non_transaction","amount_decimal":null,"currency":null}`,
-	)
-	seedLegacySkippedEmail(
-		t, gdb, "stmt-1", &jenius.ID, "jenius_noreply@smbci.com", "Billing Statement of Jenius Credit Card Platinum d-Card",
-		"Total Billing (IDR): 9,139,549.26\nMinimum Payment (IDR): 456,977.00",
-		1795450000000, "2026-11-23T09:00:00Z", "rule:billing_statement",
-		`{"email_kind":"non_transaction","amount_decimal":"9139549.26","currency":"IDR"}`,
-	)
-
-	res, err := ListTransactions(gdb, ListTransactionsParams{Month: "2026-11", Page: 1, PageSize: 25})
-	if err != nil {
-		t.Fatalf("ListTransactions with backfill: %v", err)
-	}
-	if res.TotalCount != 0 || res.TotalInRangeCount != 0 {
-		t.Fatalf("expected 0 imported transactions before promotion, got total=%d inRange=%d", res.TotalCount, res.TotalInRangeCount)
-	}
-	if len(res.GhostRows) != 5 || res.GhostInRangeCount != 5 || res.TotalGhostCount != 5 {
-		t.Fatalf("expected 5 ghost rows across November, got len=%d inRange=%d total=%d", len(res.GhostRows), res.GhostInRangeCount, res.TotalGhostCount)
-	}
-
-	summary, err := GetMonthlySpendingSummary(gdb, "2026-11")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if summary.TotalSpentMinor != 0 || summary.TransactionCount != 0 {
-		t.Fatalf("expected Ghost Rows excluded from spending summary, got %+v", summary)
-	}
-
-	var backfillBca db.EmailExtraction
-	gdb.First(&backfillBca, "email_id = ?", "01b8eb35-fb08-421f-b683-f735db694b6c")
-	if backfillBca.OccurredAtUtc == nil || *backfillBca.OccurredAtUtc != "2026-11-24T04:34:40Z" {
-		t.Fatalf("expected canonical space-separated ISO+offset conversion, got %v", backfillBca.OccurredAtUtc)
-	}
-	if backfillBca.Category == nil || *backfillBca.Category != DefaultCategory {
-		t.Fatalf("expected deleted custom category coerced to %q, got %v", DefaultCategory, backfillBca.Category)
-	}
-}
-
 func TestApplyAndUndoTriageVerdict_PromoteRippleDisplayNameCursorUndoAndConflicts(t *testing.T) {
 	gdb := openDomainTestDB(t)
 	cursorMs := int64(1795525000000)
@@ -249,41 +199,34 @@ func TestApplyAndUndoTriageVerdict_PromoteRippleDisplayNameCursorUndoAndConflict
 		t.Fatal(err)
 	}
 
-	seedLegacySkippedEmail(
+	seedSkippedEmail(
 		t, gdb, "qris-1", &bca.ID, "BCA <BCA@BCA.CO.ID>", "Internet Transaction Journal",
 		"Hello,\nTransaction Type\n:\nQRIS Payment", 1795524154000, "2026-11-24T12:42:34Z", "qwen",
 		`{"email_kind":"non_transaction","amount_decimal":"45000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"19:42:34","timezone_offset":"+07:00","merchant":"Ayam Keprabon","category":"Dining Out","payment_method":"BCA QRIS"}`,
 	)
-	seedLegacySkippedEmail(
+	seedSkippedEmail(
 		t, gdb, "qris-2", &bca.ID, "bca@bca.co.id", "Internet Transaction Journal",
 		"Hello,\nTransaction Type\n:\nQRIS Payment", 1795523921000, "2026-11-24T12:38:41Z", "qwen",
 		`{"email_kind":"non_transaction","amount_decimal":"75000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"19:38:41","timezone_offset":"+07:00","merchant":"Indogrosir","category":"Groceries","payment_method":"BCA QRIS"}`,
 	)
-	seedLegacySkippedEmail(
+	seedSkippedEmail(
 		t, gdb, "qris-older-day", &bca.ID, "bca@bca.co.id", "Internet Transaction Journal",
 		"Hello,\nTransaction Type\n:\nQRIS Payment", 1795420000000, "2026-11-20T12:00:00Z", "qwen",
 		`{"email_kind":"non_transaction","amount_decimal":"12000","currency":"IDR","transaction_date":"2026-11-20","transaction_time":"19:00:00","timezone_offset":"+07:00","merchant":"Older Coffee","category":"Dining Out"}`,
 	)
-	// Dismissed email with identical signature must never be promoted.
-	if err := gdb.Create(&db.RawEmail{
-		ID: "qris-dismissed", GmailMessageID: "gm-qris-dismissed", SenderID: &bca.ID,
-		FromAddress: "bca@bca.co.id", Subject: "Internet Transaction Journal",
-		CleanedText: "Hello,\nTransaction Type\n:\nQRIS Payment", InternalDateMs: 1795520000000, ReceivedAtUtc: "2026-11-24T10:00:00Z", Status: "dismissed",
-	}).Error; err != nil {
+	seedSkippedEmail(
+		t, gdb, "qris-dismissed", &bca.ID, "bca@bca.co.id", "Internet Transaction Journal",
+		"Hello,\nTransaction Type\n:\nQRIS Payment", 1795520000000, "2026-11-24T10:00:00Z", "qwen",
+		`{"email_kind":"non_transaction","amount_decimal":"20000","currency":"IDR","transaction_date":"2026-11-24T10:00:00Z","merchant":"Dismissed Coffee","category":"Dining Out"}`,
+	)
+	if err := gdb.Model(&db.RawEmail{}).Where("id = ?", "qris-dismissed").Update("status", "dismissed").Error; err != nil {
 		t.Fatal(err)
 	}
-	seedLegacySkippedEmail(
+	seedSkippedEmail(
 		t, gdb, "bca-transfer", &bca.ID, "bca@bca.co.id", "Internet Transaction Journal",
 		"Hello,\nTransfer Type\n:\nTransfer to BCA Account", 1795494880000, "2026-11-24T04:34:40Z", "qwen",
 		`{"email_kind":"non_transaction","amount_decimal":"150000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"11:34:40","timezone_offset":"+07:00","merchant":null,"category":null}`,
 	)
-
-	if err := BackfillSkippedEmailTriageData(gdb); err != nil {
-		t.Fatal(err)
-	}
-	if err := gdb.Exec(`UPDATE email_extractions SET triage_signature_key = (SELECT triage_signature_key FROM email_extractions WHERE email_id = 'qris-1') WHERE email_id = 'qris-dismissed'`).Error; err != nil {
-		t.Fatal(err)
-	}
 
 	verdict, err := ApplyTriageVerdict(gdb, ApplyTriageVerdictInput{
 		EmailID:   "qris-1",
@@ -370,14 +313,11 @@ func TestUndoTriageVerdict_ProtectsDefaultAccountAndIgnoreRecoveryConflicts(t *t
 	gdb := openDomainTestDB(t)
 	sender := seedSenderWithCursor(t, gdb, "s-prov", "wallet@pay.example", 1000, "auto")
 
-	seedLegacySkippedEmail(
+	seedSkippedEmail(
 		t, gdb, "prov-ghost", &sender.ID, "wallet@pay.example", "Wallet Payment",
 		"Paid IDR 25000", 1795520000000, "2026-11-24T10:00:00Z", "qwen",
 		`{"email_kind":"non_transaction","amount_decimal":"25000","currency":"IDR","card_last4":"7788","account_type_guess":"credit_card","merchant":"Cafe"}`,
 	)
-	if err := BackfillSkippedEmailTriageData(gdb); err != nil {
-		t.Fatal(err)
-	}
 
 	v, err := ApplyTriageVerdict(gdb, ApplyTriageVerdictInput{EmailID: "prov-ghost", Action: "promote"})
 	if err != nil {
@@ -438,14 +378,11 @@ func TestSettingsPolicyRecoveryAndDeletionIndependence(t *testing.T) {
 	jenius := seedSenderWithCursor(t, gdb, "s-jenius", "jenius_noreply@smbci.com", 1795500000000, "auto")
 
 	// Seed 1 post-LLM voucher (ignored via ghost verdict) and 1 pre-LLM policy:ignore voucher.
-	seedLegacySkippedEmail(
+	seedSkippedEmail(
 		t, gdb, "vouch-post", &grab.ID, "no-reply@grab.com", "Ride Cover Plus: Here's your Rp11.000 voucher.",
 		"Ride Cover\nRp 11.000 voucher", 1795490000000, "2026-11-24T03:00:00Z", "qwen",
 		`{"email_kind":"non_transaction","amount_decimal":"11000","currency":"IDR","merchant":"Grab Ride Cover","category":"Other"}`,
 	)
-	if err := BackfillSkippedEmailTriageData(gdb); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := ApplyTriageVerdict(gdb, ApplyTriageVerdictInput{EmailID: "vouch-post", Action: "ignore"}); err != nil {
 		t.Fatal(err)
 	}
@@ -598,14 +535,11 @@ func TestPromoteHistoricalGhostRow_PreservesReconciledBalanceAnchor(t *testing.T
 	if err := gdb.Model(&db.Sender{}).Where("id = ?", sender.ID).Update("default_account_id", acctID).Error; err != nil {
 		t.Fatal(err)
 	}
-	seedLegacySkippedEmail(
+	seedSkippedEmail(
 		t, gdb, "hist-ghost", &sender.ID, "bca@bca.co.id", "Internet Transaction Journal",
 		"Transaction Type\n:\nQRIS Payment", 1795200000000, "2026-11-20T05:00:00Z", "qwen",
 		`{"email_kind":"non_transaction","amount_decimal":"45000","currency":"IDR","transaction_date":"2026-11-20","transaction_time":"12:00:00","timezone_offset":"+07:00","merchant":"Historical Cafe","category":"Dining Out"}`,
 	)
-	if err := BackfillSkippedEmailTriageData(gdb); err != nil {
-		t.Fatal(err)
-	}
 
 	if _, err := ApplyTriageVerdict(gdb, ApplyTriageVerdictInput{EmailID: "hist-ghost", Action: "promote"}); err != nil {
 		t.Fatal(err)
@@ -636,7 +570,7 @@ func TestListSkippedTransactions_IndependentPagination(t *testing.T) {
 	configureTestLocale(t, gdb, "Asia/Jakarta", "IDR")
 	const received = "2026-10-12T12:00:00Z"
 	for _, id := range []string{"a", "b", "c", "d", "ignored", "invalid", "statement", "dismissed", "zero"} {
-		seedLegacySkippedEmail(t, gdb, id, nil, "merchant@example.com", "Payment receipt", "Paid 100", 10, received, "fixture", "{}")
+		seedSkippedEmail(t, gdb, id, nil, "merchant@example.com", "Payment receipt", "Paid 100", 10, received, "fixture", "{}")
 		if err := gdb.Exec("UPDATE email_extractions SET triage_state = 'ghost', currency = 'IDR', amount_minor = 100 WHERE email_id = ?", id).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -652,7 +586,7 @@ func TestListSkippedTransactions_IndependentPagination(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	seedLegacySkippedEmail(t, gdb, "e", nil, "merchant@example.com", "Payment receipt", "Paid 100", 10, received, "fixture",
+	seedSkippedEmail(t, gdb, "e", nil, "merchant@example.com", "Payment receipt", "Paid 100", 10, received, "fixture",
 		`{"email_kind":"non_transaction","amount_decimal":"100","currency":"IDR"}`)
 
 	wantPages := [][]string{{"e", "d"}, {"c", "b"}, {"a"}, {}}

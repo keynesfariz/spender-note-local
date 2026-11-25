@@ -1,22 +1,13 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useMemo, useState, type SubmitEvent } from "react"
+import { useId, useMemo, useState, type SubmitEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
+import { CreateFormDrawer } from "@/components/detail-drawer-content"
 import { DynamicIcon } from "@/components/dynamic-icon"
 import { TagMultiSelect } from "@/components/tag-multi-select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
@@ -60,6 +51,7 @@ export function AddTransactionDialog({
   timezone: string | null | undefined
 }) {
   const queryClient = useQueryClient()
+  const formId = useId()
   const catListQuery = useQuery({ ...categoriesQuery(), enabled: open })
   const tagListQuery = useQuery({ ...tagsQuery(), enabled: open })
 
@@ -139,135 +131,130 @@ export function AddTransactionDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Add manual transaction</DialogTitle>
-          <DialogDescription>
-            Record a cash or manual expense in {currency}.
-          </DialogDescription>
-        </DialogHeader>
+    <CreateFormDrawer
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Add manual transaction"
+      description={`Record a cash or manual expense in ${currency}.`}
+      formId={formId}
+      submitLabel={addMutation.isPending ? "Adding..." : "Add transaction"}
+      submitDisabled={addMutation.isPending}
+    >
+      <form id={formId} onSubmit={handleSubmit} className="space-y-4">
+        {formError && (
+          <Alert variant="destructive">
+            <AlertDescription>{formError}</AlertDescription>
+          </Alert>
+        )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {formError && (
-            <Alert variant="destructive">
-              <AlertDescription>{formError}</AlertDescription>
-            </Alert>
-          )}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor={`${formId}-amount`}>
+              Amount ({currency})
+            </FieldLabel>
+            <Input
+              id={`${formId}-amount`}
+              type="text"
+              inputMode="decimal"
+              required
+              placeholder="0.00"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+          </Field>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field>
-              <FieldLabel>Amount ({currency})</FieldLabel>
-              <Input
-                type="text"
-                inputMode="decimal"
-                required
-                placeholder="0.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-              />
-            </Field>
+          <Field>
+            <FieldLabel htmlFor={`${formId}-merchant`}>Merchant</FieldLabel>
+            <Input
+              id={`${formId}-merchant`}
+              type="text"
+              required
+              placeholder="Coffee Shop"
+              value={merchant}
+              onChange={(e) => setMerchant(e.target.value)}
+            />
+          </Field>
 
-            <Field>
-              <FieldLabel>Merchant</FieldLabel>
-              <Input
-                type="text"
-                required
-                placeholder="Coffee Shop"
-                value={merchant}
-                onChange={(e) => setMerchant(e.target.value)}
-              />
-            </Field>
+          <Field>
+            <FieldLabel>Category</FieldLabel>
+            <Select
+              items={categoryOptions}
+              value={category}
+              onValueChange={(v) => setCategory(v ?? DEFAULT_CATEGORY)}
+            >
+              <SelectTrigger className="w-full" aria-label="Category">
+                <DynamicIcon
+                  name={categoryIconMap.get(category)}
+                  className="size-4 text-muted-foreground"
+                />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {categoryOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    <span className="flex items-center gap-2">
+                      <DynamicIcon
+                        name={categoryIconMap.get(opt.value)}
+                        className="size-4 text-muted-foreground"
+                      />
+                      <span>{opt.label}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
 
-            <Field>
-              <FieldLabel>Category</FieldLabel>
-              <Select
-                items={categoryOptions}
-                value={category}
-                onValueChange={(v) => setCategory(v ?? DEFAULT_CATEGORY)}
-              >
-                <SelectTrigger className="w-full" aria-label="Category">
-                  <DynamicIcon
-                    name={categoryIconMap.get(category)}
-                    className="size-4 text-muted-foreground"
-                  />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {categoryOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      <span className="flex items-center gap-2">
-                        <DynamicIcon
-                          name={categoryIconMap.get(opt.value)}
-                          className="size-4 text-muted-foreground"
-                        />
-                        <span>{opt.label}</span>
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
+          <Field className="sm:col-span-2">
+            <FieldLabel>Tags</FieldLabel>
+            <TagMultiSelect
+              tags={tagListQuery.data ?? []}
+              selectedTagIds={selectedTagIds}
+              onChange={setSelectedTagIds}
+            />
+          </Field>
 
-            <Field>
-              <FieldLabel>Tags</FieldLabel>
-              <TagMultiSelect
-                tags={tagListQuery.data ?? []}
-                selectedTagIds={selectedTagIds}
-                onChange={setSelectedTagIds}
-              />
-            </Field>
+          <Field>
+            <FieldLabel>Account</FieldLabel>
+            <Select
+              items={accountItems}
+              value={accountId}
+              onValueChange={(v) => setAccountId(v ?? UNASSIGNED_ACCOUNT)}
+            >
+              <SelectTrigger className="w-full" aria-label="Account">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {accountItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
 
-            <Field>
-              <FieldLabel>Account</FieldLabel>
-              <Select
-                items={accountItems}
-                value={accountId}
-                onValueChange={(v) => setAccountId(v ?? UNASSIGNED_ACCOUNT)}
-              >
-                <SelectTrigger className="w-full" aria-label="Account">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {accountItems.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>
-                      {item.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
+          <Field>
+            <FieldLabel>Date</FieldLabel>
+            <DatePicker
+              value={date}
+              onChange={setDate}
+              ariaLabel="Transaction date"
+            />
+          </Field>
 
-            <Field>
-              <FieldLabel>Date</FieldLabel>
-              <DatePicker
-                value={date}
-                onChange={setDate}
-                ariaLabel="Transaction date"
-              />
-            </Field>
-
-            <Field>
-              <FieldLabel>Note</FieldLabel>
-              <Input
-                type="text"
-                placeholder="Optional note"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-              />
-            </Field>
-          </div>
-
-          <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" />}>
-              Cancel
-            </DialogClose>
-            <Button type="submit" disabled={addMutation.isPending}>
-              {addMutation.isPending ? "Adding..." : "Add transaction"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+          <Field>
+            <FieldLabel htmlFor={`${formId}-note`}>Note</FieldLabel>
+            <Input
+              id={`${formId}-note`}
+              type="text"
+              placeholder="Optional note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+          </Field>
+        </div>
+      </form>
+    </CreateFormDrawer>
   )
 }

@@ -1,0 +1,1222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ideation: Making PortSpenderNote Learn from User Data</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #faf8f4;
+      --surface: #ffffff;
+      --surface-muted: #f2eee6;
+      --surface-cream: #f8f1df;
+      --surface-mint: #e5f3ec;
+      --surface-peach: #fbeae2;
+      --surface-blue: #e7f0fb;
+      --border: #dfd8cc;
+      --border-strong: #c8bfb0;
+      --text: #1f1d1a;
+      --text-muted: #5b554c;
+      --ink-cream: #5a4314;
+      --ink-mint: #165239;
+      --ink-peach: #7c2f18;
+      --ink-blue: #184880;
+      --accent: #22548a;
+      --shadow: 0 1px 2px rgba(28, 24, 18, 0.05), 0 6px 18px rgba(28, 24, 18, 0.04);
+      --svg-bg: #fcfaf6;
+      --svg-box: #ffffff;
+      --svg-box-alt: #f5f1e8;
+      --svg-diamond: #f8f1df;
+      --svg-pill: #e5f3ec;
+      --svg-pill-warn: #fbeae2;
+      --svg-stroke: #5b554c;
+      --svg-stroke-accent: #22548a;
+      --svg-text: #1f1d1a;
+      --svg-muted: #5b554c;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #151412;
+        --surface: #1d1b18;
+        --surface-muted: #26231f;
+        --surface-cream: #322a1b;
+        --surface-mint: #193026;
+        --surface-peach: #38221b;
+        --surface-blue: #1a2a3d;
+        --border: #332f29;
+        --border-strong: #4a443b;
+        --text: #f0ece4;
+        --text-muted: #b3aba0;
+        --ink-cream: #f2d590;
+        --ink-mint: #8ee0b8;
+        --ink-peach: #f7b099;
+        --ink-blue: #96c5fa;
+        --accent: #82b8f8;
+        --shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+        --svg-bg: #191714;
+        --svg-box: #22201c;
+        --svg-box-alt: #2a2620;
+        --svg-diamond: #322a1b;
+        --svg-pill: #193026;
+        --svg-pill-warn: #38221b;
+        --svg-stroke: #9e968b;
+        --svg-stroke-accent: #82b8f8;
+        --svg-text: #f0ece4;
+        --svg-muted: #b3aba0;
+      }
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 2.5rem 1.25rem 4rem;
+    }
+
+    .prose {
+      max-width: 72ch;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 2px;
+    }
+
+    a:hover {
+      text-decoration-thickness: 2px;
+    }
+
+    code {
+      font-family: var(--mono);
+      font-size: 0.86em;
+      background: var(--surface-muted);
+      padding: 0.12em 0.38em;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+      overflow-wrap: break-word;
+    }
+
+    header.doc-header {
+      max-width: 72ch;
+      padding-bottom: 1.25rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 1.25rem;
+    }
+
+    .doc-kicker {
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin: 0 0 0.45rem;
+    }
+
+    h1 {
+      font-size: clamp(1.65rem, 3vw, 2.25rem);
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.75rem;
+      font-weight: 700;
+    }
+
+    .doc-summary-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1.25rem;
+      font-size: 0.92rem;
+      color: var(--text-muted);
+      margin: 0 0 0.75rem;
+    }
+
+    .doc-summary-meta strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .doc-focus {
+      margin: 0;
+      font-size: 1rem;
+      color: var(--text);
+      background: var(--surface-cream);
+      color: var(--ink-cream);
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+
+    .doc-focus strong {
+      color: inherit;
+    }
+
+    details.doc-metadata {
+      max-width: 72ch;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.6rem 0.95rem;
+      margin-bottom: 2rem;
+    }
+
+    details.doc-metadata summary {
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      list-style: none;
+    }
+
+    details.doc-metadata summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.doc-metadata summary::before {
+      content: "▸ ";
+      display: inline-block;
+      margin-right: 0.25rem;
+    }
+
+    details.doc-metadata[open] summary::before {
+      content: "▾ ";
+    }
+
+    details.doc-metadata dl {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.35rem 1rem;
+      margin: 0.75rem 0 0.25rem;
+      font-size: 0.9rem;
+    }
+
+    details.doc-metadata dt {
+      font-family: var(--mono);
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    details.doc-metadata dd {
+      margin: 0;
+    }
+
+    nav.page-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      margin-bottom: 2.25rem;
+    }
+
+    nav.page-nav a {
+      font-size: 0.86rem;
+      font-weight: 600;
+      text-decoration: none;
+      padding: 0.32rem 0.72rem;
+      border-radius: 999px;
+      background: var(--surface-muted);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    nav.page-nav a:hover {
+      background: var(--surface-blue);
+      color: var(--ink-blue);
+    }
+
+    section {
+      margin-bottom: 3rem;
+    }
+
+    h2 {
+      font-size: 1.45rem;
+      line-height: 1.25;
+      letter-spacing: -0.015em;
+      margin: 0 0 1rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid var(--border);
+      max-width: 72ch;
+    }
+
+    h3 {
+      font-size: 1.18rem;
+      line-height: 1.3;
+      margin: 0;
+      letter-spacing: -0.01em;
+    }
+
+    .context-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 0.9rem;
+      margin: 1rem 0 1.25rem;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.95rem 1.05rem;
+      box-shadow: var(--shadow);
+    }
+
+    .stat-card h3 {
+      font-size: 0.95rem;
+      margin-bottom: 0.45rem;
+      color: var(--text);
+    }
+
+    .stat-card p, .stat-card ul {
+      margin: 0;
+      font-size: 0.92rem;
+      color: var(--text-muted);
+    }
+
+    .stat-card ul {
+      padding-left: 1.1rem;
+      margin-top: 0.4rem;
+    }
+
+    .stat-card li {
+      margin-bottom: 0.25rem;
+    }
+
+    .forensics-list {
+      max-width: 72ch;
+      padding-left: 1.2rem;
+      margin: 0.65rem 0 1rem;
+    }
+
+    .forensics-list li {
+      margin-bottom: 0.45rem;
+    }
+
+    .axes-list {
+      display: grid;
+      gap: 0.7rem;
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      max-width: 72ch;
+    }
+
+    .axes-list li {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.75rem 1rem;
+    }
+
+    .axes-list strong {
+      display: block;
+      margin-bottom: 0.15rem;
+    }
+
+    .jump-list {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.9rem 1.1rem;
+      margin-bottom: 1.5rem;
+      max-width: 72ch;
+    }
+
+    .jump-list-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin: 0 0 0.55rem;
+    }
+
+    .jump-list ol {
+      margin: 0;
+      padding-left: 1.25rem;
+      display: grid;
+      gap: 0.3rem;
+    }
+
+    .jump-list a {
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .jump-list a.is-active {
+      text-decoration: underline;
+    }
+
+    article.idea-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.35rem 1.4rem;
+      margin-bottom: 1.5rem;
+      box-shadow: var(--shadow);
+    }
+
+    .idea-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.6rem 1rem;
+      margin-bottom: 0.95rem;
+      padding-bottom: 0.8rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      align-items: center;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 0.22rem 0.62rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      line-height: 1.3;
+      white-space: nowrap;
+    }
+
+    .chip-axis {
+      background: var(--surface-blue);
+      color: var(--ink-blue);
+    }
+
+    .chip-conf-high {
+      background: var(--surface-mint);
+      color: var(--ink-mint);
+    }
+
+    .chip-conf-med {
+      background: var(--surface-cream);
+      color: var(--ink-cream);
+    }
+
+    .chip-cx {
+      background: var(--surface-peach);
+      color: var(--ink-peach);
+    }
+
+    dl.idea-fields {
+      display: grid;
+      grid-template-columns: 112px 1fr;
+      gap: 0.7rem 1rem;
+      margin: 0;
+      max-width: 72ch;
+    }
+
+    dl.idea-fields dt {
+      font-size: 0.84rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      padding-top: 0.14rem;
+    }
+
+    dl.idea-fields dd {
+      margin: 0;
+    }
+
+    .basis-tag {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 0.08rem 0.42rem;
+      border-radius: 6px;
+      margin-right: 0.28rem;
+      background: var(--surface-cream);
+      color: var(--ink-cream);
+      border: 1px solid var(--border);
+    }
+
+    figure.diagram-wrap {
+      margin: 1.25rem 0 0.25rem;
+      background: var(--svg-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.85rem;
+      overflow-x: auto;
+    }
+
+    figure.diagram-wrap svg {
+      display: block;
+      width: 100%;
+      min-width: 680px;
+      height: auto;
+      font-family: var(--sans);
+    }
+
+    figure.diagram-wrap figcaption {
+      margin-top: 0.55rem;
+      font-size: 0.84rem;
+      color: var(--text-muted);
+    }
+
+    .svg-box {
+      fill: var(--svg-box);
+      stroke: var(--border-strong);
+      stroke-width: 1.5;
+    }
+
+    .svg-box-dashed {
+      fill: var(--svg-box-alt);
+      stroke: var(--svg-stroke);
+      stroke-width: 1.5;
+      stroke-dasharray: 5 4;
+    }
+
+    .svg-box-accent {
+      fill: var(--surface-blue);
+      stroke: var(--svg-stroke-accent);
+      stroke-width: 1.6;
+    }
+
+    .svg-diamond {
+      fill: var(--svg-diamond);
+      stroke: var(--border-strong);
+      stroke-width: 1.5;
+    }
+
+    .svg-pill-mint {
+      fill: var(--svg-pill);
+      stroke: var(--border-strong);
+      stroke-width: 1.5;
+    }
+
+    .svg-pill-warn {
+      fill: var(--svg-pill-warn);
+      stroke: var(--border-strong);
+      stroke-width: 1.5;
+    }
+
+    .svg-pill-cream {
+      fill: var(--surface-cream);
+      stroke: var(--border-strong);
+      stroke-width: 1.5;
+    }
+
+    .svg-line {
+      fill: none;
+      stroke: var(--svg-stroke);
+      stroke-width: 1.6;
+    }
+
+    .svg-line-accent {
+      fill: none;
+      stroke: var(--svg-stroke-accent);
+      stroke-width: 1.8;
+    }
+
+    .svg-line-dashed {
+      fill: none;
+      stroke: var(--svg-stroke);
+      stroke-width: 1.5;
+      stroke-dasharray: 5 4;
+    }
+
+    .svg-divider {
+      stroke: var(--border-strong);
+      stroke-width: 1;
+      stroke-dasharray: 4 4;
+    }
+
+    .svg-title {
+      fill: var(--svg-text);
+      font-size: 12.5px;
+      font-weight: 700;
+    }
+
+    .svg-sub {
+      fill: var(--svg-muted);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .svg-kicker {
+      fill: var(--svg-muted);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+    }
+
+    .svg-edge-label {
+      fill: var(--svg-text);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 600px;
+      font-size: 0.92rem;
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 0.72rem 0.9rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th:nth-child(2), td:nth-child(2) {
+      min-width: 260px;
+    }
+
+    th {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      background: var(--surface-muted);
+      font-weight: 700;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    footer.composition-signal {
+      margin-top: 2.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      max-width: 72ch;
+    }
+
+    @media (max-width: 640px) {
+      .page {
+        padding: 1.5rem 0.9rem 3rem;
+      }
+
+      article.idea-card {
+        padding: 1.05rem 1rem;
+      }
+
+      dl.idea-fields {
+        grid-template-columns: 1fr;
+        gap: 0.3rem;
+      }
+
+      dl.idea-fields dt {
+        padding-top: 0.45rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="doc-header">
+      <p class="doc-kicker">PortSpenderNote Ideation</p>
+      <h1>Ideation: Making PortSpenderNote Learn from User Data</h1>
+      <div class="doc-summary-meta">
+        <span><strong>Date:</strong> <time datetime="2026-11-24">2026-11-24</time></span>
+      </div>
+      <p class="doc-focus"><strong>Focus:</strong> Making PortSpenderNote learn from user data — starting from 5 expense emails misclassified as <code>non_transaction</code> (BCA QRIS, BCA/Jenius transfers, Grab Tip) and extending across skipped-email triage, Magic LLM enrichment, and cross-email ledger intelligence.</p>
+    </header>
+
+    <details class="doc-metadata">
+      <summary>Document metadata</summary>
+      <dl>
+        <dt>topic</dt>
+        <dd>user-data-learning</dd>
+        <dt>mode</dt>
+        <dd>repo-grounded</dd>
+      </dl>
+    </details>
+
+    <nav class="page-nav" aria-label="Document sections">
+      <a href="#grounding-context">Codebase Context</a>
+      <a href="#topic-axes">Topic Axes</a>
+      <a href="#ranked-ideas">Ranked Ideas (6)</a>
+      <a href="#rejection-summary">Rejection Summary</a>
+    </nav>
+
+    <section id="grounding-context">
+      <h2>Codebase Context</h2>
+      <div class="prose">
+        <p>PortSpenderNote runs as a local-first Next.js 16 + Go API stack (<code>app/api/**/route.go</code> delegating domain logic to <code>internal/</code>), backed by a single-writer SQLite database (<code>data/spender.db</code>, <code>STRICT</code> tables with inline <code>CHECK</code> constraints in WAL mode) and a local OpenAI-compatible 7B inference server (<code>http://localhost:9931/v1</code>, currently <code>itlwas/Qwen2.5-7B-Instruct-Q4_K_M-GGUF:Q4_K_M</code>, <code>Temperature: 0</code>, <code>CachePrompt: true</code> in <code>internal/llm/client.go:244</code>).</p>
+      </div>
+
+      <div class="context-grid">
+        <div class="stat-card">
+          <h3>Live <code>raw_emails</code> Forensics (176 Total)</h3>
+          <p>166 <code>extracted</code> · 4 <code>dismissed</code> · 6 <code>non_transaction</code></p>
+          <ul>
+            <li><strong>5 of 6 <code>non_transaction</code></strong> rows are false negatives where Qwen2.5 already extracted <code>amount_decimal</code> + <code>currency</code> inside <code>raw_llm_json</code>.</li>
+            <li><strong>1 of 6</strong> (<code>4f1ddad2</code>, Shopee security alert) is a true negative with <code>amount_decimal: null</code>.</li>
+            <li><strong>4 <code>dismissed</code></strong> rows expose real false positives: cancelled Jenius charge <code>1e4bfdde</code> + cancellation <code>fb13b866</code>, Grab voucher <code>16006a26</code>, and billing statement <code>0b809370</code>.</li>
+          </ul>
+        </div>
+
+        <div class="stat-card">
+          <h3>Untapped User Correction Corpus</h3>
+          <p>84 of 91 transactions carry <code>manual_override = 1</code> across 166 linked sources:</p>
+          <ul>
+            <li><strong>106</strong> account reassignments (largest toil; <code>card_last4:2003</code> collides across <code>BCA ••4055</code> and <code>Jenius Debit Card</code>).</li>
+            <li><strong>72</strong> category edits across 12 custom categories (e.g. <code>kantin ibu</code>, <code>Warkop*</code>, <code>GRAB*</code> -&gt; <code>Dining Out</code>).</li>
+            <li><strong>81</strong> linked rows with <code>remark_user_edited = 1</code> (25 distinct transactions using <code>DineOut:</code> and <code>GrabFood:</code> prefixes); <strong>0</strong> tags created yet.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="prose">
+        <p><strong>Root Cause of the 5 Skipped Expenses:</strong> Inspecting <code>email_extractions.raw_llm_json</code> in <code>data/spender.db</code> confirms that the local LLM already parsed valid amounts and currencies (and accounts on 4 of 5) for every reported email before emitting <code>email_kind: "non_transaction"</code>:</p>
+        <ul class="forensics-list">
+          <li><code>01b8eb35-fb08-421f-b683-f735db694b6c</code> — <code>bca@bca.co.id</code>, Transfer to BCA Account (IDR 31,400, <code>Source of Fund: 5260xxxx55</code>; LLM also parsed recipient <code>6040850048</code>, account, and <code>Dining Out</code>).</li>
+          <li><code>5ac46a86-0d1e-4f29-99ef-cc8f9882cace</code> — <code>bca@bca.co.id</code>, QRIS Payment to Ayam Keprabon Express (IDR 34,500, <code>5260****55</code>).</li>
+          <li><code>eb26eaca-ce81-4f8d-bedc-f13d4fa3456d</code> — <code>bca@bca.co.id</code>, QRIS Payment to TIONG INDOGROSIR -HO (IDR 93,500).</li>
+          <li><code>9e83e37c-d03a-4ff2-a1d3-eb3bed1202ed</code> — <code>jenius_noreply@smbci.com</code>, Jenius transfer to ANKIE ERTMA RAHFREEL (IDR 100,000, extracted on Qwen2.5-3B).</li>
+          <li><code>f9e81377-d39a-4bec-a3b5-67366146df45</code> — <code>no-reply@grab.com</code>, Grab Tips E-Receipt for GrabFood (IDR 5,000, <code>card_last4: 5260</code>).</li>
+        </ul>
+
+        <p>Because <code>NormalizeExtractedResult</code> (<code>internal/llm/normalize.go:276-282</code>) immediately discards every field except <code>RawJSON</code> when <code>raw.EmailKind == "non_transaction"</code>, and <code>runExtractionWorker</code> (<code>internal/syncrunner/runner.go:680-696</code>) returns early before checking <code>senders.role_hint</code>, these valid transactions vanish behind a bare <code>Skipped</code> counter in <code>SyncToast</code> with no inspection or recovery UI. Meanwhile, <code>BuildExtractionPrompt</code> (<code>internal/llm/prompt.go:83-86</code>) recognizes only <code>card_charge</code>, <code>receipt</code>, and <code>non_transaction</code> (omitting QRIS, bank transfers, and tips).</p>
+
+        <p><strong>Current Learning Blind Spots &amp; Architectural Constraints:</strong> The app's sole learning mechanism — <code>findRemarkExamples</code> (<code>internal/domain/enrichment.go:143-170</code>) — filters <code>remark_user_edited = 1</code> rows via <code>instr(lower(?), lower(prefix)) &gt; 0</code>, which structurally blocks user-invented prefixes like <code>DineOut:</code> from matching BCA QRIS emails. <code>MatchAccountForExtraction</code> (<code>internal/domain/accounts_matching.go:64,71,97</code>) short-circuits past <code>bank_account</code> and <code>alias</code> checks whenever <code>card_last4</code> collides. Past repo learnings (<code>docs/solutions/</code>) establish four key boundaries: deterministic rules beat single prose prompt bullets on 7B GGUF models; additive SQLite tables avoid multi-process <code>goRoutes</code> <code>STRICT</code>/<code>CHECK</code> rebuild races; local re-evaluation over <code>raw_emails</code> must never mutate Gmail cursors; and core logic belongs in <code>internal/</code>. External prior art (Rossum IDP, SQLite FTS5 BM25 dynamic retrieval, Monarch/Actual/Lunch Money edit-to-rule flywheels, and Cursor Tab "Learning Silence") reinforces pairing deterministic local rules with concise KV-cache-friendly dynamic retrieval.</p>
+      </div>
+    </section>
+
+    <section id="topic-axes">
+      <h2>Topic Axes</h2>
+      <ul class="axes-list">
+        <li>
+          <strong>1. Triage &amp; Recovery Gate</strong>
+          Preventing false <code>non_transaction</code> skips and false-positive imports, surfacing skipped/borderline emails for rescue or rejection, and feeding those verdicts back into future triage.
+        </li>
+        <li>
+          <strong>2. Correction-to-Knowledge Distillation</strong>
+          Turning existing ledger edits (<code>email_extractions</code> vs <code>transactions</code>) into durable, inspectable, deterministic personal knowledge rather than leaving them inert in SQLite.
+        </li>
+        <li>
+          <strong>3. Context-Smart Local 7B Prompting</strong>
+          Delivering personal history to the local quantized 7B model within tight token and <code>CachePrompt</code> KV-cache budgets across both sync extraction and Magic LLM.
+        </li>
+        <li>
+          <strong>4. Magic LLM Surfaces &amp; Proactive Workflows</strong>
+          Expanding Magic LLM beyond manual per-drawer clicks into user-data-aware enrichment, retroactive cleanup, provenance transparency, and calibrated abstention.
+        </li>
+        <li>
+          <strong>5. Cross-Email &amp; Ledger Relationship Learning</strong>
+          Resolving colliding account identities and learning multi-email lifecycle relationships (card charge + receipt, tip add-ons, charge + cancellation pairs).
+        </li>
+      </ul>
+    </section>
+
+    <section id="ranked-ideas">
+      <h2>Ranked Ideas</h2>
+
+      <nav class="jump-list" aria-label="Ranked ideas jump list">
+        <p class="jump-list-title">Jump to Idea</p>
+        <ol>
+          <li><a href="#idea-1">Contradiction-Aware Truth-Ledger Triage &amp; Inline Timeline Ghost Rows</a> · Triage &amp; Recovery Gate</li>
+          <li><a href="#idea-2">Compounding Personal Memory Stack (Contrastive SQLite FTS5 + Channel-Bound Remark Grammars)</a> · Context-Smart Local 7B Prompting</li>
+          <li><a href="#idea-3">Retroactive Shadow-Diff Compiler &amp; Personal Rule Store</a> · Correction-to-Knowledge Distillation</li>
+          <li><a href="#idea-4">Zero-Settings Inline "Teach &amp; Ripple" Codemod Preview</a> · Magic LLM Surfaces &amp; Proactive Workflows</li>
+          <li><a href="#idea-5">Background Magic Pondering with Provenance Citations &amp; "Learning Silence"</a> · Magic LLM Surfaces &amp; Proactive Workflows</li>
+          <li><a href="#idea-6">Collision-Proof Account Affinity &amp; Cross-Email Lifecycle Sagas</a> · Cross-Email &amp; Ledger Relationship Learning</li>
+        </ol>
+      </nav>
+
+      <article id="idea-1" class="idea-card">
+        <div class="idea-header">
+          <h3>1. Contradiction-Aware Truth-Ledger Triage &amp; Inline Timeline Ghost Rows</h3>
+          <div class="chip-row">
+            <span class="chip chip-axis">Triage &amp; Recovery Gate</span>
+            <span class="chip chip-conf-high">Confidence 92% (High)</span>
+            <span class="chip chip-cx">Complexity Medium</span>
+          </div>
+        </div>
+        <dl class="idea-fields">
+          <dt>Description</dt>
+          <dd>Stop discarding parsed transaction fields when the 7B model emits <code>email_kind: "non_transaction"</code> despite extracting a positive <code>amount_decimal</code> and <code>currency</code>. Decouple observable money-flow labeling (5 tractable classes suited to a quantized 7B model: <code>purchase_or_qris</code>, <code>bank_transfer</code>, <code>tip_addon</code>, <code>cancellation_or_refund</code>, <code>non_spend_notice</code>) from a deterministic, learnable Go admission policy stored in an additive SQLite table keyed by <code>(sender_id, flow_kind) -&gt; admit | ghost | skip</code>. Project quarantined or amount-bearing skipped emails directly onto the main chronological transaction timeline (and a filterable Skipped view) as zero-balance-impact <strong>Timeline Ghost Rows</strong> pre-populated from <code>raw_llm_json</code> — with one-click <code>[Promote]</code> (zero LLM calls) and <code>[Always Ignore]</code> actions that flip that sender's policy cell and locally replay matching <code>raw_emails</code> without touching Gmail cursors.</dd>
+
+          <dt>Axis</dt>
+          <dd>Triage &amp; Recovery Gate</dd>
+
+          <dt>Basis</dt>
+          <dd><span class="basis-tag">direct:</span> <code>internal/llm/normalize.go:276-282</code> returns early on <code>raw.EmailKind == "non_transaction"</code> and discards all extracted fields; <code>internal/syncrunner/runner.go:680-696</code> records an empty <code>non_transaction</code> row and increments <code>skipped_count</code> with no recovery UI; <code>internal/llm/prompt.go:83-86</code> omits QRIS, bank transfers, and tips from <code>card_charge</code>/<code>receipt</code>. Live <code>data/spender.db</code> inspection proved all 5 false negatives (<code>01b8eb35</code>, <code>5ac46a86</code>, <code>eb26eaca</code>, <code>9e83e37c</code>, <code>f9e81377</code>) already hold valid <code>amount_decimal</code> + <code>currency</code> inside <code>raw_llm_json</code>, whereas the sole true negative (<code>4f1ddad2</code>) has <code>amount_decimal: null</code>. <span class="basis-tag">external:</span> Rossum IDP contradiction-routed HITL queues + repo learnings (<code>billing-statement-future-date-reconciliation-inflation.md</code>, <code>gmail-sync-sender-cursor-and-timestamp-null.md</code>).</dd>
+
+          <dt>Rationale</dt>
+          <dd>Separating factual money-flow parsing from per-user accounting policy keeps the 7B model inside what it already does well, separates the 5 live false negatives from the 1 true negative with 100% precision/recall, and makes omissions unmistakable next to neighboring purchases (such as a Grab Tip sitting directly beneath its GrabFood order) instead of hiding them in a settings screen.</dd>
+
+          <dt>Downsides</dt>
+          <dd>Amount-bearing non-expenses (vouchers like <code>16006a26</code> and cancellations like <code>fb13b866</code>) briefly appear as Ghost Rows until ignored once per <code>(sender_id, flow_kind)</code>; promoting historical emails must respect <code>occurred_at_utc &lt;= asOfUtc</code> balance bounds; an additive policy table is required to avoid <code>STRICT</code>/<code>CHECK</code> migration churn on <code>email_extractions</code>.</dd>
+
+          <dt>Confidence</dt>
+          <dd>92% (High)</dd>
+
+          <dt>Complexity</dt>
+          <dd>Medium</dd>
+        </dl>
+
+        <figure class="diagram-wrap">
+          <svg viewBox="0 0 840 322" role="img" aria-label="Comparison between today's destructive skip drop and proposed contradiction-aware Truth-Ledger Triage with Timeline Ghost Rows">
+            <defs>
+              <marker id="arrow-1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--svg-stroke)" />
+              </marker>
+              <marker id="arrow-1-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--svg-stroke-accent)" />
+              </marker>
+            </defs>
+
+            <text x="16" y="24" class="svg-kicker">TODAY: SILENT FIELD DROP</text>
+            <rect x="16" y="36" width="148" height="54" rx="8" class="svg-box" />
+            <text x="90" y="58" text-anchor="middle" class="svg-title">Incoming Email</text>
+            <text x="90" y="75" text-anchor="middle" class="svg-sub">BCA QRIS / Grab Tip</text>
+
+            <line x1="164" y1="63" x2="192" y2="63" class="svg-line" marker-end="url(#arrow-1)" />
+            <rect x="196" y="36" width="208" height="54" rx="8" class="svg-box" />
+            <text x="300" y="58" text-anchor="middle" class="svg-title">7B Model Extracts</text>
+            <text x="300" y="75" text-anchor="middle" class="svg-sub">amt: 34500 + kind: non_tx</text>
+
+            <line x1="404" y1="63" x2="432" y2="63" class="svg-line" marker-end="url(#arrow-1)" />
+            <rect x="436" y="36" width="198" height="54" rx="8" class="svg-box" />
+            <text x="535" y="58" text-anchor="middle" class="svg-title">NormalizeExtractedResult</text>
+            <text x="535" y="75" text-anchor="middle" class="svg-sub">Discards all parsed fields</text>
+
+            <line x1="634" y1="63" x2="662" y2="63" class="svg-line" marker-end="url(#arrow-1)" />
+            <rect x="666" y="36" width="158" height="54" rx="27" class="svg-pill-warn" />
+            <text x="745" y="58" text-anchor="middle" class="svg-title">skipped_count++</text>
+            <text x="745" y="75" text-anchor="middle" class="svg-sub">Buried; no recovery UI</text>
+
+            <line x1="16" y1="108" x2="824" y2="108" class="svg-divider" />
+
+            <text x="16" y="130" class="svg-kicker">PROPOSED: TRUTH-LEDGER TRIAGE &amp; GHOST ROWS</text>
+            <rect x="16" y="166" width="168" height="60" rx="8" class="svg-box" />
+            <text x="100" y="190" text-anchor="middle" class="svg-title">7B Semantic Parser</text>
+            <text x="100" y="208" text-anchor="middle" class="svg-sub">5 flow_kinds + fields</text>
+
+            <line x1="184" y1="196" x2="212" y2="196" class="svg-line" marker-end="url(#arrow-1)" />
+            <polygon points="290,146 364,196 290,246 216,196" class="svg-diamond" />
+            <text x="290" y="191" text-anchor="middle" class="svg-title">Go Policy</text>
+            <text x="290" y="208" text-anchor="middle" class="svg-sub">(sender, flow)</text>
+
+            <path d="M 364 196 L 392 196 L 392 146 L 450 146" class="svg-line" marker-end="url(#arrow-1)" />
+            <text x="421" y="138" text-anchor="middle" class="svg-edge-label">admit</text>
+            <rect x="454" y="126" width="166" height="40" rx="8" class="svg-box" />
+            <text x="537" y="150" text-anchor="middle" class="svg-title">Admit to Ledger</text>
+
+            <path d="M 364 196 L 450 196" class="svg-line-accent" marker-end="url(#arrow-1-accent)" />
+            <text x="421" y="188" text-anchor="middle" class="svg-edge-label">ghost</text>
+            <rect x="454" y="174" width="194" height="46" rx="8" class="svg-box-accent" />
+            <text x="551" y="192" text-anchor="middle" class="svg-title">Timeline Ghost Row</text>
+            <text x="551" y="209" text-anchor="middle" class="svg-sub">Prefilled from raw JSON</text>
+
+            <path d="M 364 196 L 392 196 L 392 246 L 450 246" class="svg-line" marker-end="url(#arrow-1)" />
+            <text x="421" y="238" text-anchor="middle" class="svg-edge-label">skip</text>
+            <rect x="454" y="226" width="166" height="40" rx="20" class="svg-pill-cream" />
+            <text x="537" y="250" text-anchor="middle" class="svg-title">Skip Cleanly</text>
+
+            <line x1="648" y1="197" x2="674" y2="197" class="svg-line-accent" marker-end="url(#arrow-1-accent)" />
+            <rect x="678" y="172" width="146" height="50" rx="25" class="svg-pill-mint" />
+            <text x="751" y="193" text-anchor="middle" class="svg-title">[Promote] / [Ignore]</text>
+            <text x="751" y="210" text-anchor="middle" class="svg-sub">0 LLM calls</text>
+
+            <path d="M 751 222 L 751 290 L 290 290 L 290 250" class="svg-line-dashed" marker-end="url(#arrow-1)" />
+            <text x="520" y="308" text-anchor="middle" class="svg-sub">Verdict updates Go Policy + triggers local raw_emails replay</text>
+          </svg>
+          <figcaption>Conceptual flow: separating observable money-flow parsing from a learnable Go admission policy routes contradictory skips onto inline Ghost Rows for zero-LLM rescue and policy feedback.</figcaption>
+        </figure>
+      </article>
+
+      <article id="idea-2" class="idea-card">
+        <div class="idea-header">
+          <h3>2. Compounding Personal Memory Stack (Contrastive SQLite FTS5 + Channel-Bound Remark Grammars)</h3>
+          <div class="chip-row">
+            <span class="chip chip-axis">Context-Smart Local 7B Prompting</span>
+            <span class="chip chip-conf-high">Confidence 90% (High)</span>
+            <span class="chip chip-cx">Complexity Medium</span>
+          </div>
+        </div>
+        <dl class="idea-fields">
+          <dt>Description</dt>
+          <dd>Replace <code>findRemarkExamples</code>'s brittle literal-substring SQL check with a local <strong>SQLite FTS5 BM25</strong> episodic index built exclusively from confirmed LLM-vs-user disagreements (<code>manual_override = 1</code>, <code>remark_user_edited = 1</code>, rescued skips, confirmed non-spend skips — SVM-style support vectors rather than redundant easy rows). On both sync extraction (<code>internal/syncrunner/runner.go:651-663</code>) and Magic LLM (<code>internal/domain/enrichment.go:318-327</code>), retrieve the top 3–5 lexically closest historical corrections (~400–600 tokens), compact per-category merchant examples for the user's custom categories, and channel-bound remark patterns keyed by <code>(category, sender/rail)</code> (e.g., <code>[Dining Out + BCA QRIS] -&gt; DineOut: {vendor}</code>). Inject all dynamic memory strictly into <code>userPrompt</code> so <code>systemPrompt</code> remains byte-identical and preserves llama.cpp's <code>CachePrompt: true</code> KV prefix cache, while keeping <code>resolveEnrichedRemark</code>'s vendor-grounding check (<code>enrichment.go:204</code>) so the 7B model never leaks a past example's vendor name.</dd>
+
+          <dt>Axis</dt>
+          <dd>Context-Smart Local 7B Prompting</dd>
+
+          <dt>Basis</dt>
+          <dd><span class="basis-tag">direct:</span> <code>findRemarkExamples</code> (<code>internal/domain/enrichment.go:155-157</code>) filters via <code>instr(lower(?), lower(trim(CASE WHEN instr(remark, ': ') &gt; 1 THEN substr(remark, 1, instr(remark, ': ') - 1) ELSE merchant END))) &gt; 0</code>, which structurally prevents personal prefixes like <code>DineOut:</code> from matching BCA QRIS emails; <code>internal/syncrunner/runner.go:651-663</code> sends zero user history during extraction; <code>internal/llm/client.go:244</code> sets <code>CachePrompt: true</code> over static <code>sysLines</code> (<code>internal/llm/prompt.go:81-100</code>). Live DB shows 12 custom categories, 72 category overrides, and 81 remark-edited linked rows (<code>DineOut: ...</code>, <code>GrabFood: ...</code>). <span class="basis-tag">external:</span> SQLite FTS5 BM25 dynamic few-shot retrieval outperforms dense embeddings and per-user LoRA on 7B quantized local models with 1-edit instant adaptation and zero adapter ops.</dd>
+
+          <dt>Rationale</dt>
+          <dd>Fixes the exact blind spot in PortSpenderNote's only existing learning loop while upgrading both first-pass extraction and Magic LLM through one zero-dependency SQLite index that respects local 7B latency and KV caching.</dd>
+
+          <dt>Downsides</dt>
+          <dd>Dynamic user prompts add ~400–600 input tokens per call; noisy FTS5 tokenization on Indonesian descriptors can surface irrelevant analogies unless scoped by sender/channel; requires keeping vendor-grounding post-validation (<code>enrichment.go:204</code>) active so multi-field examples do not leak previous vendor names.</dd>
+
+          <dt>Confidence</dt>
+          <dd>90% (High)</dd>
+
+          <dt>Complexity</dt>
+          <dd>Medium</dd>
+        </dl>
+
+        <figure class="diagram-wrap">
+          <svg viewBox="0 0 860 296" role="img" aria-label="KV-cache-preserving prompt memory stack combining static system prompt with FTS5 user-prompt retrieval and vendor-grounding check">
+            <defs>
+              <marker id="arrow-2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--svg-stroke)" />
+              </marker>
+              <marker id="arrow-2-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--svg-stroke-accent)" />
+              </marker>
+            </defs>
+
+            <rect x="16" y="22" width="256" height="84" rx="8" class="svg-box" />
+            <text x="144" y="44" text-anchor="middle" class="svg-kicker">SYSTEM PROMPT (STATIC)</text>
+            <text x="144" y="66" text-anchor="middle" class="svg-title">Schema + Core Rules</text>
+            <text x="144" y="86" text-anchor="middle" class="svg-sub">KV Cache Hit (CachePrompt: true)</text>
+
+            <rect x="16" y="122" width="256" height="122" rx="10" class="svg-box-dashed" />
+            <text x="144" y="144" text-anchor="middle" class="svg-kicker">USER PROMPT (DYNAMIC ~500 TOK)</text>
+            <text x="144" y="168" text-anchor="middle" class="svg-sub">1. Top 3-5 FTS5 Contrastive Diffs</text>
+            <text x="144" y="189" text-anchor="middle" class="svg-sub">2. Custom Category Merchant Hints</text>
+            <text x="144" y="210" text-anchor="middle" class="svg-sub">3. Channel Remark Grammars</text>
+            <text x="144" y="231" text-anchor="middle" class="svg-title">+ Current Email Body</text>
+
+            <path d="M 272 64 L 306 64 L 306 130 L 340 130" class="svg-line" marker-end="url(#arrow-2)" />
+            <path d="M 272 183 L 306 183 L 306 130 L 340 130" class="svg-line-accent" marker-end="url(#arrow-2-accent)" />
+
+            <rect x="344" y="96" width="174" height="68" rx="8" class="svg-box-accent" />
+            <text x="431" y="124" text-anchor="middle" class="svg-title">Local Qwen2.5-7B</text>
+            <text x="431" y="144" text-anchor="middle" class="svg-sub">Extract or Magic Enrich</text>
+
+            <line x1="518" y1="130" x2="548" y2="130" class="svg-line" marker-end="url(#arrow-2)" />
+            <polygon points="628,78 704,130 628,182 552,130" class="svg-diamond" />
+            <text x="628" y="125" text-anchor="middle" class="svg-title">Vendor Check</text>
+            <text x="628" y="143" text-anchor="middle" class="svg-sub">enrichment.go:204</text>
+
+            <line x1="704" y1="130" x2="734" y2="130" class="svg-line" marker-end="url(#arrow-2)" />
+            <rect x="738" y="96" width="106" height="68" rx="22" class="svg-pill-mint" />
+            <text x="791" y="124" text-anchor="middle" class="svg-title">Clean Draft</text>
+            <text x="791" y="144" text-anchor="middle" class="svg-sub">Zero Leakage</text>
+
+            <path d="M 791 164 L 791 268 L 144 268 L 144 248" class="svg-line-dashed" marker-end="url(#arrow-2)" />
+            <text x="468" y="286" text-anchor="middle" class="svg-sub">Confirmed user edits index straight into SQLite FTS5 disagreements</text>
+          </svg>
+          <figcaption>Conceptual memory layout: static system prompts preserve KV-cache reuse while dynamic FTS5 contrastive diffs, category hints, and channel-bound remark grammars ride in the user message.</figcaption>
+        </figure>
+      </article>
+
+      <article id="idea-3" class="idea-card">
+        <div class="idea-header">
+          <h3>3. Retroactive Shadow-Diff Compiler &amp; Personal Rule Store</h3>
+          <div class="chip-row">
+            <span class="chip chip-axis">Correction-to-Knowledge Distillation</span>
+            <span class="chip chip-conf-high">Confidence 88% (High)</span>
+            <span class="chip chip-cx">Complexity Medium</span>
+          </div>
+        </div>
+        <dl class="idea-fields">
+          <dt>Description</dt>
+          <dd>Treat <code>email_extractions</code> (raw LLM guesses) paired against <code>transactions</code> (<code>manual_override = 1</code> user ground truth) as an immediately usable day-0 supervision corpus. Build a deterministic diff compiler in <code>internal/domain</code> that mines repeated <code>(sender_id, merchant_norm / keyword) -&gt; (merchant_rewrite, category, remark_prefix, tags)</code> corrections (explicitly excluding <code>amount_minor</code> edits from static rules) into an additive, inspectable, toggleable <code>user_rules</code> SQLite table carrying provenance counts (<code>"Learned from 3 edits"</code>). Execute confirmed rules deterministically post-parse during sync and at 0ms inside Magic enrichment so settled repeat merchants (<code>kantin ibu -&gt; DineOut: kantin ibu</code> / <code>Dining Out</code>) never regress to 7B stochasticity, while leaving novel or multi-category items to FTS5 + 7B inference.</dd>
+
+          <dt>Axis</dt>
+          <dd>Correction-to-Knowledge Distillation</dd>
+
+          <dt>Basis</dt>
+          <dd><span class="basis-tag">direct:</span> <code>internal/syncrunner/runner.go:708-721</code> persists raw <code>email_extractions</code> separately from <code>transactions</code> (<code>SaveExtractedTransaction</code> at <code>runner.go:750-763</code>), preserving the exact AI-vs-user diff, yet neither <code>runner.go:703-706</code> nor <code>internal/domain/enrichment.go:337</code> consults learned override mappings. Live DB forensics reveal 84 of 91 transactions have <code>manual_override = 1</code>, including 72 category changes and repeated identical edits (<code>kantin ibu</code> fixed from <code>Groceries</code> to <code>Dining Out</code> twice; <code>Warkop*</code>/<code>R.M ELCIO</code> fixed from <code>Shopping</code> to <code>Dining Out</code>). <span class="basis-tag">external:</span> Actual Budget category learning, Monarch Money / Lunch Money rule engines, and Beancount <code>smart_importer</code> deterministic-rules-first architecture.</dd>
+
+          <dt>Rationale</dt>
+          <dd>Solves cold start on day zero using the 84 corrections already sitting in <code>data/spender.db</code>, turns recurring merchant handling from probabilistic 7B guessing into 100% consistent deterministic execution, and gives the user an inspectable place to audit or delete learned behavior.</dd>
+
+          <dt>Downsides</dt>
+          <dd>Broad pattern rules can over-fire on multi-category platforms (such as Grab handling both Transport and GrabFood) unless scoped by service/merchant keywords or gated on 2+ consistent edits with zero contradictions; adds a new <code>user_rules</code> CRUD surface to maintain.</dd>
+
+          <dt>Confidence</dt>
+          <dd>88% (High)</dd>
+
+          <dt>Complexity</dt>
+          <dd>Medium</dd>
+        </dl>
+      </article>
+
+      <article id="idea-4" class="idea-card">
+        <div class="idea-header">
+          <h3>4. Zero-Settings Inline "Teach &amp; Ripple" Codemod Preview</h3>
+          <div class="chip-row">
+            <span class="chip chip-axis">Magic LLM Surfaces &amp; Proactive Workflows</span>
+            <span class="chip chip-conf-high">Confidence 86% (High)</span>
+            <span class="chip chip-cx">Complexity Medium</span>
+          </div>
+        </div>
+        <dl class="idea-fields">
+          <dt>Description</dt>
+          <dd>Eliminate the chore of fixing recurring mistakes row-by-row or maintaining regex tables in Settings by borrowing IDE workspace refactoring previews. Immediately after a user saves an edit in <code>UpdateTransaction</code> (<code>internal/domain/transactions_mutations.go:258-384</code>) or promotes a Ghost Row, run a &lt;10ms SQLite scan for unreviewed structural siblings matching <code>merchant_norm</code>, <code>(sender_id, channel)</code>, or FTS5 neighbors (for example, editing <code>Warkop kang Cepi -&gt; DineOut: Warkop kang Cepi</code> + <code>Dining Out</code> detects <code>Warkop Yumna</code> and <code>R.M ELCIO</code>; editing one <code>kantin ibu</code> spots its twin). Display an unobtrusive inline pill (<code>"Apply 'Dining Out' + 'DineOut:' to 3 similar transactions (Preview)"</code>) that opens a checkboxed before/after diff sheet applying selected updates atomically with 1-click Undo while graduating the confirmed convention into <code>user_rules</code> and FTS5 memory.</dd>
+
+          <dt>Axis</dt>
+          <dd>Magic LLM Surfaces &amp; Proactive Workflows</dd>
+
+          <dt>Basis</dt>
+          <dd><span class="basis-tag">direct:</span> <code>UpdateTransaction</code> (<code>internal/domain/transactions_mutations.go:258-384</code>) commits single-row edits with no sibling discovery, while <code>EnrichTransactionsFromSources</code> (<code>internal/domain/enrichment.go:212-349</code>) synthesizes emails of a single purchase into one preview rather than rippling conventions across historical rows. Live DB shows repeated manual edits across identical and sibling merchants (<code>kantin ibu</code> x2, <code>Warkop kang Cepi</code>, <code>Warkop Yumna</code>, <code>R.M ELCIO</code>, multiple <code>GRAB* A-...</code> rows). <span class="basis-tag">external:</span> Monarch Money / Lunch Money / Copilot Money inline edit-triggered "apply to N similar" flywheels + IDE refactoring codemod previews.</dd>
+
+          <dt>Rationale</dt>
+          <dd>Turns a single routine transaction fix into immediate retroactive cleanup across historical drift plus explicit multi-row training confirmation, delivering high-trust personalization without requiring a Settings rule-builder.</dd>
+
+          <dt>Downsides</dt>
+          <dd>Sibling matching must balance recall and precision so "similar" suggestions feel helpful rather than noisy (defaulting loose FTS5 matches to unchecked); requires atomic undo state across batch updates.</dd>
+
+          <dt>Confidence</dt>
+          <dd>86% (High)</dd>
+
+          <dt>Complexity</dt>
+          <dd>Medium</dd>
+        </dl>
+      </article>
+
+      <article id="idea-5" class="idea-card">
+        <div class="idea-header">
+          <h3>5. Background Magic Pondering with Provenance Citations &amp; "Learning Silence"</h3>
+          <div class="chip-row">
+            <span class="chip chip-axis">Magic LLM Surfaces &amp; Proactive Workflows</span>
+            <span class="chip chip-conf-med">Confidence 78% (Medium)</span>
+            <span class="chip chip-cx">Complexity Medium</span>
+          </div>
+        </div>
+        <dl class="idea-fields">
+          <dt>Description</dt>
+          <dd>Upgrade Magic LLM from a synchronous click-and-wait drawer button into an optional post-sync background pass (running per-transaction <code>EnrichTransactionsFromSources</code> while the local 7B KV cache is still warm) that pre-stages non-destructive draft suggestions with explicit provenance (<code>"Dining Out — matches 4 past BCA QRIS edits"</code>), strictly respecting <code>manual_override = 1</code> (<code>internal/domain/extraction.go:64-66</code>). Pair this with lightweight local accept/edit/revert telemetry per field (<code>merchant</code>, <code>category</code>, <code>tags</code>, <code>remark</code>, <code>note</code>) to calibrate <strong>Learning Silence</strong>: automatically suppress noisy fields the user ignores or never uses (such as <code>DraftTagNames</code> from <code>partitionEnrichedTags</code> at <code>enrichment.go:109-139</code> when 0 tags exist in SQLite) and route genuinely ambiguous multi-purpose charges (<code>Grab</code>, <code>Shopee</code>, unknown P2P transfers like <code>ANKIE ERTMA RAHFREEL</code>) into a compact <code>"Needs Your Call"</code> strip instead of guessing silently.</dd>
+
+          <dt>Axis</dt>
+          <dd>Magic LLM Surfaces &amp; Proactive Workflows</dd>
+
+          <dt>Basis</dt>
+          <dd><span class="basis-tag">direct:</span> <code>EnrichTransactionsFromSources</code> (<code>internal/domain/enrichment.go:212-349</code>) is triggered only manually via <code>POST /api/transactions/enrich</code> (<code>app/api/transactions/enrich/route.go:13-41</code>), returns a flat <code>TransactionEnrichmentPreview</code> (<code>enrichment.go:20-28</code>) with zero confidence or provenance fields, and prompts for tags (<code>internal/llm/enrich.go:118,141</code>) even when the live DB contains 0 tags. <span class="basis-tag">external:</span> Cursor Tab's accept/edit/dismiss "Learning Silence" calibration, chess-engine idle pondering, and Beancount <code>smart_importer</code> routing ambiguous merchants to review.</dd>
+
+          <dt>Rationale</dt>
+          <dd>Manual per-drawer Sparkles clicks do not scale past dozens of transactions, yet naive auto-enrichment erodes trust whenever the 7B model hallucinates unwanted tags or opaque guesses. Calibrated silence plus visible provenance makes ambient AI feel respectful and instant.</dd>
+
+          <dt>Downsides</dt>
+          <dd>Running background per-transaction 7B enrichment increases local CPU/GPU load after large syncs (needs cancellation, idle gating, and a toggle); pre-staged draft states add UI complexity alongside <code>reviewed</code> and <code>manual_override</code>.</dd>
+
+          <dt>Confidence</dt>
+          <dd>78% (Medium)</dd>
+
+          <dt>Complexity</dt>
+          <dd>Medium</dd>
+        </dl>
+      </article>
+
+      <article id="idea-6" class="idea-card">
+        <div class="idea-header">
+          <h3>6. Collision-Proof Account Affinity &amp; Cross-Email Lifecycle Sagas</h3>
+          <div class="chip-row">
+            <span class="chip chip-axis">Cross-Email &amp; Ledger Relationship Learning</span>
+            <span class="chip chip-conf-high">Confidence 85% (High)</span>
+            <span class="chip chip-cx">Complexity High</span>
+          </div>
+        </div>
+        <dl class="idea-fields">
+          <dt>Description</dt>
+          <dd>Fix the verified account-matching collision bug that makes <code>account_id</code> the single highest-frequency manual fix (106 of 166 linked rows), and build learned multi-email lifecycle pairing on top of it. First, remove the <code>cardStatus == "collision"</code> short-circuit in <code>MatchAccountForExtraction</code> (<code>internal/domain/accounts_matching.go:64,71,97</code>) so shared <code>card_last4</code> values (<code>2003</code> across <code>BCA ••4055</code> and <code>Jenius Debit Card</code>) no longer block <code>bank_account</code> and <code>alias</code> checks; clarify <code>Source of Fund</code> vs recipient account numbers in transfer extraction (<code>01b8eb35</code> extracted recipient <code>6040850048</code>); and record <code>(sender_id, payment_method_raw, bank_account_hint) -&gt; account_id</code> affinities whenever the user reassigns an account. Second, because <code>DuplicateMergeTransactions</code> (<code>transactions_mutations.go:493</code>) and <code>CombineTransactions</code> (<code>line 609</code>) strictly require matching <code>AccountID</code>s, leverage clean account identity plus historical <code>transaction_sources</code> merges and paired dismissals to detect bounded-window <strong>Cross-Email Lifecycle Sagas</strong>: (a) 1-click dual-void for same-account charge + cancellation pairs (<code>1e4bfdde</code> + <code>fb13b866</code>), (b) tip add-on attachment (<code>f9e81377</code> Grab Tips Rp 5,000 -&gt; parent GrabFood order inheriting <code>GrabFood: &lt;vendor&gt;</code> / <code>Dining Out</code>), and (c) suggested card-charge + merchant-receipt combines (<code>GRAB*</code> Jenius alert + GrabFood receipt) fed together into Magic LLM.</dd>
+
+          <dt>Axis</dt>
+          <dd>Cross-Email &amp; Ledger Relationship Learning</dd>
+
+          <dt>Basis</dt>
+          <dd><span class="basis-tag">direct:</span> <code>internal/domain/accounts_matching.go:63-98</code> sets <code>cardStatus = "collision"</code> when <code>len(ids) &gt; 1</code> and guards Step 2 (<code>if cardStatus == "none"</code>) and Step 3 (<code>if bankStatus == "none"</code>), skipping bank/alias matching completely; <code>internal/domain/transactions_mutations.go:493,609</code> require matching <code>AccountID</code>s for duplicate/combine merges; <code>internal/domain/enrichment.go:61-95,254-270</code> already supports multi-source <code>transaction_sources</code> (<code>card_charge</code> + <code>receipt</code>). Live DB forensics show 106 manual <code>account_id</code> edits, <code>card_last4:2003</code> shared by two accounts, paired dismissed Jenius charge <code>1e4bfdde</code> + cancellation <code>fb13b866</code> (both Rp 26,900), Grab Tips <code>f9e81377</code> (Rp 5,000), and repeated <code>GRAB*</code> + GrabFood manual merges. <span class="basis-tag">external:</span> ISO 8583 auth/capture/adjustment/void payment clearinghouse sagas.</dd>
+
+          <dt>Rationale</dt>
+          <dd>Attacks the #1 manual edit burden in the real database (<code>account_id</code>, 106 fixes) while unlocking the architectural prerequisite (<code>AccountID</code> agreement) for automating multi-email Indonesian purchase flows — stopping cancelled charges, orphan tips, and unmerged card+receipt twins at the source.</dd>
+
+          <dt>Downsides</dt>
+          <dd>Highest implementation complexity of the six ideas (touching account matching, prompt source-vs-recipient clarity, temporal correlation windows, and merge/void UX); cross-email windows must tolerate out-of-order email arrival without fragile silent merges — best shipped as high-confidence 1-click suggestions first.</dd>
+
+          <dt>Confidence</dt>
+          <dd>85% (High)</dd>
+
+          <dt>Complexity</dt>
+          <dd>High</dd>
+        </dl>
+
+        <figure class="diagram-wrap">
+          <svg viewBox="0 0 860 278" role="img" aria-label="Two-layer relationship graph from collision-proof account affinity to multi-email purchase and cancellation sagas">
+            <defs>
+              <marker id="arrow-3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--svg-stroke)" />
+              </marker>
+              <marker id="arrow-3-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--svg-stroke-accent)" />
+              </marker>
+            </defs>
+
+            <rect x="16" y="24" width="188" height="196" rx="10" class="svg-box-dashed" />
+            <text x="110" y="48" text-anchor="middle" class="svg-kicker">EMAIL ACCOUNT SIGNALS</text>
+            <rect x="30" y="64" width="160" height="30" rx="15" class="svg-pill-warn" />
+            <text x="110" y="83" text-anchor="middle" class="svg-sub">last4: 2003 (collision)</text>
+            <rect x="30" y="102" width="160" height="30" rx="15" class="svg-pill-cream" />
+            <text x="110" y="121" text-anchor="middle" class="svg-sub">sender: bca@bca.co.id</text>
+            <rect x="30" y="140" width="160" height="30" rx="15" class="svg-pill-cream" />
+            <text x="110" y="159" text-anchor="middle" class="svg-sub">Source: 5260xxxx55</text>
+            <rect x="30" y="178" width="160" height="30" rx="15" class="svg-pill-cream" />
+            <text x="110" y="197" text-anchor="middle" class="svg-sub">alias / payment_method</text>
+
+            <line x1="204" y1="122" x2="234" y2="122" class="svg-line-accent" marker-end="url(#arrow-3-accent)" />
+            <rect x="238" y="84" width="176" height="76" rx="8" class="svg-box-accent" />
+            <text x="326" y="109" text-anchor="middle" class="svg-title">Collision-Proof</text>
+            <text x="326" y="127" text-anchor="middle" class="svg-title">Account Affinity</text>
+            <text x="326" y="146" text-anchor="middle" class="svg-sub">Confirmed AccountID</text>
+
+            <path d="M 414 122 L 444 122 L 444 72 L 474 72" class="svg-line" marker-end="url(#arrow-3)" />
+            <path d="M 414 122 L 444 122 L 444 176 L 474 176" class="svg-line" marker-end="url(#arrow-3)" />
+
+            <rect x="478" y="34" width="182" height="76" rx="8" class="svg-box" />
+            <text x="569" y="57" text-anchor="middle" class="svg-title">Purchase + Tip Saga</text>
+            <text x="569" y="75" text-anchor="middle" class="svg-sub">Jenius GRAB* + GrabFood</text>
+            <text x="569" y="92" text-anchor="middle" class="svg-sub">+ Grab Tip (Rp 5k)</text>
+
+            <line x1="660" y1="72" x2="686" y2="72" class="svg-line" marker-end="url(#arrow-3)" />
+            <rect x="690" y="44" width="154" height="56" rx="28" class="svg-pill-mint" />
+            <text x="767" y="68" text-anchor="middle" class="svg-title">Combined Expense</text>
+            <text x="767" y="85" text-anchor="middle" class="svg-sub">Inherited GrabFood style</text>
+
+            <rect x="478" y="138" width="182" height="76" rx="8" class="svg-box" />
+            <text x="569" y="161" text-anchor="middle" class="svg-title">Cancellation Saga</text>
+            <text x="569" y="179" text-anchor="middle" class="svg-sub">Jenius Auth (Rp 26.9k)</text>
+            <text x="569" y="196" text-anchor="middle" class="svg-sub">+ Cancelled (Rp 26.9k)</text>
+
+            <line x1="660" y1="176" x2="686" y2="176" class="svg-line" marker-end="url(#arrow-3)" />
+            <rect x="690" y="148" width="154" height="56" rx="28" class="svg-pill-warn" />
+            <text x="767" y="172" text-anchor="middle" class="svg-title">1-Click Dual-Void</text>
+            <text x="767" y="189" text-anchor="middle" class="svg-sub">Zero phantom spend</text>
+
+            <path d="M 767 204 L 767 248 L 326 248 L 326 164" class="svg-line-dashed" marker-end="url(#arrow-3)" />
+            <text x="546" y="266" text-anchor="middle" class="svg-sub">Manual account fixes, merges, and dual-dismissals update learned bindings</text>
+          </svg>
+          <figcaption>Conceptual relationship graph: resolving shared card-last4 collisions unlocks AccountID agreement, enabling temporal purchase/tip combines and charge+cancellation dual-voids.</figcaption>
+        </figure>
+      </article>
+    </section>
+
+    <section id="rejection-summary">
+      <h2>Rejection Summary</h2>
+      <div class="prose">
+        <p>All 5 Topic Axes have surviving candidates with zero coverage gaps. Ten consolidated candidates were cut or absorbed during adversarial basis verification and synthesis:</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Idea</th>
+              <th>Reason Rejected</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Sender <code>role_hint</code> Bypass &amp; Edit UI (C03)</td>
+              <td>Weak basis &amp; below ambition floor: blindly bypassing <code>non_transaction</code> whenever <code>role_hint != 'auto'</code> breaks on Jenius cancellations (<code>fb13b866</code>) and billing statements (<code>0b809370</code>); exposing existing <code>UpdateSender</code> fields in Settings is routine plumbing.</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Bogofilter Pre-LLM Triage Gate Trained on <code>dismissed</code> (C04)</td>
+              <td>Refuted by verification: 1 of 4 <code>dismissed</code> rows (<code>1e4bfdde</code>) is a legitimate Jenius <code>GRAB*</code> charge deleted due to cancellation, which would poison Bayesian token weights against real charges; over-engineered for ~5 senders.</td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>Unscoped 10-Class Schema &amp; "First-Key Decoding" Hypothesis (C05 raw)</td>
+              <td>Partially refuted and scoped into Idea #1: <code>BuildExtractionJSONSchema</code> (<code>prompt.go:156-177</code>) uses a Go map marshaled alphabetically so <code>email_kind</code> is 7th, not 1st, and a 10-way enum overtaxes Q4_K_M 7B; core policy decoupling survived in #1 with 5 tractable classes.</td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td>CAT Translation Memory &amp; Settings Termbase (C07)</td>
+              <td>Duplicates stronger ideas (#2, #3): output-side <code>&lt;Prefix&gt;: &lt;vendor&gt;</code> rewrites are solved cleanly by #2 and #3 without heavy localization jargon or an extra Termbase UI.</td>
+            </tr>
+            <tr>
+              <td>5</td>
+              <td>Runtime LLM-to-Deterministic-Parser Synthesis (C08)</td>
+              <td>Too expensive relative to likely value: Qwen2.5-7B already extracts amounts and accounts accurately even on the 5 false negatives; generating and backtesting Go text parsers at runtime is brittle over-engineering for $0 local compute.</td>
+            </tr>
+            <tr>
+              <td>6</td>
+              <td>Idle "Sleep-Cycle" Playbook Curation &amp; In-App Replay Harness (C09)</td>
+              <td>Weak basis &amp; scope drift: letting a 7B model curate prose playbook bullets conflicts with repo learnings that 7B models ignore prose instructions, and an idle eval daemon is developer tooling rather than product UX.</td>
+            </tr>
+            <tr>
+              <td>7</td>
+              <td>Original Living Category Profiles Citation &amp; System-Prompt Mutation (C11 raw)</td>
+              <td>Inaccurate citation corrected and folded into Idea #2: misattributed the <code>DineOut:</code> bug to <code>resolveEnrichedRemark</code> (<code>enrichment.go:204</code>) instead of <code>findRemarkExamples</code> (<code>enrichment.go:155-157</code>), and putting dynamic merchant lists in <code>systemPrompt</code> (<code>prompt.go:93</code>) would bust <code>CachePrompt: true</code>.</td>
+            </tr>
+            <tr>
+              <td>8</td>
+              <td>Standalone Two-Speed Memory Architecture (C12)</td>
+              <td>Weak basis &amp; duplicates #2/#3: deterministic merchant lookup cannot skip 7B parsing on raw email ingest (amounts and timestamps still require parsing); post-parse rule override is already covered by #3.</td>
+            </tr>
+            <tr>
+              <td>9</td>
+              <td>Full-Field Batch Magic Sweep via <code>EnrichTransactionsFromSources</code> (C14)</td>
+              <td>Refuted codebase assumption &amp; duplicates #4: <code>EnrichTransactionsFromSources</code> (<code>enrichment.go:212-349</code>) synthesizes emails of a single purchase into one preview, not batch multi-row sweeps; retroactive backlog cleanup is faster and safer via #4 Teach &amp; Ripple.</td>
+            </tr>
+            <tr>
+              <td>10</td>
+              <td>Standalone Fellegi-Sunter Account Scorer &amp; <code>xxxx</code>/<code>****</code> Mask Claim (C16 raw)</td>
+              <td>Partially refuted and folded into Idea #6: <code>nonDigitsRe</code> (<code>accounts.go:100</code>) already strips <code>5260xxxx55</code> and <code>5260****55</code> both to <code>"526055"</code>, and a full Fellegi-Sunter model is overkill for 4 accounts; the verified <code>cardStatus == "collision"</code> bug (<code>accounts_matching.go:64,71,97</code>) + sender affinity were absorbed as the prerequisite half of #6.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="composition-signal">Composed 2026-11-24T23:05+07:00 by ce-ideate from user request on PortSpenderNote user-data learning and 5 misclassified non_transaction emails</footer>
+  </div>
+
+  <script>
+    (function () {
+      var links = Array.from(document.querySelectorAll('.jump-list a'));
+      var targets = links.map(function (a) {
+        return document.querySelector(a.getAttribute('href'));
+      }).filter(Boolean);
+      if (!('IntersectionObserver' in window) || targets.length === 0) return;
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          links.forEach(function (a) {
+            a.classList.toggle('is-active', a.getAttribute('href') === '#' + entry.target.id);
+          });
+        });
+      }, { rootMargin: '-20% 0px -65% 0px' });
+      targets.forEach(function (el) { observer.observe(el); });
+    })();
+  </script>
+</body>
+</html>

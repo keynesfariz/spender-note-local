@@ -149,7 +149,7 @@ function SourceEmailBody({
   }
 
   return (
-    <pre className="max-h-64 overflow-auto rounded-md border bg-muted p-3 font-mono text-xs break-words whitespace-pre-wrap">
+    <pre className="max-h-64 overflow-auto rounded-md border bg-muted p-3 font-mono text-xs wrap-break-word whitespace-pre-wrap">
       {body.data.cleaned_text}
     </pre>
   )
@@ -178,7 +178,7 @@ function SourceEmail({
           onToggle={(event) => setOpen(event.currentTarget.open)}
         >
           <summary className="flex cursor-pointer list-none items-start gap-3 rounded outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-            <div className="min-w-0 flex-1 break-words">
+            <div className="min-w-0 flex-1 wrap-break-word">
               <p className="font-medium">
                 {source.subject || "Untitled email"}
               </p>
@@ -585,7 +585,7 @@ function InspectorForm({
   return (
     <div className="space-y-5">
       <div className="rounded-xl border bg-secondary/60 p-4">
-        <p className="text-sm font-medium break-words text-secondary-foreground">
+        <p className="text-sm font-medium wrap-break-word text-secondary-foreground">
           {tx.remark ?? tx.merchant}
         </p>
         <p className="mt-1 text-2xl font-semibold tracking-tight text-foreground tabular-nums">

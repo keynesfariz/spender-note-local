@@ -354,7 +354,7 @@ export function AccountsView() {
                       <AccountIcon className="size-5" />
                     </span>
                     <div className="min-w-0">
-                      <CardTitle className="break-words">
+                      <CardTitle className="wrap-break-word">
                         {account.name}
                       </CardTitle>
                       <p className="text-xs text-muted-foreground">

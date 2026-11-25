@@ -94,7 +94,7 @@ function IgnoredEmailBody({ emailId }: { emailId: string }) {
     )
   }
   return (
-    <pre className="mt-2 max-h-60 overflow-auto rounded-md border bg-muted p-3 font-mono text-xs break-words whitespace-pre-wrap">
+    <pre className="mt-2 max-h-60 overflow-auto rounded-md border bg-muted p-3 font-mono text-xs wrap-break-word whitespace-pre-wrap">
       {bodyQuery.data.cleaned_text || "(Empty email body)"}
     </pre>
   )
@@ -328,7 +328,7 @@ export function TriageRulesTab({
                             </Badge>
                           )}
                         </div>
-                        <p className="font-mono text-xs break-words text-muted-foreground">
+                        <p className="font-mono text-xs wrap-break-word text-muted-foreground">
                           Subject pattern: {policy.subject_pattern || "(any)"}
                           {policy.body_cue
                             ? ` · Body cue: ${policy.body_cue}`
@@ -491,7 +491,7 @@ export function TriageRulesTab({
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0 flex-1 space-y-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-medium break-words text-foreground">
+                            <span className="font-medium wrap-break-word text-foreground">
                               {item.subject || "Untitled email"}
                             </span>
                             {hasDraftAmount && item.currency ? (
@@ -520,7 +520,7 @@ export function TriageRulesTab({
                             )}
                             {item.merchant_raw ? ` · ${item.merchant_raw}` : ""}
                           </p>
-                          <p className="font-mono text-xs break-words text-muted-foreground">
+                          <p className="font-mono text-xs wrap-break-word text-muted-foreground">
                             Pattern: {item.triage_subject_pattern || "(any)"}
                             {item.triage_body_cue
                               ? ` · Cue: ${item.triage_body_cue}`

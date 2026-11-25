@@ -14,7 +14,6 @@ import {
   useId,
   useImperativeHandle,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -22,16 +21,18 @@ import {
   type SubmitEvent,
 } from "react"
 
-import { DatePicker } from "@/components/date-picker"
 import { DetailDrawerContent } from "@/components/detail-drawer-content"
-import { DynamicIcon } from "@/components/dynamic-icon"
 import {
   MagicEnrichButton,
   patchTagsQueryCache,
   resolveMagicDraft,
   useMagicEnrich,
 } from "@/components/magic-enrich"
-import { TagMultiSelect } from "@/components/tag-multi-select"
+import {
+  TransactionFormFields,
+  TransactionNoteField,
+  UNASSIGNED_ACCOUNT,
+} from "@/components/transaction-form-fields"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -49,19 +50,9 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Drawer } from "@/components/ui/drawer"
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Textarea } from "@/components/ui/textarea"
 import type { useTransactionReview } from "@/hooks/use-transaction-review"
 import { categoriesQuery } from "@/lib/api/categories"
 import { tagsQuery } from "@/lib/api/tags"
@@ -85,11 +76,6 @@ import {
   type TransactionListItem,
 } from "@/lib/api/types.generated"
 import {
-  DEFAULT_CATEGORY,
-  buildCategoryIconMap,
-  buildCategorySelectOptions,
-} from "@/lib/categories"
-import {
   dateTimeInputToUtcIso,
   formatMinorCurrency,
   formatUtcInTimezone,
@@ -99,8 +85,6 @@ import {
   utcToTimeInputValue,
 } from "@/lib/format"
 import { getReviewAction, type ReviewDirection } from "@/lib/transaction-review"
-
-const UNASSIGNED_ACCOUNT = "__unassigned__"
 
 type DraftField =
   | "remark"
@@ -299,9 +283,7 @@ function InspectorForm({
   const [remarkUserEdited, setRemarkUserEdited] = useState(
     tx.remark_user_edited
   )
-  const noteId = useId()
   const detailFormId = useId()
-  const remarkId = useId()
   const [amount, setAmount] = useState(() =>
     groupAmountInput(minorToDecimalInput(tx.amount_minor, tx.currency))
   )
@@ -467,36 +449,6 @@ function InspectorForm({
     },
   })
 
-  const categoryIconMap = useMemo(
-    () => buildCategoryIconMap(categories),
-    [categories]
-  )
-
-  const categoryOptions = useMemo(
-    () => buildCategorySelectOptions(categories, category),
-    [categories, category]
-  )
-
-  const detailAccountId = tx.account_id
-  const detailAccountName = tx.account_name
-  const accountItems = useMemo(() => {
-    const base = [
-      { value: UNASSIGNED_ACCOUNT, label: "Unassigned" },
-      ...accounts.map((acct) => ({ value: acct.id, label: acct.name })),
-    ]
-    if (
-      accountId !== UNASSIGNED_ACCOUNT &&
-      !accounts.some((acct) => acct.id === accountId)
-    ) {
-      const fallbackLabel =
-        detailAccountId === accountId && detailAccountName
-          ? detailAccountName
-          : "Unknown account"
-      base.push({ value: accountId, label: fallbackLabel })
-    }
-    return base
-  }, [accounts, accountId, detailAccountId, detailAccountName])
-
   function editDraft<Value>(
     field: DraftField,
     setter: (value: Value) => void,
@@ -541,7 +493,7 @@ function InspectorForm({
         edits.has("date") && (date !== loaded?.date || time !== loaded?.time)
 
       if (saveDate && (!date.trim() || !time.trim())) {
-        throw new Error("Enter a date and time in Details before saving.")
+        throw new Error("Enter the occurred date and time before saving.")
       }
 
       const saveMerchant = edits.has("merchant")
@@ -755,141 +707,63 @@ function InspectorForm({
               </div>
             )}
 
-            <div
-              className="grid gap-4 sm:grid-cols-2"
-              inert={isEnriching || review.pending}
-            >
-              <Field>
-                <FieldLabel htmlFor={remarkId}>Remark</FieldLabel>
-                <Input
-                  id={remarkId}
-                  value={remark}
-                  placeholder={tx.merchant}
-                  onChange={(e) => {
-                    const value = e.target.value
-                    setRemarkUserEdited(
-                      tx.remark_user_edited ||
-                        value.trim() !== (tx.remark ?? tx.merchant).trim()
-                    )
-                    editDraft("remark", setRemark, value)
-                  }}
-                />
-              </Field>
-
-              <Field>
-                <FieldLabel>
-                  Amount (
-                  {tx.isForeignCurrency && !convertToLocalCurrency
-                    ? tx.currency
-                    : localCurrency}
+            <TransactionFormFields
+              description={{
+                kind: "remark",
+                value: remark,
+                placeholder: tx.merchant,
+                onChange: (value) => {
+                  setRemarkUserEdited(
+                    tx.remark_user_edited ||
+                      value.trim() !== (tx.remark ?? tx.merchant).trim()
                   )
-                </FieldLabel>
-                <Input
-                  type="text"
-                  inputMode="decimal"
-                  required
-                  value={amount}
-                  onBlur={() => setAmount(groupAmountInput(amount))}
-                  className="tabular-nums"
-                  onChange={(e) =>
-                    editDraft("amount", setAmount, e.target.value)
-                  }
-                />
-              </Field>
-
-              <Field>
-                <FieldLabel>Category</FieldLabel>
-                <Select
-                  items={categoryOptions}
-                  value={category}
-                  onValueChange={(v) =>
-                    editDraft("category", setCategory, v ?? DEFAULT_CATEGORY)
-                  }
-                >
-                  <SelectTrigger className="w-full" aria-label="Category">
-                    <DynamicIcon
-                      name={categoryIconMap.get(category)}
-                      className="size-4 text-muted-foreground"
-                    />
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categoryOptions.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        <span className="flex items-center gap-2">
-                          <DynamicIcon
-                            name={categoryIconMap.get(opt.value)}
-                            className="size-4 text-muted-foreground"
-                          />
-                          <span>{opt.label}</span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-
-              <Field className="sm:col-span-2">
-                <FieldLabel>Tags</FieldLabel>
-                <TagMultiSelect
-                  tags={tags ?? []}
-                  selectedTagIds={selectedTagIds}
-                  onChange={(ids) => editDraft("tags", setSelectedTagIds, ids)}
-                  draftTagNames={draftTagNames}
-                  onDraftTagNamesChange={(names) =>
-                    editDraft("tags", setDraftTagNames, names)
-                  }
-                  onCreatePendingChange={setTagCreatePending}
-                  disabled={isEnriching || review.pending}
-                />
-              </Field>
-
-              <Field>
-                <FieldLabel>Account</FieldLabel>
-                <Select
-                  items={accountItems}
-                  value={accountId}
-                  onValueChange={(v) =>
-                    editDraft("account", setAccountId, v ?? UNASSIGNED_ACCOUNT)
-                  }
-                >
-                  <SelectTrigger className="w-full" aria-label="Account">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {accountItems.map((item) => (
-                      <SelectItem key={item.value} value={item.value}>
-                        {item.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {tx.payment_method_raw && (
-                  <FieldDescription>
-                    Extracted payment method: {tx.payment_method_raw}
-                  </FieldDescription>
-                )}
-              </Field>
-
-              <Field>
-                <FieldLabel>Occurred date</FieldLabel>
-                <DatePicker
-                  value={date}
-                  onChange={(value) => editDraft("date", setDate, value)}
-                  ariaLabel="Occurred date"
-                />
-              </Field>
-
-              <Field>
-                <FieldLabel>Occurred time</FieldLabel>
-                <Input
-                  type="time"
-                  required
-                  value={time}
-                  onChange={(e) => editDraft("date", setTime, e.target.value)}
-                />
-              </Field>
-            </div>
+                  editDraft("remark", setRemark, value)
+                },
+              }}
+              inert={isEnriching || review.pending}
+              currency={
+                tx.isForeignCurrency && !convertToLocalCurrency
+                  ? tx.currency
+                  : localCurrency
+              }
+              amount={amount}
+              onAmountChange={(value) => editDraft("amount", setAmount, value)}
+              amountInputProps={{
+                onBlur: () => setAmount(groupAmountInput(amount)),
+                className: "tabular-nums",
+              }}
+              categories={categories}
+              category={category}
+              onCategoryChange={(value) =>
+                editDraft("category", setCategory, value)
+              }
+              tagPicker={{
+                tags: tags ?? [],
+                selectedTagIds,
+                onChange: (ids) => editDraft("tags", setSelectedTagIds, ids),
+                draftTagNames,
+                onDraftTagNamesChange: (names) =>
+                  editDraft("tags", setDraftTagNames, names),
+                onCreatePendingChange: setTagCreatePending,
+                disabled: isEnriching || review.pending,
+              }}
+              accounts={accounts}
+              accountId={accountId}
+              onAccountChange={(value) =>
+                editDraft("account", setAccountId, value)
+              }
+              missingAccountLabel={
+                tx.account_id === accountId ? tx.account_name : null
+              }
+              paymentMethod={tx.payment_method_raw}
+              date={date}
+              onDateChange={(value) => editDraft("date", setDate, value)}
+              dateLabel="Occurred date and time"
+              time={{
+                value: time,
+                onChange: (value) => editDraft("date", setTime, value),
+              }}
+            />
 
             {tx.isForeignCurrency && (
               <div className="flex items-center gap-2">
@@ -953,17 +827,12 @@ function InspectorForm({
           </form>
         </TabsContent>
         <TabsContent value="note" className="space-y-6">
-          <Field>
-            <FieldLabel htmlFor={noteId}>Note</FieldLabel>
-            <Textarea
-              id={noteId}
-              rows={8}
-              className="min-h-40"
-              disabled={isEnriching || review.pending}
-              value={note}
-              onChange={(e) => editDraft("note", setNote, e.target.value)}
-            />
-          </Field>
+          <TransactionNoteField
+            multiline
+            disabled={isEnriching || review.pending}
+            value={note}
+            onChange={(value) => editDraft("note", setNote, value)}
+          />
           {reviewActions(detailFormId)}
         </TabsContent>
         <TabsContent value="sources" className="space-y-3">

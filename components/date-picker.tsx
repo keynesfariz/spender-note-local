@@ -2,10 +2,12 @@
 
 import { IconTooltip } from "@/components/icon-tooltip"
 import { CalendarIcon, XIcon } from "lucide-react"
-import { lazy, Suspense, useState } from "react"
+import { lazy, Suspense, useId, useState } from "react"
 import type { DateRange } from "react-day-picker"
 
 import { Button } from "@/components/ui/button"
+import { Field, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import {
   Popover,
   PopoverContent,
@@ -50,6 +52,7 @@ export function DatePicker({
   id,
   ariaLabel,
   className,
+  time,
 }: {
   value: string
   onChange: (next: string) => void
@@ -59,10 +62,17 @@ export function DatePicker({
   id?: string
   ariaLabel?: string
   className?: string
+  time?: { value: string; onChange: (next: string) => void }
 }) {
   const [open, setOpen] = useState(false)
   const [keyboardOpen, setKeyboardOpen] = useState(false)
+  const timeId = useId()
   const selected = value ? isoDateStringToDate(value) : undefined
+  const displayValue = value
+    ? [formatDateString(value), time?.value].filter(Boolean).join(" · ")
+    : placeholder
+
+  if (disabled && open) setOpen(false)
 
   return (
     <div className={cn("flex items-center gap-1", className)}>
@@ -82,7 +92,9 @@ export function DatePicker({
               type="button"
               variant="outline"
               disabled={disabled}
-              aria-label={ariaLabel}
+              aria-label={
+                time && ariaLabel ? `${ariaLabel}, ${displayValue}` : ariaLabel
+              }
               className={cn(
                 "min-w-0 flex-1 justify-start text-left font-normal",
                 !value && "text-muted-foreground"
@@ -91,11 +103,16 @@ export function DatePicker({
           }
         >
           <CalendarIcon className="mr-2 size-4 shrink-0" />
-          <span className="truncate">
-            {value ? formatDateString(value) : placeholder}
-          </span>
+          <span className="truncate">{displayValue}</span>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start">
+        <PopoverContent
+          className={cn(
+            "w-auto p-0",
+            time && "max-h-(--available-height) gap-0 overflow-y-auto"
+          )}
+          align="start"
+          aria-label={time ? ariaLabel : undefined}
+        >
           <Suspense fallback={calendarLoading}>
             <Calendar
               autoFocus={keyboardOpen}
@@ -111,10 +128,22 @@ export function DatePicker({
                   return
                 }
                 onChange(dateToIsoDateString(day))
-                setOpen(false)
+                if (!time) setOpen(false)
               }}
             />
           </Suspense>
+          {time && (
+            <Field className="border-t p-3">
+              <FieldLabel htmlFor={timeId}>Time</FieldLabel>
+              <Input
+                id={timeId}
+                type="time"
+                required
+                value={time.value}
+                onChange={(event) => time.onChange(event.target.value)}
+              />
+            </Field>
+          )}
         </PopoverContent>
       </Popover>
 

@@ -293,6 +293,7 @@ function InspectorForm({
     (tx.tags ?? []).map((tag) => tag.id)
   )
   const [draftTagNames, setDraftTagNames] = useState<string[]>([])
+  const [tagCreatePending, setTagCreatePending] = useState(false)
   const [hasUnsavedMagicEdits, setHasUnsavedMagicEdits] = useState(false)
   const [accountId, setAccountId] = useState(
     tx.account_id ?? UNASSIGNED_ACCOUNT
@@ -474,7 +475,7 @@ function InspectorForm({
 
   function handleSave(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (isEnriching) return
+    if (isEnriching || updateMutation.isPending || tagCreatePending) return
     setFormError(null)
     setStatusMessage(null)
     try {
@@ -720,6 +721,7 @@ function InspectorForm({
                   onDraftTagNamesChange={(names) =>
                     editDraft("tags", setDraftTagNames, names)
                   }
+                  onCreatePendingChange={setTagCreatePending}
                   disabled={isEnriching || updateMutation.isPending}
                 />
               </Field>
@@ -840,7 +842,9 @@ function InspectorForm({
                 ) : null}
                 <Button
                   type="submit"
-                  disabled={updateMutation.isPending || isEnriching}
+                  disabled={
+                    updateMutation.isPending || isEnriching || tagCreatePending
+                  }
                 >
                   {updateMutation.isPending ? "Saving..." : "Save changes"}
                 </Button>
@@ -864,7 +868,9 @@ function InspectorForm({
             type="submit"
             form={detailFormId}
             formNoValidate
-            disabled={updateMutation.isPending || isEnriching}
+            disabled={
+              updateMutation.isPending || isEnriching || tagCreatePending
+            }
           >
             {updateMutation.isPending ? "Saving..." : "Save changes"}
           </Button>

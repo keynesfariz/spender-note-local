@@ -96,6 +96,7 @@ export function ManualMergeDialog({
   const [category, setCategory] = useState<string>(DEFAULT_CATEGORY)
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [draftTagNames, setDraftTagNames] = useState<string[]>([])
+  const [tagCreatePending, setTagCreatePending] = useState(false)
   const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT)
   const [date, setDate] = useState("")
   const [time, setTime] = useState("00:00")
@@ -169,6 +170,7 @@ export function ManualMergeDialog({
 
   if (previousSelectionKey !== selectionKey) {
     setPreviousSelectionKey(selectionKey)
+    setTagCreatePending(false)
     setFormError(null)
     setStatusMessage(null)
     setKeepId("")
@@ -296,7 +298,7 @@ export function ManualMergeDialog({
 
   const handleSubmit = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (isEnriching) return
+    if (isEnriching || isPending || tagCreatePending) return
     setFormError(null)
     setStatusMessage(null)
 
@@ -355,6 +357,7 @@ export function ManualMergeDialog({
         Boolean(time.trim()) &&
         transactions.length >= 2 &&
         !isPending &&
+        !tagCreatePending &&
         !isEnriching
 
   return (
@@ -528,11 +531,13 @@ export function ManualMergeDialog({
                 <Field className="sm:col-span-2">
                   <FieldLabel>Tags</FieldLabel>
                   <TagMultiSelect
+                    key={selectionKey}
                     tags={tagListQuery.data ?? []}
                     selectedTagIds={selectedTagIds}
                     onChange={setSelectedTagIds}
                     draftTagNames={draftTagNames}
                     onDraftTagNamesChange={setDraftTagNames}
+                    onCreatePendingChange={setTagCreatePending}
                     disabled={isEnriching || isPending}
                   />
                 </Field>

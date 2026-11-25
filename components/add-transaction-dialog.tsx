@@ -59,6 +59,7 @@ export function AddTransactionDialog({
   const [merchant, setMerchant] = useState("")
   const [category, setCategory] = useState<string>(DEFAULT_CATEGORY)
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+  const [tagCreatePending, setTagCreatePending] = useState(false)
   const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT)
   const [date, setDate] = useState("")
   const [note, setNote] = useState("")
@@ -85,6 +86,7 @@ export function AddTransactionDialog({
   const [previous, setPrevious] = useState({ open: false, timezone })
   if (previous.open !== open || previous.timezone !== timezone) {
     setPrevious({ open, timezone })
+    setTagCreatePending(false)
     if (open) {
       setAmount("")
       setMerchant("")
@@ -112,6 +114,7 @@ export function AddTransactionDialog({
 
   function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!open || addMutation.isPending || tagCreatePending) return
     setFormError(null)
     try {
       const amountMinor = parseDecimalToMinorClient(amount, currency)
@@ -138,7 +141,7 @@ export function AddTransactionDialog({
       description={`Record a cash or manual expense in ${currency}.`}
       formId={formId}
       submitLabel={addMutation.isPending ? "Adding..." : "Add transaction"}
-      submitDisabled={addMutation.isPending}
+      submitDisabled={addMutation.isPending || tagCreatePending}
     >
       <form id={formId} onSubmit={handleSubmit} className="space-y-4">
         {formError && (
@@ -207,11 +210,16 @@ export function AddTransactionDialog({
 
           <Field className="sm:col-span-2">
             <FieldLabel>Tags</FieldLabel>
-            <TagMultiSelect
-              tags={tagListQuery.data ?? []}
-              selectedTagIds={selectedTagIds}
-              onChange={setSelectedTagIds}
-            />
+            {open && (
+              <TagMultiSelect
+                key={String(timezone)}
+                tags={tagListQuery.data ?? []}
+                selectedTagIds={selectedTagIds}
+                onChange={setSelectedTagIds}
+                onCreatePendingChange={setTagCreatePending}
+                disabled={addMutation.isPending}
+              />
+            )}
           </Field>
 
           <Field>

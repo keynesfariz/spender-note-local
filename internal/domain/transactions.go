@@ -229,6 +229,7 @@ type ListTransactionsParams struct {
 	AccountID      string
 	Search         string
 	UnreviewedOnly bool
+	ShowSkipped    *bool
 	Page           int
 	PageSize       int
 }
@@ -240,6 +241,10 @@ type PaginatedTransactionsResponse struct {
 	PageSize               int                   `json:"pageSize"`
 	TotalInRangeCount      int64                 `json:"totalInRangeCount"`
 	UnreviewedInRangeCount int64                 `json:"unreviewedInRangeCount"`
+	GhostRows              []GhostRowItem        `json:"ghostRows"`
+	GhostInRangeCount      int64                 `json:"ghostInRangeCount"`
+	TotalGhostCount        int64                 `json:"totalGhostCount"`
+	GhostRowsTruncated     bool                  `json:"ghostRowsTruncated"`
 }
 
 func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTransactionsResponse, error) {
@@ -261,22 +266,29 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 	}
 	if tzPtr == nil || *tzPtr == "" || curPtr == nil || *curPtr == "" {
 		return &PaginatedTransactionsResponse{
-			Items:    []TransactionListItem{},
-			Page:     page,
-			PageSize: pageSize,
+			Items:     []TransactionListItem{},
+			GhostRows: []GhostRowItem{},
+			Page:      page,
+			PageSize:  pageSize,
 		}, nil
 	}
 	tz := *tzPtr
 	currency := *curPtr
 
+	if err := BackfillSkippedEmailTriageData(gdb); err != nil {
+		return nil, err
+	}
+
 	var rangeConds []string
 	var rangeArgs []any
+	var rangeStartUtc, rangeEndUtc string
 
 	if strings.TrimSpace(params.StartDate) != "" || strings.TrimSpace(params.EndDate) != "" {
 		startUtc, endUtc, err := GetDateRangeUtcBounds(params.StartDate, params.EndDate, tz)
 		if err != nil {
 			return nil, err
 		}
+		rangeStartUtc, rangeEndUtc = startUtc, endUtc
 		rangeConds = append(rangeConds, "t.occurred_at_utc >= ? AND t.occurred_at_utc < ?")
 		rangeArgs = append(rangeArgs, startUtc, endUtc)
 	} else if strings.TrimSpace(params.Month) != "" {
@@ -284,6 +296,7 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 		if err != nil {
 			return nil, err
 		}
+		rangeStartUtc, rangeEndUtc = startUtc, endUtc
 		rangeConds = append(rangeConds, "t.occurred_at_utc >= ? AND t.occurred_at_utc < ?")
 		rangeArgs = append(rangeArgs, startUtc, endUtc)
 	}
@@ -483,6 +496,31 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 			IsForeignCurrency: r.Currency != currency,
 		})
 	}
+	prevPageOldestUtc := ""
+	if page > 1 && totalCount > 0 && len(rows) > 0 {
+		prevArgs := append(append([]any{}, args...), offset-1)
+		_ = gdb.Raw(`
+			SELECT t.occurred_at_utc
+			FROM transactions t
+			`+whereClause+`
+			ORDER BY t.occurred_at_utc DESC, t.created_at_utc DESC, t.id DESC
+			LIMIT 1 OFFSET ?`,
+			prevArgs...,
+		).Scan(&prevPageOldestUtc).Error
+	}
+	currPageOldestUtc := ""
+	if len(rows) > 0 {
+		currPageOldestUtc = rows[len(rows)-1].OccurredAtUtc
+	}
+
+	ghostRes, err := queryGhostRowsForTransactions(
+		gdb, params, currency, rangeStartUtc, rangeEndUtc,
+		totalCount, offset, len(rows), prevPageOldestUtc, currPageOldestUtc,
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	return &PaginatedTransactionsResponse{
 		Items:                  out,
 		TotalCount:             totalCount,
@@ -490,6 +528,10 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 		PageSize:               pageSize,
 		TotalInRangeCount:      rangeStats.TotalInRange,
 		UnreviewedInRangeCount: rangeStats.UnreviewedInRange,
+		GhostRows:              ghostRes.Items,
+		GhostInRangeCount:      ghostRes.GhostInRangeCount,
+		TotalGhostCount:        ghostRes.TotalGhostCount,
+		GhostRowsTruncated:     ghostRes.GhostRowsTruncated,
 	}, nil
 }
 

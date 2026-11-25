@@ -115,8 +115,75 @@ var typeSpecs = []structSpec{
 		},
 	},
 	{
+		tsName: "GhostRowItem",
+		goType: reflect.TypeOf(domain.GhostRowItem{}),
+	},
+	{
 		tsName: "PaginatedTransactionsResponse",
 		goType: reflect.TypeOf(domain.PaginatedTransactionsResponse{}),
+	},
+	{
+		tsName: "ApplyTriageVerdictInput",
+		goType: reflect.TypeOf(domain.ApplyTriageVerdictInput{}),
+		overrides: map[string]string{
+			"action": `"promote" | "ignore"`,
+		},
+	},
+	{
+		tsName: "TriagePriorPolicyState",
+		goType: reflect.TypeOf(domain.TriagePriorPolicyState{}),
+		overrides: map[string]string{
+			"action": `"admit" | "ignore" | ""`,
+		},
+	},
+	{
+		tsName: "TriageUndoPayload",
+		goType: reflect.TypeOf(domain.TriageUndoPayload{}),
+		overrides: map[string]string{
+			"action": `"promote" | "ignore"`,
+		},
+	},
+	{
+		tsName: "TriageUndoInput",
+		goType: reflect.TypeOf(domain.TriageUndoInput{}),
+	},
+	{
+		tsName: "TriageUndoResult",
+		goType: reflect.TypeOf(domain.TriageUndoResult{}),
+	},
+	{
+		tsName: "SenderTriagePolicyView",
+		goType: reflect.TypeOf(domain.SenderTriagePolicyView{}),
+		overrides: map[string]string{
+			"action": `"admit" | "ignore"`,
+		},
+	},
+	{
+		tsName: "TriageVerdictResult",
+		goType: reflect.TypeOf(domain.TriageVerdictResult{}),
+	},
+	{
+		tsName: "UpdateTriagePolicyInput",
+		goType: reflect.TypeOf(domain.UpdateTriagePolicyInput{}),
+		overrides: map[string]string{
+			"action": `"admit" | "ignore"`,
+		},
+	},
+	{
+		tsName: "DeleteTriagePolicyResult",
+		goType: reflect.TypeOf(domain.DeleteTriagePolicyResult{}),
+	},
+	{
+		tsName: "IgnoredEmailItem",
+		goType: reflect.TypeOf(domain.IgnoredEmailItem{}),
+	},
+	{
+		tsName: "PaginatedIgnoredEmailsResponse",
+		goType: reflect.TypeOf(domain.PaginatedIgnoredEmailsResponse{}),
+	},
+	{
+		tsName: "PromoteIgnoredEmailResult",
+		goType: reflect.TypeOf(domain.PromoteIgnoredEmailResult{}),
 	},
 	{
 		tsName: "TransactionSourceView",

@@ -176,6 +176,25 @@ export interface TransactionListItem {
   isForeignCurrency: boolean
 }
 
+export interface GhostRowItem {
+  email_id: string
+  from_address: string
+  sender_email: string
+  subject: string
+  amount_minor: number
+  currency: string
+  occurred_at_utc: string
+  merchant_raw: string | null
+  category: string | null
+  account_id: string | null
+  account_name: string | null
+  payment_method_raw: string | null
+  triage_signature_key: string
+  triage_subject_pattern: string
+  triage_body_cue: string
+  isForeignCurrency: boolean
+}
+
 export interface PaginatedTransactionsResponse {
   items: TransactionListItem[]
   totalCount: number
@@ -183,6 +202,108 @@ export interface PaginatedTransactionsResponse {
   pageSize: number
   totalInRangeCount: number
   unreviewedInRangeCount: number
+  ghostRows: GhostRowItem[]
+  ghostInRangeCount: number
+  totalGhostCount: number
+  ghostRowsTruncated: boolean
+}
+
+export interface ApplyTriageVerdictInput {
+  emailId: string
+  action: "promote" | "ignore"
+  startDate?: string
+  endDate?: string
+}
+
+export interface TriagePriorPolicyState {
+  existed: boolean
+  action: "admit" | "ignore" | ""
+}
+
+export interface TriageUndoPayload {
+  action: "promote" | "ignore"
+  sender_email: string
+  signature_key: string
+  subject_pattern: string
+  body_cue: string
+  prior_policy: TriagePriorPolicyState
+  affected_email_ids: string[]
+  created_transaction_ids: string[]
+  created_provisional_account_ids: string[]
+}
+
+export interface TriageUndoInput {
+  undoPayload: TriageUndoPayload
+}
+
+export interface TriageUndoResult {
+  ok: boolean
+  restoredCount: number
+}
+
+export interface SenderTriagePolicyView {
+  id: string
+  sender_email: string
+  signature_key: string
+  subject_pattern: string
+  body_cue: string
+  action: "admit" | "ignore"
+  ignored_count: number
+  ghost_count: number
+  restoredGhostCount?: number
+  created_at_utc: string
+  updated_at_utc: string
+}
+
+export interface TriageVerdictResult {
+  policy: SenderTriagePolicyView
+  affectedEmailIds: string[]
+  createdTransactionIds: string[]
+  affectedCount: number
+  outOfRangeCount: number
+  undoPayload: TriageUndoPayload
+}
+
+export interface UpdateTriagePolicyInput {
+  action: "admit" | "ignore"
+}
+
+export interface DeleteTriagePolicyResult {
+  ok: boolean
+  restoredGhostCount: number
+}
+
+export interface IgnoredEmailItem {
+  email_id: string
+  from_address: string
+  sender_email: string
+  subject: string
+  cleaned_text: string
+  received_at_utc: string
+  amount_minor: number | null
+  currency: string | null
+  occurred_at_utc: string | null
+  merchant_raw: string | null
+  category: string | null
+  extraction_model: string
+  triage_signature_key: string
+  triage_subject_pattern: string
+  triage_body_cue: string
+  preLlmSkipped: boolean
+}
+
+export interface PaginatedIgnoredEmailsResponse {
+  items: IgnoredEmailItem[]
+  totalCount: number
+  page: number
+  pageSize: number
+  availableSenders: string[]
+}
+
+export interface PromoteIgnoredEmailResult {
+  transaction: TransactionListItem
+  emailId: string
+  usedLlm: boolean
 }
 
 export interface TransactionSourceView {

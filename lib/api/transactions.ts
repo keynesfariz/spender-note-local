@@ -26,6 +26,7 @@ export const transactionsQuery = (params?: {
   accountId?: string
   search?: string
   unreviewedOnly?: boolean
+  showSkipped?: boolean
   page?: number
   pageSize?: number
 }) =>
@@ -41,6 +42,7 @@ export const transactionsQuery = (params?: {
       if (params?.accountId) sp.set("accountId", params.accountId)
       if (params?.search) sp.set("search", params.search)
       if (params?.unreviewedOnly) sp.set("unreviewedOnly", "true")
+      if (params?.showSkipped === false) sp.set("showSkipped", "false")
       if (params?.page) sp.set("page", String(params.page))
       if (params?.pageSize) sp.set("pageSize", String(params.pageSize))
       const qs = sp.toString()

@@ -25,16 +25,21 @@ import {
 } from "@/components/manual-merge-dialog"
 import { TransactionInspectorDrawer } from "@/components/transaction-inspector-drawer"
 import { TransactionList } from "@/components/transaction-list"
+import { TriageUndoToast } from "@/components/triage-undo-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   accountsQuery,
+  applyTriageVerdictApi,
   deleteTransactionsApi,
   invalidateTransactionRelatedQueries,
+  invalidateTriageRelatedQueries,
   markTransactionsReviewedApi,
   settingsQuery,
   transactionsQuery,
+  undoTriageVerdictApi,
+  type TriageVerdictResult,
 } from "@/lib/api"
 import { getTodayDateString, shiftDateRange } from "@/lib/format"
 
@@ -60,6 +65,7 @@ export function TransactionsView() {
     tag: parseAsString.withDefault(""),
     accountId: parseAsString.withDefault("all"),
     unreviewed: parseAsBoolean.withDefault(false),
+    skipped: parseAsBoolean.withDefault(true),
     page: parseAsInteger.withDefault(1),
   })
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -70,6 +76,17 @@ export function TransactionsView() {
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [reviewError, setReviewError] = useState<string | null>(null)
+  const [triageError, setTriageError] = useState<string | null>(null)
+  const [undoError, setUndoError] = useState<string | null>(null)
+  const [pendingVerdict, setPendingVerdict] = useState<{
+    emailId: string
+    action: "promote" | "ignore"
+  } | null>(null)
+  const [activeUndo, setActiveUndo] = useState<{
+    key: string
+    verdict: TriageVerdictResult
+    action: "promote" | "ignore"
+  } | null>(null)
 
   const todayStr = useMemo(() => getTodayDateString(timezone), [timezone])
   const isAllDates = filters.range === "all"
@@ -88,6 +105,7 @@ export function TransactionsView() {
       accountId: filters.accountId === "all" ? undefined : filters.accountId,
       search: filters.search.trim() || undefined,
       unreviewedOnly: filters.unreviewed || undefined,
+      showSkipped: filters.skipped,
       page: activePage,
       pageSize: DEFAULT_PAGE_SIZE,
     }),
@@ -95,6 +113,13 @@ export function TransactionsView() {
   })
 
   const items = useMemo(() => txQuery.data?.items ?? [], [txQuery.data?.items])
+  const ghostRows = useMemo(
+    () => txQuery.data?.ghostRows ?? [],
+    [txQuery.data?.ghostRows]
+  )
+  const ghostInRangeCount = txQuery.data?.ghostInRangeCount ?? 0
+  const totalGhostCount = txQuery.data?.totalGhostCount ?? 0
+  const ghostRowsTruncated = txQuery.data?.ghostRowsTruncated ?? false
   const totalCount = txQuery.data?.totalCount ?? 0
   const totalInRangeCount = txQuery.data?.totalInRangeCount ?? 0
   const unreviewedInRangeCount = txQuery.data?.unreviewedInRangeCount ?? 0
@@ -102,6 +127,11 @@ export function TransactionsView() {
 
   const clearSelection = () => {
     setSelectedIds((prev) => (prev.length === 0 ? prev : []))
+  }
+
+  const clearActiveUndo = () => {
+    setActiveUndo(null)
+    setUndoError(null)
   }
 
   const pageOutOfRange = txQuery.isSuccess && activePage > totalPages
@@ -129,6 +159,7 @@ export function TransactionsView() {
     onMutate: () => setReviewError(null),
     onSuccess: () => {
       clearSelection()
+      clearActiveUndo()
       void queryClient.invalidateQueries({ queryKey: ["transactions"] })
       void queryClient.invalidateQueries({ queryKey: ["spending"] })
     },
@@ -145,10 +176,57 @@ export function TransactionsView() {
     mutationFn: deleteTransactionsApi,
     onSuccess: () => {
       clearSelection()
+      clearActiveUndo()
       invalidateTransactionRelatedQueries(queryClient)
     },
     onSettled: () => {
       setDeleteDialogOpen(false)
+    },
+  })
+
+  const triageVerdictMutation = useMutation({
+    mutationFn: (vars: { emailId: string; action: "promote" | "ignore" }) =>
+      applyTriageVerdictApi({
+        emailId: vars.emailId,
+        action: vars.action,
+        startDate: isAllDates ? undefined : activeRange.from,
+        endDate: isAllDates ? undefined : activeRange.to,
+      }),
+    onMutate: (vars) => {
+      setPendingVerdict(vars)
+      setTriageError(null)
+      setUndoError(null)
+    },
+    onSuccess: (verdict, vars) => {
+      setActiveUndo({
+        key: `${vars.action}:${verdict.policy.signature_key}:${verdict.affectedEmailIds.join(",")}:${Date.now()}`,
+        verdict,
+        action: vars.action,
+      })
+      invalidateTriageRelatedQueries(queryClient)
+    },
+    onError: (err) => {
+      setTriageError(
+        err instanceof Error ? err.message : "Failed to update skipped email."
+      )
+    },
+    onSettled: () => {
+      setPendingVerdict(null)
+    },
+  })
+
+  const undoVerdictMutation = useMutation({
+    mutationFn: undoTriageVerdictApi,
+    onMutate: () => setUndoError(null),
+    onSuccess: () => {
+      clearActiveUndo()
+      invalidateTriageRelatedQueries(queryClient)
+    },
+    onError: (err) => {
+      setUndoError(
+        err instanceof Error ? err.message : "Failed to undo triage action."
+      )
+      invalidateTriageRelatedQueries(queryClient)
     },
   })
 
@@ -202,6 +280,12 @@ export function TransactionsView() {
     deleteTransactionsMutation.reset()
   }
 
+  const handleShowSkippedChange = (value: boolean) => {
+    void setFilters({ skipped: value, page: 1 })
+    clearSelection()
+    deleteTransactionsMutation.reset()
+  }
+
   const handleResetFilters = () => {
     void setFilters({
       search: null,
@@ -209,6 +293,7 @@ export function TransactionsView() {
       tag: null,
       accountId: null,
       unreviewed: null,
+      skipped: null,
       page: 1,
     })
     clearSelection()
@@ -337,10 +422,10 @@ export function TransactionsView() {
         </Alert>
       ) : (
         <>
-          <div className="flex h-12 items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2">
+          <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2">
             <p
               role="status"
-              className="flex items-center gap-2 text-sm font-medium"
+              className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium"
             >
               {allInRangeReviewed ? (
                 <>
@@ -363,21 +448,69 @@ export function TransactionsView() {
                   </span>
                 </>
               )}
+              {!txQuery.isLoading &&
+                !txQuery.isError &&
+                ghostInRangeCount > 0 && (
+                  <span className="font-normal text-muted-foreground">
+                    · {ghostInRangeCount} skipped
+                  </span>
+                )}
             </p>
-            {allOnPageReviewedButMoreUnreviewed && activePage < totalPages && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => handlePageChange(activePage + 1)}
-              >
-                Next page
-              </Button>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {allOnPageReviewedButMoreUnreviewed && activePage < totalPages && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(activePage + 1)}
+                >
+                  Next page
+                </Button>
+              )}
+              {!txQuery.isLoading &&
+                !txQuery.isError &&
+                !isAllDates &&
+                filters.skipped &&
+                ghostInRangeCount === 0 &&
+                totalGhostCount > 0 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      void setFilters({
+                        range: "all",
+                        from: null,
+                        to: null,
+                        page: 1,
+                      })
+                      clearSelection()
+                      deleteTransactionsMutation.reset()
+                    }}
+                  >
+                    View all dates
+                  </Button>
+                )}
+              {!txQuery.isLoading &&
+                !txQuery.isError &&
+                !filters.skipped &&
+                totalGhostCount > 0 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleShowSkippedChange(true)}
+                  >
+                    Show skipped
+                  </Button>
+                )}
+            </div>
           </div>
 
           <TransactionList
             transactions={items}
+            ghostRows={ghostRows}
+            ghostRowsTruncated={ghostRowsTruncated}
             accounts={accountsListQuery.data ?? []}
             timezone={timezone}
             isLoading={txQuery.isLoading}
@@ -398,6 +531,8 @@ export function TransactionsView() {
             onAccountIdChange={handleAccountIdChange}
             unreviewedOnly={filters.unreviewed}
             onUnreviewedOnlyChange={handleUnreviewedOnlyChange}
+            showSkipped={filters.skipped}
+            onShowSkippedChange={handleShowSkippedChange}
             onResetFilters={handleResetFilters}
             selectedIds={selectedIds}
             onToggleRow={handleToggleRow}
@@ -422,6 +557,11 @@ export function TransactionsView() {
                   : "Failed to delete transactions."
                 : null
             }
+            onTriageVerdict={(emailId, action) =>
+              triageVerdictMutation.mutate({ emailId, action })
+            }
+            pendingTriageVerdict={pendingVerdict}
+            triageErrorMessage={triageError}
             page={activePage}
             pageSize={DEFAULT_PAGE_SIZE}
             totalCount={totalCount}
@@ -436,7 +576,10 @@ export function TransactionsView() {
         accounts={accountsListQuery.data ?? []}
         timezone={timezone}
         onClose={() => setMergeMode(null)}
-        onSuccess={() => setSelectedIds([])}
+        onSuccess={() => {
+          setSelectedIds([])
+          clearActiveUndo()
+        }}
       />
 
       <TransactionInspectorDrawer
@@ -445,6 +588,7 @@ export function TransactionsView() {
         localCurrency={currency}
         timezone={timezone}
         onClose={() => setSelectedTransactionId(null)}
+        onTransactionMutated={clearActiveUndo}
       />
 
       <AddTransactionDialog
@@ -454,6 +598,22 @@ export function TransactionsView() {
         currency={currency}
         timezone={timezone}
       />
+
+      {activeUndo && (
+        <TriageUndoToast
+          key={activeUndo.key}
+          verdict={activeUndo.verdict}
+          action={activeUndo.action}
+          isUndoing={undoVerdictMutation.isPending}
+          undoError={undoError}
+          onUndo={() =>
+            undoVerdictMutation.mutate({
+              undoPayload: activeUndo.verdict.undoPayload,
+            })
+          }
+          onDismiss={clearActiveUndo}
+        />
+      )}
     </div>
   )
 }

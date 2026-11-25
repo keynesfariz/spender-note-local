@@ -65,6 +65,7 @@ export function SyncToast() {
   const prevRunningRef = useRef(false)
   const prevRunIdRef = useRef<string | null>(null)
   const initializedRef = useRef(false)
+  const toastRef = useRef<HTMLDivElement | null>(null)
 
   const statusQuery = useQuery({
     ...syncStatusQuery(),
@@ -75,6 +76,10 @@ export function SyncToast() {
 
   const isRunning = statusQuery.data?.isRunning ?? false
   const latestRunId = statusQuery.data?.latestRun?.id ?? null
+  const run = statusQuery.data?.latestRun
+  const isToastVisible = Boolean(
+    run && (isRunning || dismissedRunId !== run.id)
+  )
 
   useEffect(() => {
     const transitionedToDone = prevRunningRef.current && !isRunning
@@ -87,6 +92,7 @@ export function SyncToast() {
     if (transitionedToDone || fastCompletedNewRun) {
       void queryClient.invalidateQueries({ queryKey: ["spending"] })
       void queryClient.invalidateQueries({ queryKey: ["transactions"] })
+      void queryClient.invalidateQueries({ queryKey: ["triage"] })
       void queryClient.invalidateQueries({ queryKey: ["accounts"] })
       void queryClient.invalidateQueries({ queryKey: ["senders"] })
       void queryClient.invalidateQueries({ queryKey: ["gmail-status"] })
@@ -95,6 +101,33 @@ export function SyncToast() {
     prevRunningRef.current = isRunning
     prevRunIdRef.current = latestRunId
   }, [isRunning, latestRunId, queryClient])
+
+  useEffect(() => {
+    const rootStyle = document.documentElement.style
+    if (!isToastVisible || !toastRef.current) {
+      rootStyle.removeProperty("--sync-toast-offset")
+      return
+    }
+    const el = toastRef.current
+    const updateOffset = () => {
+      const height = Math.ceil(el.getBoundingClientRect().height)
+      if (height > 0) {
+        rootStyle.setProperty("--sync-toast-offset", `${height + 12}px`)
+      }
+    }
+    updateOffset()
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        rootStyle.removeProperty("--sync-toast-offset")
+      }
+    }
+    const observer = new ResizeObserver(updateOffset)
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+      rootStyle.removeProperty("--sync-toast-offset")
+    }
+  }, [isToastVisible])
 
   const cancelMutation = useMutation({
     mutationFn: () => cancelSyncApi(),
@@ -123,13 +156,15 @@ export function SyncToast() {
     },
   })
 
-  const run = statusQuery.data?.latestRun
-  if (!run || (!isRunning && dismissedRunId === run.id)) {
+  if (!run || !isToastVisible) {
     return null
   }
 
   return (
-    <div className="fixed right-5 bottom-5 z-50 w-96 max-w-[calc(100vw-2.5rem)]">
+    <div
+      ref={toastRef}
+      className="fixed right-5 bottom-5 z-50 w-96 max-w-[calc(100vw-2.5rem)]"
+    >
       <Card>
         <CardHeader>
           <CardTitle>{formatRunStatus(run.status)}</CardTitle>

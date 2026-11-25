@@ -111,12 +111,14 @@ function InspectorBody({
   localCurrency,
   timezone,
   onClose,
+  onTransactionMutated,
 }: {
   transactionId: string
   accounts: AccountSummary[]
   localCurrency: string
   timezone: string | null | undefined
   onClose: () => void
+  onTransactionMutated?: () => void
 }) {
   const queryClient = useQueryClient()
   const detailQuery = useQuery(transactionDetailQuery(transactionId))
@@ -213,6 +215,7 @@ function InspectorBody({
 
   const invalidateAll = () => {
     invalidateTransactionRelatedQueries(queryClient)
+    onTransactionMutated?.()
   }
 
   const updateMutation = useMutation({
@@ -824,12 +827,14 @@ export function TransactionInspectorDrawer({
   localCurrency,
   timezone,
   onClose,
+  onTransactionMutated,
 }: {
   transactionId: string | null
   accounts: AccountSummary[]
   localCurrency: string
   timezone: string | null | undefined
   onClose: () => void
+  onTransactionMutated?: () => void
 }) {
   return (
     <Drawer
@@ -855,6 +860,7 @@ export function TransactionInspectorDrawer({
               localCurrency={localCurrency}
               timezone={timezone}
               onClose={onClose}
+              onTransactionMutated={onTransactionMutated}
             />
           )}
         </DrawerBody>

@@ -46,6 +46,7 @@ import {
   categoriesQuery,
   tagsQuery,
   type AccountSummary,
+  type GhostRowItem,
   type TransactionListItem,
 } from "@/lib/api"
 import {
@@ -118,8 +119,29 @@ function getMergeEligibility(selected: TransactionListItem[]): {
   }
 }
 
+type TimelineEntry =
+  | {
+      kind: "transaction"
+      tx: TransactionListItem
+      sortMs: number
+      index: number
+    }
+  | {
+      kind: "ghost"
+      ghost: GhostRowItem
+      sortMs: number
+      index: number
+    }
+
+function parseSortEpochMs(isoUtc: string): number {
+  const ms = Date.parse(isoUtc)
+  return Number.isNaN(ms) ? 0 : ms
+}
+
 export function TransactionList({
   transactions,
+  ghostRows,
+  ghostRowsTruncated,
   accounts,
   timezone,
   isLoading,
@@ -134,6 +156,8 @@ export function TransactionList({
   onAccountIdChange,
   unreviewedOnly,
   onUnreviewedOnlyChange,
+  showSkipped,
+  onShowSkippedChange,
   onResetFilters,
   selectedIds,
   onToggleRow,
@@ -149,12 +173,17 @@ export function TransactionList({
   onDeleteDialogOpenChange,
   isDeleting,
   deleteErrorMessage,
+  onTriageVerdict,
+  pendingTriageVerdict,
+  triageErrorMessage,
   page,
   pageSize,
   totalCount,
   onPageChange,
 }: {
   transactions: TransactionListItem[]
+  ghostRows: GhostRowItem[]
+  ghostRowsTruncated: boolean
   accounts: AccountSummary[]
   timezone: string | null | undefined
   isLoading: boolean
@@ -169,6 +198,8 @@ export function TransactionList({
   onAccountIdChange: (value: string) => void
   unreviewedOnly: boolean
   onUnreviewedOnlyChange: (value: boolean) => void
+  showSkipped: boolean
+  onShowSkippedChange: (value: boolean) => void
   onResetFilters: () => void
   selectedIds: string[]
   onToggleRow: (id: string, checked: boolean) => void
@@ -184,6 +215,9 @@ export function TransactionList({
   onDeleteDialogOpenChange: (open: boolean) => void
   isDeleting: boolean
   deleteErrorMessage: string | null
+  onTriageVerdict: (emailId: string, action: "promote" | "ignore") => void
+  pendingTriageVerdict: { emailId: string; action: "promote" | "ignore" } | null
+  triageErrorMessage: string | null
   page: number
   pageSize: number
   totalCount: number
@@ -191,6 +225,33 @@ export function TransactionList({
 }) {
   const catListQuery = useQuery(categoriesQuery())
   const tagListQuery = useQuery(tagsQuery())
+
+  const timelineEntries = useMemo<TimelineEntry[]>(() => {
+    const merged: TimelineEntry[] = [
+      ...transactions.map((tx, index) => ({
+        kind: "transaction" as const,
+        tx,
+        sortMs: parseSortEpochMs(tx.occurred_at_utc),
+        index,
+      })),
+      ...ghostRows.map((ghost, index) => ({
+        kind: "ghost" as const,
+        ghost,
+        sortMs: parseSortEpochMs(ghost.occurred_at_utc),
+        index,
+      })),
+    ]
+    merged.sort((a, b) => {
+      if (a.sortMs !== b.sortMs) {
+        return b.sortMs - a.sortMs
+      }
+      if (a.kind !== b.kind) {
+        return a.kind === "transaction" ? -1 : 1
+      }
+      return a.index - b.index
+    })
+    return merged
+  }, [transactions, ghostRows])
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
   const selectedTransactions = useMemo(
@@ -334,7 +395,7 @@ export function TransactionList({
             </SelectContent>
           </Select>
 
-          <div className="gap-y- flex flex-wrap items-center gap-x-4 sm:col-span-2 lg:col-span-1">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:col-span-2 lg:col-span-1">
             <div className="flex items-center gap-2">
               <Checkbox
                 id="unreviewed-filter"
@@ -344,6 +405,16 @@ export function TransactionList({
                 }
               />
               <Label htmlFor="unreviewed-filter">Needs review</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="show-skipped-filter"
+                checked={showSkipped}
+                onCheckedChange={(checked) =>
+                  onShowSkippedChange(Boolean(checked))
+                }
+              />
+              <Label htmlFor="show-skipped-filter">Show skipped</Label>
             </div>
             <Button
               type="button"
@@ -355,7 +426,8 @@ export function TransactionList({
                 !category &&
                 !tag &&
                 accountId === "all" &&
-                !unreviewedOnly
+                !unreviewedOnly &&
+                showSkipped
               }
             >
               <RotateCcwIcon aria-hidden="true" />
@@ -530,6 +602,11 @@ export function TransactionList({
             <AlertDescription>{deleteErrorMessage}</AlertDescription>
           </Alert>
         )}
+        {triageErrorMessage && (
+          <Alert variant="destructive">
+            <AlertDescription>{triageErrorMessage}</AlertDescription>
+          </Alert>
+        )}
       </CardHeader>
 
       <CardContent>
@@ -543,125 +620,239 @@ export function TransactionList({
           <Alert variant="destructive">
             <AlertDescription>{errorMessage}</AlertDescription>
           </Alert>
-        ) : transactions.length === 0 ? (
+        ) : transactions.length === 0 && ghostRows.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
             No transactions match the current filters.
           </p>
         ) : (
-          <ul className="space-y-1">
-            {transactions.map((tx, idx) => {
-              const title = tx.remark ?? tx.merchant
-              const formattedAmount = formatMinorCurrency(
-                tx.amount_minor,
-                tx.currency
-              )
-              const isSelected = selectedSet.has(tx.id)
-              return (
-                <li key={tx.id}>
-                  {idx > 0 && <Separator className="my-1" />}
-                  <div
-                    data-selected={isSelected}
-                    className="flex items-center gap-2 rounded-lg p-3 transition-colors hover:bg-muted data-[selected=true]:bg-secondary/60 data-[selected=true]:hover:bg-secondary"
-                  >
-                    <Checkbox
-                      aria-label={`Select ${title} (${formattedAmount})`}
-                      checked={isSelected}
-                      onCheckedChange={(checked) =>
-                        onToggleRow(tx.id, Boolean(checked))
-                      }
-                      className="mt-1 self-start"
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      aria-label={`Inspect ${title} (${formattedAmount})${tx.manual_override === 1 ? ", edited" : ""}`}
-                      onClick={() => onSelectTransaction(tx.id)}
-                      className="grid h-auto min-w-0 flex-1 grid-cols-1 items-start gap-x-4 gap-y-2 px-2 text-left font-normal whitespace-normal hover:bg-transparent sm:grid-cols-[minmax(0,1fr)_auto] dark:hover:bg-transparent"
-                    >
-                      <span className="min-w-0 space-y-1">
-                        <span className="flex items-center gap-2">
-                          <span className="truncate font-semibold">
-                            {title}
-                          </span>
-                          {tx.manual_override === 1 && (
-                            <IconTooltip label="Edited">
-                              <span className="text-muted-foreground">
-                                <PencilIcon
+          <>
+            <ul className="space-y-1">
+              {timelineEntries.map((entry, idx) => {
+                if (entry.kind === "ghost") {
+                  const ghost = entry.ghost
+                  const ghostTitle =
+                    ghost.merchant_raw?.trim() ||
+                    ghost.subject.trim() ||
+                    ghost.sender_email
+                  const bodyCue = ghost.triage_body_cue.trim()
+                  const subjectSubtitle = ghost.subject.trim()
+                  const framingLine =
+                    bodyCue ||
+                    (subjectSubtitle && subjectSubtitle !== ghostTitle
+                      ? subjectSubtitle
+                      : "")
+                  const formattedAmount = formatMinorCurrency(
+                    ghost.amount_minor,
+                    ghost.currency
+                  )
+                  const isTriageBusy = pendingTriageVerdict !== null
+                  const isPromoting =
+                    pendingTriageVerdict?.emailId === ghost.email_id &&
+                    pendingTriageVerdict.action === "promote"
+                  const isIgnoring =
+                    pendingTriageVerdict?.emailId === ghost.email_id &&
+                    pendingTriageVerdict.action === "ignore"
+
+                  return (
+                    <li key={`ghost-${ghost.email_id}`}>
+                      {idx > 0 && <Separator className="my-1" />}
+                      <div className="flex flex-col gap-3 rounded-lg border border-dashed border-input bg-muted/35 p-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="truncate font-semibold text-foreground">
+                              {ghostTitle}
+                            </span>
+                            <Badge variant="outline">Skipped</Badge>
+                            {ghost.category && (
+                              <Badge variant="secondary" className="gap-1">
+                                <DynamicIcon
+                                  name={categoryIconMap.get(ghost.category)}
                                   className="size-3"
-                                  aria-hidden="true"
                                 />
-                              </span>
-                            </IconTooltip>
+                                {ghost.category}
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {ghost.account_name ??
+                              (ghost.payment_method_raw
+                                ? `Unassigned (${ghost.payment_method_raw})`
+                                : "Unassigned")}{" "}
+                            ·{" "}
+                            {formatUtcInTimezone(
+                              ghost.occurred_at_utc,
+                              timezone
+                            )}{" "}
+                            · {ghost.sender_email}
+                          </p>
+                          {framingLine && (
+                            <p className="text-xs text-muted-foreground">
+                              {framingLine}
+                            </p>
                           )}
+                        </div>
+                        <div className="flex shrink-0 flex-col gap-2 sm:items-end sm:text-right">
+                          <div>
+                            <span className="block font-semibold break-all tabular-nums">
+                              {formattedAmount}
+                            </span>
+                            <span className="block text-xs text-muted-foreground">
+                              {ghost.isForeignCurrency
+                                ? `Foreign (${ghost.currency}) · Not imported`
+                                : "Not imported"}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="default"
+                              disabled={isTriageBusy}
+                              onClick={() =>
+                                onTriageVerdict(ghost.email_id, "promote")
+                              }
+                            >
+                              {isPromoting ? "Promoting..." : "Promote"}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              disabled={isTriageBusy}
+                              onClick={() =>
+                                onTriageVerdict(ghost.email_id, "ignore")
+                              }
+                            >
+                              {isIgnoring ? "Ignoring..." : "Always ignore"}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                  )
+                }
+
+                const tx = entry.tx
+                const title = tx.remark ?? tx.merchant
+                const formattedAmount = formatMinorCurrency(
+                  tx.amount_minor,
+                  tx.currency
+                )
+                const isSelected = selectedSet.has(tx.id)
+                return (
+                  <li key={tx.id}>
+                    {idx > 0 && <Separator className="my-1" />}
+                    <div
+                      data-selected={isSelected}
+                      className="flex items-center gap-2 rounded-lg p-3 transition-colors hover:bg-muted data-[selected=true]:bg-secondary/60 data-[selected=true]:hover:bg-secondary"
+                    >
+                      <Checkbox
+                        aria-label={`Select ${title} (${formattedAmount})`}
+                        checked={isSelected}
+                        onCheckedChange={(checked) =>
+                          onToggleRow(tx.id, Boolean(checked))
+                        }
+                        className="mt-1 self-start"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        aria-label={`Inspect ${title} (${formattedAmount})${tx.manual_override === 1 ? ", edited" : ""}`}
+                        onClick={() => onSelectTransaction(tx.id)}
+                        className="grid h-auto min-w-0 flex-1 grid-cols-1 items-start gap-x-4 gap-y-2 px-2 text-left font-normal whitespace-normal hover:bg-transparent sm:grid-cols-[minmax(0,1fr)_auto] dark:hover:bg-transparent"
+                      >
+                        <span className="min-w-0 space-y-1">
+                          <span className="flex items-center gap-2">
+                            <span className="truncate font-semibold">
+                              {title}
+                            </span>
+                            {tx.manual_override === 1 && (
+                              <IconTooltip label="Edited">
+                                <span className="text-muted-foreground">
+                                  <PencilIcon
+                                    className="size-3"
+                                    aria-hidden="true"
+                                  />
+                                </span>
+                              </IconTooltip>
+                            )}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">
+                            {tx.account_name ??
+                              (tx.payment_method_raw
+                                ? `Unassigned (${tx.payment_method_raw})`
+                                : "Unassigned")}{" "}
+                            ·{" "}
+                            {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
+                          </span>
                         </span>
-                        <span className="block text-xs text-muted-foreground">
-                          {tx.account_name ??
-                            (tx.payment_method_raw
-                              ? `Unassigned (${tx.payment_method_raw})`
-                              : "Unassigned")}{" "}
-                          · {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
-                        </span>
-                      </span>
-                      <span className="flex flex-wrap items-center gap-1.5 sm:col-start-1 sm:row-start-2">
-                        <Badge variant="secondary" className="gap-1">
-                          <DynamicIcon
-                            name={categoryIconMap.get(tx.category)}
-                            className="size-3"
-                          />
-                          {tx.category}
-                        </Badge>
-                        {(tx.tags ?? []).map((tag) => (
-                          <Badge
-                            key={tag.id}
-                            variant="outline"
-                            className="text-muted-foreground"
-                          >
-                            #{tag.name}
+                        <span className="flex flex-wrap items-center gap-1.5 sm:col-start-1 sm:row-start-2">
+                          <Badge variant="secondary" className="gap-1">
+                            <DynamicIcon
+                              name={categoryIconMap.get(tx.category)}
+                              className="size-3"
+                            />
+                            {tx.category}
                           </Badge>
-                        ))}
-                      </span>
-                      <span className="min-w-0 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:text-right">
-                        <span className="block font-semibold break-all tabular-nums">
-                          {formattedAmount}
+                          {(tx.tags ?? []).map((tag) => (
+                            <Badge
+                              key={tag.id}
+                              variant="outline"
+                              className="text-muted-foreground"
+                            >
+                              #{tag.name}
+                            </Badge>
+                          ))}
                         </span>
-                        <span className="block text-xs text-muted-foreground">
-                          {sourceBadgeLabel(tx)}
-                          {tx.isForeignCurrency
-                            ? ` · Foreign (${tx.currency})`
-                            : ""}
+                        <span className="min-w-0 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:text-right">
+                          <span className="block font-semibold break-all tabular-nums">
+                            {formattedAmount}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">
+                            {sourceBadgeLabel(tx)}
+                            {tx.isForeignCurrency
+                              ? ` · Foreign (${tx.currency})`
+                              : ""}
+                          </span>
                         </span>
-                      </span>
-                    </Button>
-                    {tx.reviewed === 1 ? (
-                      <IconTooltip label="Reviewed">
-                        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                          <CheckCircle2Icon
-                            className="size-4"
-                            aria-hidden="true"
-                          />
-                          <span className="sr-only">Reviewed</span>
-                        </span>
-                      </IconTooltip>
-                    ) : (
-                      <IconTooltip label="Needs review · Mark reviewed">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`Mark ${title} as reviewed`}
-                          disabled={isMarkingReviewed || isDeleting}
-                          onClick={() => onMarkReviewed([tx.id])}
-                          className="rounded-full bg-amber-100 text-amber-800 hover:bg-amber-200 hover:text-amber-950 dark:bg-amber-950 dark:text-amber-300 dark:hover:bg-amber-900"
-                        >
-                          <Clock3Icon className="size-4" aria-hidden="true" />
-                        </Button>
-                      </IconTooltip>
-                    )}
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
+                      </Button>
+                      {tx.reviewed === 1 ? (
+                        <IconTooltip label="Reviewed">
+                          <span className="grid size-9 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                            <CheckCircle2Icon
+                              className="size-4"
+                              aria-hidden="true"
+                            />
+                            <span className="sr-only">Reviewed</span>
+                          </span>
+                        </IconTooltip>
+                      ) : (
+                        <IconTooltip label="Needs review · Mark reviewed">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Mark ${title} as reviewed`}
+                            disabled={isMarkingReviewed || isDeleting}
+                            onClick={() => onMarkReviewed([tx.id])}
+                            className="rounded-full bg-amber-100 text-amber-800 hover:bg-amber-200 hover:text-amber-950 dark:bg-amber-950 dark:text-amber-300 dark:hover:bg-amber-900"
+                          >
+                            <Clock3Icon className="size-4" aria-hidden="true" />
+                          </Button>
+                        </IconTooltip>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+            {ghostRowsTruncated && (
+              <p className="mt-3 text-center text-xs text-muted-foreground">
+                Showing the first 100 skipped emails matching these filters.
+                Narrow your date range or search to inspect earlier entries.
+              </p>
+            )}
+          </>
         )}
       </CardContent>
 

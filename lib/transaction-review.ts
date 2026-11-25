@@ -7,7 +7,7 @@ type ReviewRow = Pick<
   TransactionListItem,
   "id" | "occurred_at_utc" | "created_at_utc"
 >
-export type ReviewPage = Pick<
+type ReviewPage = Pick<
   PaginatedTransactionsResponse,
   "page" | "pageSize" | "totalCount"
 > & { items: ReviewRow[] }
@@ -95,7 +95,6 @@ export async function resolveReviewNeighbor(
   const adjacent = adjacentPage ? await loadPage(adjacentPage) : null
   if (target.id) return adjacent && getReviewPosition(adjacent, target.id)
 
-  // A standalone save can leave the neighboring page unread.
   const searchPages = [page, ...(adjacent ? [adjacent] : [])].sort((a, b) =>
     direction === "next" ? a.page - b.page : b.page - a.page
   )

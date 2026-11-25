@@ -65,11 +65,13 @@ test("previous follows its captured ID when a date edit shifts it to a later pag
     ...position,
     previous: { page: 1, index: 1, id: "c" },
   }
+  const firstPageAfterEdit = page(1, ["b", "d"], 4)
+  firstPageAfterEdit.items[0].occurred_at_utc = "2026-11-25T01:00:00Z"
   const destination = await resolveReviewNeighbor(
     updatedPosition,
     "previous",
     async (number) =>
-      number === 1 ? page(1, ["b", "d"], 4) : page(2, ["c", "a"], 4)
+      number === 1 ? firstPageAfterEdit : page(2, ["c", "a"], 4)
   )
 
   assert.equal(destination?.row.id, "c")

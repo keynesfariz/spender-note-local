@@ -17,6 +17,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
   type Ref,
   type SubmitEvent,
 } from "react"
@@ -232,7 +233,6 @@ type InspectorProps = {
   accounts: AccountOption[]
   localCurrency: string
   timezone: string | null | undefined
-  onClose: () => void
   onTransactionMutated?: () => void
   review: Review
   navigationGuard: Ref<NavigationGuard>
@@ -280,7 +280,6 @@ function InspectorForm({
   accounts,
   localCurrency,
   timezone,
-  onClose,
   onTransactionMutated,
   review,
   navigationGuard,
@@ -388,7 +387,7 @@ function InspectorForm({
   function patchInspector(
     update: (transaction: TransactionListItem) => TransactionListItem
   ) {
-    queryClient.setQueryData<TransactionInspectorView>(
+    queryClient.setQueryData(
       transactionInspectorQuery(transactionId).queryKey,
       (previous) =>
         previous
@@ -422,7 +421,7 @@ function InspectorForm({
     mutationFn: deleteTransactionApi,
     onSuccess: () => {
       invalidateAll()
-      onClose()
+      review.close()
     },
     onError: (err) => {
       setFormError(
@@ -630,6 +629,8 @@ function InspectorForm({
 
   const reviewed = tx.reviewed === 1
   const reviewAction = getReviewAction(hasDraft, reviewed, review.next)
+  const saveAndAdvance = reviewAction === "save-and-next"
+  const markAndAdvance = reviewAction === "mark-and-next"
 
   function handleMarkReviewed(advance: boolean) {
     setFormError(null)
@@ -638,45 +639,48 @@ function InspectorForm({
   }
 
   function reviewActions(form?: string) {
+    const skipNativeValidation = Boolean(form)
+    let secondaryAction: ReactNode = null
+    if (saveAndAdvance) {
+      secondaryAction = (
+        <Button
+          type="submit"
+          form={form}
+          formNoValidate={skipNativeValidation}
+          value="save-and-next"
+          disabled={saveDisabled}
+        >
+          Save changes &amp; next
+        </Button>
+      )
+    } else if (reviewAction) {
+      const label = markAndAdvance ? "Mark reviewed & next" : "Mark reviewed"
+      secondaryAction = (
+        <Button
+          type="button"
+          variant={markAndAdvance ? "default" : "outline"}
+          disabled={saveDisabled}
+          onClick={() => handleMarkReviewed(markAndAdvance)}
+        >
+          {markReviewedMutation.isPending ? "Marking..." : label}
+        </Button>
+      )
+    }
+
     return (
       <div className="flex flex-wrap items-center gap-2">
         {reviewed ? <Badge variant="secondary">Reviewed</Badge> : null}
         <Button
           type="submit"
           form={form}
-          formNoValidate={Boolean(form)}
-          variant={
-            reviewAction && reviewAction !== "mark" ? "outline" : "default"
-          }
+          formNoValidate={skipNativeValidation}
+          variant={saveAndAdvance || markAndAdvance ? "outline" : "default"}
           disabled={saveDisabled}
         >
           {updateMutation.isPending ? "Saving..." : "Save changes"}
         </Button>
-        {reviewAction === "save-and-next" ? (
-          <Button
-            type="submit"
-            form={form}
-            formNoValidate={Boolean(form)}
-            value="save-and-next"
-            disabled={saveDisabled}
-          >
-            Save changes &amp; next
-          </Button>
-        ) : reviewAction ? (
-          <Button
-            type="button"
-            variant={reviewAction === "mark-and-next" ? "default" : "outline"}
-            disabled={saveDisabled}
-            onClick={() => handleMarkReviewed(reviewAction === "mark-and-next")}
-          >
-            {markReviewedMutation.isPending
-              ? "Marking..."
-              : reviewAction === "mark-and-next"
-                ? "Mark reviewed & next"
-                : "Mark reviewed"}
-          </Button>
-        ) : null}
-        {reviewAction === "mark-and-next" && review.error ? (
+        {secondaryAction}
+        {markAndAdvance && review.error ? (
           <Button
             type="button"
             variant="outline"
@@ -1115,7 +1119,6 @@ export function TransactionInspectorDrawer({
             accounts={accounts}
             localCurrency={localCurrency}
             timezone={timezone}
-            onClose={review.close}
             onTransactionMutated={onTransactionMutated}
             review={review}
             navigationGuard={navigationGuard}

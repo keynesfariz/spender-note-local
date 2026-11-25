@@ -416,6 +416,7 @@ export function TransactionsView() {
   const review = useTransactionReview({
     params: ledgerParams,
     page: displayLedger && !isSkippedTab ? txQuery.data : undefined,
+    isRelativeRange,
     scope: JSON.stringify([
       ledgerParams,
       timezone,

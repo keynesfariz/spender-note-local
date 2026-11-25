@@ -19,6 +19,13 @@ type Selection = {
   dayBoundary: string | undefined
 }
 
+type ReviewSession = {
+  selection: Selection
+  pending: boolean
+  error?: string
+  savedPosition?: ReviewPosition
+}
+
 type ReviewAction =
   | { direction: ReviewDirection; write?: never }
   | { direction?: "next"; write: () => Promise<unknown> }
@@ -27,24 +34,18 @@ export function useTransactionReview({
   params,
   page,
   scope,
+  isRelativeRange,
   onPageChange,
 }: {
   params: LedgerParams
   page: PaginatedTransactionsResponse | undefined
   scope: string
+  isRelativeRange: boolean
   onPageChange: (page: number) => void
 }) {
   const queryClient = useQueryClient()
-  const [selection, setSelection] = useState<Selection | null>(null)
-  const [pending, setPending] = useState<Selection | null>(null)
-  const [error, setError] = useState<{
-    selection: Selection
-    message: string
-  } | null>(null)
-  const [savedPosition, setSavedPosition] = useState<{
-    selection: Selection
-    position: ReviewPosition
-  } | null>(null)
+  const [session, setSession] = useState<ReviewSession | null>(null)
+  const selection = session?.selection ?? null
   const openSelection = useRef<Selection | null>(null)
   const pendingSelection = useRef<Selection | null>(null)
   const activeScope = useRef(scope)
@@ -58,9 +59,7 @@ export function useTransactionReview({
 
   const select = useCallback((next: Selection | null) => {
     openSelection.current = next
-    setSelection(next)
-    setError(null)
-    setSavedPosition(null)
+    setSession(next ? { selection: next, pending: false } : null)
   }, [])
 
   const open = useCallback(
@@ -75,8 +74,7 @@ export function useTransactionReview({
     [page, scope, select]
   )
 
-  const heldPosition =
-    savedPosition?.selection === selection ? savedPosition.position : null
+  const heldPosition = session?.savedPosition ?? null
   const livePosition =
     page && selection ? getReviewPosition(page, selection.id) : null
   const stillInPlace =
@@ -103,9 +101,13 @@ export function useTransactionReview({
     const current = selection
     const isCurrent = () =>
       openSelection.current === current && activeScope.current === scope
+    function updateSession(changes: Partial<Omit<ReviewSession, "selection">>) {
+      setSession((previous) =>
+        previous?.selection === current ? { ...previous, ...changes } : previous
+      )
+    }
     pendingSelection.current = current
-    setPending(current)
-    setError(null)
+    updateSession({ pending: true, error: undefined })
 
     const loadPage = async (number: number) => {
       const result = await queryClient.fetchQuery({
@@ -113,8 +115,7 @@ export function useTransactionReview({
         staleTime: 0,
       })
       if (
-        params.ledgerRange === "dates" &&
-        !params.startDate &&
+        isRelativeRange &&
         current.dayBoundary &&
         result.ledger?.nextDayUtc !== current.dayBoundary
       ) {
@@ -182,7 +183,7 @@ export function useTransactionReview({
         return
       }
       if (!isCurrent() || !captured) return
-      setSavedPosition({ selection: current, position: captured })
+      updateSession({ savedPosition: captured })
       if (action.direction) {
         try {
           const destination = await resolveReviewNeighbor(
@@ -202,9 +203,8 @@ export function useTransactionReview({
       }
     } catch (cause) {
       if (isCurrent())
-        setError({
-          selection: current,
-          message:
+        updateSession({
+          error:
             cause instanceof Error
               ? cause.message
               : "Could not move to another transaction.",
@@ -212,7 +212,7 @@ export function useTransactionReview({
     } finally {
       if (pendingSelection.current === current) {
         pendingSelection.current = null
-        setPending(null)
+        updateSession({ pending: false })
       }
     }
   }
@@ -221,8 +221,8 @@ export function useTransactionReview({
     transactionId: selection?.id ?? null,
     previous: Boolean(position?.previous),
     next: Boolean(position?.next),
-    pending: pending !== null && pending === selection,
-    error: error?.selection === selection ? error?.message : undefined,
+    pending: session?.pending ?? false,
+    error: session?.error,
     open,
     close: () => {
       if (openSelection.current === selection) select(null)

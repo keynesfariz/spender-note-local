@@ -19,3 +19,5 @@ Upgrade reminders emitted by this project's installed Next.js CLI during `next d
 ## Documented Solutions
 
 `docs/solutions/` — documented solutions to past problems (bugs, best practices, workflow patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas.
+
+`CONCEPTS.md` — shared transaction vocabulary for Magic enrichment, Combine, and tags.

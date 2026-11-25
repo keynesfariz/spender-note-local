@@ -20,10 +20,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { createTagApi } from "@/lib/api/tags"
+import { createTagApi, tagsQuery } from "@/lib/api/tags"
 import { type TagSummary } from "@/lib/api/types.generated"
 
 const EMPTY_DRAFT_TAG_NAMES: string[] = []
+const tagsQueryKey = tagsQuery().queryKey
 
 function normalizeTagName(name: string) {
   return name.trim().toLowerCase()
@@ -31,7 +32,7 @@ function normalizeTagName(name: string) {
 
 function dedupeDraftTagNames(
   names: readonly string[],
-  persistedNamesLower: ReadonlySet<string>
+  tagByName: ReadonlyMap<string, TagSummary>
 ): string[] {
   const seen = new Set<string>()
   const out: string[] = []
@@ -39,7 +40,7 @@ function dedupeDraftTagNames(
     const trimmed = raw.trim()
     if (!trimmed) continue
     const lower = trimmed.toLowerCase()
-    if (persistedNamesLower.has(lower) || seen.has(lower)) continue
+    if (tagByName.has(lower) || seen.has(lower)) continue
     seen.add(lower)
     out.push(trimmed)
   }
@@ -86,14 +87,18 @@ export function TagMultiSelect({
     [selectedTagIds, tagById]
   )
 
-  const persistedNamesLower = useMemo(
-    () => new Set(tags.map((tag) => normalizeTagName(tag.name))),
-    [tags]
-  )
+  const tagByName = useMemo(() => {
+    const byName = new Map<string, TagSummary>()
+    for (const tag of tags) {
+      const name = normalizeTagName(tag.name)
+      if (!byName.has(name)) byName.set(name, tag)
+    }
+    return byName
+  }, [tags])
 
   const activeDraftNames = useMemo(
-    () => dedupeDraftTagNames(draftTagNames, persistedNamesLower),
-    [draftTagNames, persistedNamesLower]
+    () => dedupeDraftTagNames(draftTagNames, tagByName),
+    [draftTagNames, tagByName]
   )
 
   const activeDraftSet = useMemo(
@@ -105,9 +110,9 @@ export function TagMultiSelect({
     () =>
       dedupeDraftTagNames(
         [...sessionDraftNames, ...activeDraftNames],
-        persistedNamesLower
+        tagByName
       ),
-    [sessionDraftNames, activeDraftNames, persistedNamesLower]
+    [sessionDraftNames, activeDraftNames, tagByName]
   )
 
   const filteredTags = useMemo(() => {
@@ -122,9 +127,7 @@ export function TagMultiSelect({
     )
   }, [popoverDraftNames, searchName])
 
-  const matchingTag = persistedNamesLower.has(searchName)
-    ? tags.find((tag) => normalizeTagName(tag.name) === searchName)
-    : undefined
+  const matchingTag = tagByName.get(searchName)
   const matchingDraft = searchName
     ? popoverDraftNames.find((name) => normalizeTagName(name) === searchName)
     : undefined
@@ -132,15 +135,15 @@ export function TagMultiSelect({
   const createTagMutation = useMutation({
     mutationFn: (name: string) => createTagApi({ name }),
     onSuccess: (created) => {
-      queryClient.setQueryData<TagSummary[]>(["tags"], (prev) => {
+      queryClient.setQueryData(tagsQueryKey, (prev) => {
         if (!prev) return [created]
         if (prev.some((t) => t.id === created.id)) return prev
         return [...prev, created].sort((a, b) => a.name.localeCompare(b.name))
       })
-      void queryClient.invalidateQueries({ queryKey: ["tags"] })
+      void queryClient.invalidateQueries({ queryKey: tagsQueryKey })
     },
     onError: () => {
-      void queryClient.invalidateQueries({ queryKey: ["tags"] })
+      void queryClient.invalidateQueries({ queryKey: tagsQueryKey })
     },
   })
 

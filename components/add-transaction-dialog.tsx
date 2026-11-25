@@ -112,9 +112,11 @@ export function AddTransactionDialog({
     },
   })
 
+  const submitDisabled = addMutation.isPending || tagCreatePending
+
   function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!open || addMutation.isPending || tagCreatePending) return
+    if (!open || submitDisabled) return
     setFormError(null)
     try {
       const amountMinor = parseDecimalToMinorClient(amount, currency)
@@ -142,7 +144,7 @@ export function AddTransactionDialog({
       formId={formId}
       onSubmit={handleSubmit}
       submitLabel={addMutation.isPending ? "Adding..." : "Add transaction"}
-      submitDisabled={addMutation.isPending || tagCreatePending}
+      submitDisabled={submitDisabled}
     >
       {formError && (
         <Alert variant="destructive">

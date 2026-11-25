@@ -230,10 +230,9 @@ export function AccountFormDialog({
     setFormError({ message, fieldId })
   }
 
-  function handleInvalid(event: InvalidEvent<HTMLFormElement>) {
-    // Only Details has native constraints. If it is hidden, replace the
-    // browser's validation bubble with the same message in the revealed tab.
-    if (activeTab !== "details") event.preventDefault()
+  function handleDetailsInvalid(event: InvalidEvent<HTMLFormElement>) {
+    const detailsTabIsHidden = activeTab !== "details"
+    if (detailsTabIsHidden) event.preventDefault()
     const field = event.target
     if (
       !(field instanceof HTMLInputElement) ||
@@ -241,10 +240,10 @@ export function AccountFormDialog({
     ) {
       return
     }
-    if (activeTab === "details") {
-      setFormError(null)
-    } else {
+    if (detailsTabIsHidden) {
       showFieldError("details", field.id, field.validationMessage)
+    } else {
+      setFormError(null)
     }
   }
 
@@ -614,7 +613,7 @@ export function AccountFormDialog({
       description={`Track balances in ${currency}.`}
       formId={formId}
       onSubmit={handleSubmit}
-      onInvalid={handleInvalid}
+      onInvalid={handleDetailsInvalid}
       submitLabel={saveMutation.isPending ? "Saving..." : "Create account"}
       submitDisabled={saveMutation.isPending}
       initialFocus={nameInput}

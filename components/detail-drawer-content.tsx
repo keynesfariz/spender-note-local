@@ -1,5 +1,10 @@
 import { XIcon } from "lucide-react"
-import type { ComponentProps, ReactNode } from "react"
+import {
+  useLayoutEffect,
+  useRef,
+  type ComponentProps,
+  type ReactNode,
+} from "react"
 
 import { IconTooltip } from "@/components/icon-tooltip"
 import { Button } from "@/components/ui/button"
@@ -17,17 +22,26 @@ type DetailDrawerContentProps = {
   title: string
   description: string
   children: ReactNode
+  headerActions?: ReactNode
   footer?: ReactNode
+  scrollResetKey?: string | null
 } & Pick<ComponentProps<typeof DrawerContent>, "initialFocus" | "finalFocus">
 
 export function DetailDrawerContent({
   title,
   description,
   children,
+  headerActions,
   footer,
+  scrollResetKey,
   initialFocus,
   finalFocus,
 }: DetailDrawerContentProps) {
+  const body = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    body.current?.scrollTo(0, 0)
+  }, [scrollResetKey])
+
   return (
     <DrawerContent
       className="h-dvh w-full max-w-2xl shadow-2xl data-[swipe-direction=right]:rounded-none data-[swipe-direction=right]:[--drawer-inset:0px] motion-reduce:transition-none"
@@ -39,8 +53,12 @@ export function DetailDrawerContent({
           {title}
         </DrawerTitle>
         <DrawerDescription>{description}</DrawerDescription>
+        {headerActions}
       </DrawerHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-6 sm:px-6">
+      <div
+        ref={body}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-6 sm:px-6"
+      >
         {children}
       </div>
       {footer}

@@ -2,6 +2,7 @@
 
 import {
   keepPreviousData,
+  type QueryState,
   useMutation,
   useQuery,
   useQueryClient,
@@ -23,6 +24,7 @@ import {
 } from "nuqs"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useHasOpened } from "@/hooks/use-has-opened"
+import { useTransactionReview } from "@/hooks/use-transaction-review"
 
 import { DateRangePicker } from "@/components/date-picker"
 import type { ManualMergeMode } from "@/components/manual-merge-dialog"
@@ -52,6 +54,7 @@ import {
 import {
   type AccountOption,
   type ApplyTriageVerdictInput,
+  type PaginatedTransactionsResponse,
   type TriageVerdictResult,
   type TransactionListItem,
 } from "@/lib/api/types.generated"
@@ -91,6 +94,16 @@ function preloadSkippedTransactionsList() {
 const EMPTY_ACCOUNTS: AccountOption[] = []
 const EMPTY_TRANSACTIONS: TransactionListItem[] = []
 
+function relativeLedgerRefetchInterval({
+  state,
+}: {
+  state: Pick<QueryState<PaginatedTransactionsResponse>, "data" | "status">
+}) {
+  const boundary = state.data?.ledger?.nextDayUtc
+  if (!boundary || state.status === "error") return false
+  return Math.max(1_000, Date.parse(boundary) - Date.now())
+}
+
 export function TransactionsView() {
   const queryClient = useQueryClient()
   const [mountedAt] = useState(() => Date.now())
@@ -120,14 +133,10 @@ export function TransactionsView() {
   })
   const [searchResetKey, setSearchResetKey] = useState(0)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [selectedTransactionId, setSelectedTransactionId] = useState<
-    string | null
-  >(null)
   const [mergeMode, setMergeMode] = useState<ManualMergeMode | null>(null)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const hasOpenedAddDialog = useHasOpened(addDialogOpen)
   const hasOpenedMergeDialog = useHasOpened(mergeMode !== null)
-  const hasOpenedInspector = useHasOpened(selectedTransactionId !== null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [triageError, setTriageError] = useState<string | null>(null)
@@ -148,26 +157,21 @@ export function TransactionsView() {
   const isSkippedTab = filters.tab === "skipped"
   const skippedPage = Math.max(1, filters.skippedPage)
 
+  const ledgerParams = {
+    ...DEFAULT_LEDGER_PARAMS,
+    ledgerRange: isAllDates ? ("all" as const) : ("dates" as const),
+    startDate: isAllDates ? undefined : (filters.from ?? undefined),
+    endDate: isAllDates ? undefined : (filters.to ?? undefined),
+    category: filters.category || undefined,
+    tag: filters.tag || undefined,
+    accountId: filters.accountId === "all" ? undefined : filters.accountId,
+    search: filters.search.trim() || undefined,
+    unreviewedOnly: filters.unreviewed || undefined,
+  }
   const txQuery = useQuery({
-    ...transactionsQuery({
-      ...DEFAULT_LEDGER_PARAMS,
-      ledgerRange: isAllDates ? "all" : "dates",
-      startDate: isAllDates ? undefined : (filters.from ?? undefined),
-      endDate: isAllDates ? undefined : (filters.to ?? undefined),
-      category: filters.category || undefined,
-      tag: filters.tag || undefined,
-      accountId: filters.accountId === "all" ? undefined : filters.accountId,
-      search: filters.search.trim() || undefined,
-      unreviewedOnly: filters.unreviewed || undefined,
-      page: activePage,
-    }),
+    ...transactionsQuery({ ...ledgerParams, page: activePage }),
     enabled: !isSkippedTab,
-    refetchInterval: (query) => {
-      const boundary = query.state.data?.ledger?.nextDayUtc
-      if (!isRelativeRange || !boundary || query.state.status === "error")
-        return false
-      return Math.max(1_000, Date.parse(boundary) - Date.now())
-    },
+    refetchInterval: isRelativeRange ? relativeLedgerRefetchInterval : false,
     refetchIntervalInBackground: true,
     refetchOnWindowFocus: isRelativeRange,
   })
@@ -409,6 +413,19 @@ export function TransactionsView() {
     deleteTransactionsMutation.reset()
   }
 
+  const review = useTransactionReview({
+    params: ledgerParams,
+    page: displayLedger && !isSkippedTab ? txQuery.data : undefined,
+    scope: JSON.stringify([
+      ledgerParams,
+      timezone,
+      isSkippedTab,
+      isRelativeRange ? todayStr : null,
+    ]),
+    onPageChange: handlePageChange,
+  })
+  const hasOpenedInspector = useHasOpened(review.transactionId !== null)
+
   const resetDelete = deleteTransactionsMutation.reset
   const handleToggleRow = useCallback(
     (id: string, checked: boolean) => {
@@ -625,7 +642,7 @@ export function TransactionsView() {
               selectedTransactions={selectedTransactions}
               onToggleRow={handleToggleRow}
               onToggleSelectAllPage={handleToggleSelectAllPage}
-              onSelectTransaction={setSelectedTransactionId}
+              onSelectTransaction={review.open}
               onOpenDuplicateMerge={() => setMergeMode("duplicate")}
               onOpenCombine={() => setMergeMode("combine")}
               onMarkReviewed={markReviewedMutation.mutate}
@@ -700,11 +717,10 @@ export function TransactionsView() {
 
       {hasOpenedInspector && (
         <TransactionInspectorDrawer
-          transactionId={selectedTransactionId}
+          review={review}
           accounts={accountsListQuery.data ?? EMPTY_ACCOUNTS}
           localCurrency={currency}
           timezone={timezone}
-          onClose={() => setSelectedTransactionId(null)}
           onTransactionMutated={clearActiveUndo}
         />
       )}

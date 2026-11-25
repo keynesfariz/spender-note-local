@@ -1,14 +1,23 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { CheckLine, ChevronDownIcon, MailIcon } from "lucide-react"
+import {
+  CheckLine,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  MailIcon,
+} from "lucide-react"
 import {
   useCallback,
   useEffect,
   useId,
+  useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type Ref,
   type SubmitEvent,
 } from "react"
 
@@ -52,6 +61,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
+import type { useTransactionReview } from "@/hooks/use-transaction-review"
 import { categoriesQuery } from "@/lib/api/categories"
 import { tagsQuery } from "@/lib/api/tags"
 import {
@@ -87,6 +97,7 @@ import {
   utcToDateInputValue,
   utcToTimeInputValue,
 } from "@/lib/format"
+import { getReviewAction, type ReviewDirection } from "@/lib/transaction-review"
 
 const UNASSIGNED_ACCOUNT = "__unassigned__"
 
@@ -213,6 +224,9 @@ function SourceEmail({
   )
 }
 
+type Review = ReturnType<typeof useTransactionReview>
+type NavigationGuard = { hasDraft: boolean; busy: boolean }
+
 type InspectorProps = {
   transactionId: string
   accounts: AccountOption[]
@@ -220,6 +234,8 @@ type InspectorProps = {
   timezone: string | null | undefined
   onClose: () => void
   onTransactionMutated?: () => void
+  review: Review
+  navigationGuard: Ref<NavigationGuard>
 }
 
 function InspectorBody(props: InspectorProps) {
@@ -266,6 +282,8 @@ function InspectorForm({
   timezone,
   onClose,
   onTransactionMutated,
+  review,
+  navigationGuard,
   detail,
   categories,
   tags,
@@ -294,7 +312,7 @@ function InspectorForm({
   )
   const [draftTagNames, setDraftTagNames] = useState<string[]>([])
   const [tagCreatePending, setTagCreatePending] = useState(false)
-  const [hasUnsavedMagicEdits, setHasUnsavedMagicEdits] = useState(false)
+  const [hasDraft, setHasDraft] = useState(false)
   const [accountId, setAccountId] = useState(
     tx.account_id ?? UNASSIGNED_ACCOUNT
   )
@@ -341,7 +359,7 @@ function InspectorForm({
       setCategory(tx.category)
       setSelectedTagIds((tx.tags ?? []).map((t) => t.id))
       setDraftTagNames([])
-      setHasUnsavedMagicEdits(false)
+      setHasDraft(false)
       setAccountId(tx.account_id ?? UNASSIGNED_ACCOUNT)
       setDate(date)
       setTime(time)
@@ -367,14 +385,23 @@ function InspectorForm({
     onTransactionMutated?.()
   }
 
+  function patchInspector(
+    update: (transaction: TransactionListItem) => TransactionListItem
+  ) {
+    queryClient.setQueryData<TransactionInspectorView>(
+      transactionInspectorQuery(transactionId).queryKey,
+      (previous) =>
+        previous
+          ? { ...previous, transaction: update(previous.transaction) }
+          : previous
+    )
+  }
+
   const updateMutation = useMutation({
     mutationFn: updateTransactionApi,
     onSuccess: (updatedTx) => {
       syncFormFromTransaction(updatedTx)
-      queryClient.setQueryData<TransactionInspectorView>(
-        transactionInspectorQuery(updatedTx.id).queryKey,
-        (prev) => (prev ? { ...prev, transaction: updatedTx } : prev)
-      )
+      patchInspector(() => updatedTx)
       patchTagsQueryCache(
         queryClient,
         updatedTx.tags ?? [],
@@ -419,8 +446,15 @@ function InspectorForm({
   })
 
   const markReviewedMutation = useMutation({
-    mutationFn: () => markTransactionsReviewedApi([transactionId]),
+    mutationFn: async () => {
+      const { updatedCount } = await markTransactionsReviewedApi([
+        transactionId,
+      ])
+      if (!updatedCount)
+        throw new Error("This transaction could not be marked reviewed.")
+    },
     onSuccess: () => {
+      patchInspector((transaction) => ({ ...transaction, reviewed: 1 }))
       setFormError(null)
       setStatusMessage("Marked as reviewed.")
       invalidateAll()
@@ -470,11 +504,22 @@ function InspectorForm({
     value: Value
   ) {
     editedFields.current.add(field)
+    setHasDraft(true)
     setter(value)
   }
 
   const saveDisabled =
-    isEnriching || updateMutation.isPending || tagCreatePending
+    review.pending ||
+    isEnriching ||
+    tagCreatePending ||
+    deleteMutation.isPending ||
+    splitMutation.isPending
+
+  useImperativeHandle(
+    navigationGuard,
+    () => ({ hasDraft, busy: saveDisabled }),
+    [hasDraft, saveDisabled]
+  )
 
   function handleSave(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -502,7 +547,9 @@ function InspectorForm({
 
       const saveMerchant = edits.has("merchant")
       const saveRemark = edits.has("remark") || saveMerchant
-      updateMutation.mutate({
+      const advance =
+        event.nativeEvent.submitter?.getAttribute("value") === "save-and-next"
+      const patch = {
         id: tx.id,
         remark: saveRemark ? remark.trim() : undefined,
         merchant: saveMerchant ? merchant : undefined,
@@ -523,14 +570,15 @@ function InspectorForm({
           : undefined,
         note: edits.has("note") ? note.trim() || null : undefined,
         convertToLocalCurrency: saveAmount ? convertToLocalCurrency : undefined,
-      })
+      }
+      void review.write(() => updateMutation.mutateAsync(patch), advance)
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Invalid input.")
     }
   }
 
   function handleMagicEnrich() {
-    if (tagCreatePending) return
+    if (saveDisabled) return
     runEnrichment({
       transactionIds: [tx.id],
       onStart: () => {
@@ -572,13 +620,74 @@ function InspectorForm({
           editDraft("tags", setSelectedTagIds, next.selectedTagIds)
           editDraft("tags", setDraftTagNames, next.draftTagNames)
         }
-        if (changed.size) setHasUnsavedMagicEdits(true)
         setStatusMessage(message)
       },
       onError: (msg) => {
         setFormError(msg)
       },
     })
+  }
+
+  const reviewed = tx.reviewed === 1
+  const reviewAction = getReviewAction(hasDraft, reviewed, review.next)
+
+  function handleMarkReviewed(advance: boolean) {
+    setFormError(null)
+    setStatusMessage(null)
+    void review.write(() => markReviewedMutation.mutateAsync(), advance)
+  }
+
+  function reviewActions(form?: string) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        {reviewed ? <Badge variant="secondary">Reviewed</Badge> : null}
+        <Button
+          type="submit"
+          form={form}
+          formNoValidate={Boolean(form)}
+          variant={
+            reviewAction && reviewAction !== "mark" ? "outline" : "default"
+          }
+          disabled={saveDisabled}
+        >
+          {updateMutation.isPending ? "Saving..." : "Save changes"}
+        </Button>
+        {reviewAction === "save-and-next" ? (
+          <Button
+            type="submit"
+            form={form}
+            formNoValidate={Boolean(form)}
+            value="save-and-next"
+            disabled={saveDisabled}
+          >
+            Save changes &amp; next
+          </Button>
+        ) : reviewAction ? (
+          <Button
+            type="button"
+            variant={reviewAction === "mark-and-next" ? "default" : "outline"}
+            disabled={saveDisabled}
+            onClick={() => handleMarkReviewed(reviewAction === "mark-and-next")}
+          >
+            {markReviewedMutation.isPending
+              ? "Marking..."
+              : reviewAction === "mark-and-next"
+                ? "Mark reviewed & next"
+                : "Mark reviewed"}
+          </Button>
+        ) : null}
+        {reviewAction === "mark-and-next" && review.error ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={saveDisabled}
+            onClick={() => handleMarkReviewed(false)}
+          >
+            Mark reviewed
+          </Button>
+        ) : null}
+      </div>
+    )
   }
 
   return (
@@ -636,17 +745,16 @@ function InspectorForm({
                 </p>
                 <MagicEnrichButton
                   isEnriching={isEnriching}
-                  disabled={
-                    updateMutation.isPending ||
-                    deleteMutation.isPending ||
-                    tagCreatePending
-                  }
+                  disabled={saveDisabled}
                   onClick={handleMagicEnrich}
                 />
               </div>
             )}
 
-            <div className="grid gap-4 sm:grid-cols-2" inert={isEnriching}>
+            <div
+              className="grid gap-4 sm:grid-cols-2"
+              inert={isEnriching || review.pending}
+            >
               <Field>
                 <FieldLabel htmlFor={remarkId}>Remark</FieldLabel>
                 <Input
@@ -728,7 +836,7 @@ function InspectorForm({
                     editDraft("tags", setDraftTagNames, names)
                   }
                   onCreatePendingChange={setTagCreatePending}
-                  disabled={isEnriching || updateMutation.isPending}
+                  disabled={isEnriching || review.pending}
                 />
               </Field>
 
@@ -784,6 +892,7 @@ function InspectorForm({
                 <Checkbox
                   id="convert-local"
                   checked={convertToLocalCurrency}
+                  disabled={review.pending}
                   onCheckedChange={(checked) =>
                     editDraft(
                       "conversion",
@@ -802,7 +911,12 @@ function InspectorForm({
               <AlertDialog>
                 <AlertDialogTrigger
                   render={
-                    <Button type="button" variant="destructive" size="sm" />
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      disabled={review.pending}
+                    />
                   }
                 >
                   Delete transaction
@@ -830,26 +944,7 @@ function InspectorForm({
                 </AlertDialogContent>
               </AlertDialog>
 
-              <div className="flex flex-wrap items-center gap-2">
-                {tx.reviewed === 1 ? (
-                  <Badge variant="secondary">Reviewed</Badge>
-                ) : !hasUnsavedMagicEdits ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={markReviewedMutation.isPending || isEnriching}
-                    onClick={() => markReviewedMutation.mutate()}
-                  >
-                    {markReviewedMutation.isPending
-                      ? "Marking..."
-                      : "Mark reviewed"}
-                  </Button>
-                ) : null}
-                <Button type="submit" disabled={saveDisabled}>
-                  {updateMutation.isPending ? "Saving..." : "Save changes"}
-                </Button>
-              </div>
+              {reviewActions()}
             </div>
           </form>
         </TabsContent>
@@ -860,19 +955,12 @@ function InspectorForm({
               id={noteId}
               rows={8}
               className="min-h-40"
-              disabled={isEnriching || updateMutation.isPending}
+              disabled={isEnriching || review.pending}
               value={note}
               onChange={(e) => editDraft("note", setNote, e.target.value)}
             />
           </Field>
-          <Button
-            type="submit"
-            form={detailFormId}
-            formNoValidate
-            disabled={saveDisabled}
-          >
-            {updateMutation.isPending ? "Saving..." : "Save changes"}
-          </Button>
+          {reviewActions(detailFormId)}
         </TabsContent>
         <TabsContent value="sources" className="space-y-3">
           {tx.manual_override === 1 && detail.sources.length > 1 && (
@@ -906,7 +994,7 @@ function InspectorForm({
                             })
                         : undefined
                     }
-                    splitDisabled={splitMutation.isPending || isEnriching}
+                    splitDisabled={saveDisabled}
                   />
                 </li>
               ))}
@@ -919,31 +1007,106 @@ function InspectorForm({
 }
 
 export function TransactionInspectorDrawer({
-  transactionId,
+  review,
   accounts,
   localCurrency,
   timezone,
-  onClose,
   onTransactionMutated,
 }: {
-  transactionId: string | null
+  review: Review
   accounts: AccountOption[]
   localCurrency: string
   timezone: string | null | undefined
-  onClose: () => void
   onTransactionMutated?: () => void
 }) {
+  const { transactionId } = review
+  const navigationGuard = useRef<NavigationGuard>(null)
+  const navigation = useRef<HTMLElement>(null)
+  const previousTransactionId = useRef(transactionId)
+  const [discard, setDiscard] = useState<{
+    id: string
+    direction: ReviewDirection
+  } | null>(null)
+  const discardDirection =
+    discard?.id === transactionId ? discard.direction : null
+
+  useLayoutEffect(() => {
+    const previousId = previousTransactionId.current
+    previousTransactionId.current = transactionId
+    if (
+      transactionId &&
+      previousId &&
+      transactionId !== previousId &&
+      !navigation.current?.contains(document.activeElement)
+    ) {
+      navigation.current?.focus({ preventScroll: true })
+    }
+  }, [transactionId])
+
+  function navigate(direction: ReviewDirection) {
+    if (!transactionId || navigationGuard.current?.busy) return
+    if (navigationGuard.current?.hasDraft) {
+      setDiscard({ id: transactionId, direction })
+      return
+    }
+    void review.navigate(direction)
+  }
+
   return (
     <Drawer
       swipeDirection="right"
       open={transactionId !== null}
       onOpenChange={(open) => {
-        if (!open) onClose()
+        if (!open) {
+          setDiscard(null)
+          review.close()
+        }
       }}
     >
       <DetailDrawerContent
         title="Transaction details"
         description="Inspect attached source emails, mark reviewed, or edit transaction fields."
+        scrollResetKey={transactionId}
+        headerActions={
+          <div className="mt-3 space-y-2">
+            <nav
+              ref={navigation}
+              tabIndex={-1}
+              aria-label="Transaction navigation"
+              className="flex flex-wrap items-center gap-2"
+            >
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="aria-disabled:opacity-50"
+                disabled={!review.previous || review.pending}
+                focusableWhenDisabled
+                onClick={() => navigate("previous")}
+              >
+                <ChevronLeftIcon aria-hidden="true" data-icon="inline-start" />
+                Previous
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="aria-disabled:opacity-50"
+                disabled={!review.next || review.pending}
+                focusableWhenDisabled
+                onClick={() => navigate("next")}
+              >
+                Next
+                <ChevronRightIcon aria-hidden="true" data-icon="inline-end" />
+              </Button>
+            </nav>
+            {review.error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {review.error}
+              </p>
+            ) : null}
+          </div>
+        }
       >
         {transactionId && (
           <InspectorBody
@@ -952,10 +1115,39 @@ export function TransactionInspectorDrawer({
             accounts={accounts}
             localCurrency={localCurrency}
             timezone={timezone}
-            onClose={onClose}
+            onClose={review.close}
             onTransactionMutated={onTransactionMutated}
+            review={review}
+            navigationGuard={navigationGuard}
           />
         )}
+        <AlertDialog
+          open={discardDirection !== null}
+          onOpenChange={(open) => {
+            if (!open) setDiscard(null)
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Your changes to this transaction will be lost if you move on.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Keep editing</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                onClick={() => {
+                  setDiscard(null)
+                  if (discardDirection) void review.navigate(discardDirection)
+                }}
+              >
+                Discard and move
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DetailDrawerContent>
     </Drawer>
   )

@@ -314,13 +314,17 @@ export function TransactionList({
       accountId !== "unassigned" &&
       !items.some((item) => item.value === accountId)
     ) {
-      const matchedName = transactions.find(
-        (tx) => tx.account_id === accountId && tx.account_name
-      )?.account_name
+      const matchedName =
+        transactions.find(
+          (tx) => tx.account_id === accountId && tx.account_name
+        )?.account_name ??
+        ghostRows.find(
+          (ghost) => ghost.account_id === accountId && ghost.account_name
+        )?.account_name
       items.push({ value: accountId, label: matchedName ?? "Account" })
     }
     return items
-  }, [accounts, accountId, transactions])
+  }, [accounts, accountId, transactions, ghostRows])
 
   return (
     <Card>

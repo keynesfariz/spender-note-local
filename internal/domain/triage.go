@@ -164,6 +164,16 @@ type PromoteIgnoredEmailResult struct {
 
 const unbackfilledCondition = `re.status = 'non_transaction' AND (ee.email_id IS NULL OR (COALESCE(ee.extraction_model, '') != 'rule:billing_statement' AND (ee.triage_signature_key IS NULL OR ee.triage_signature_key = '')))`
 
+const triageCandidateColumns = `
+	re.id AS email_id, re.sender_id, s.role_hint AS sender_role_hint,
+	re.from_address, re.subject, re.cleaned_text, re.received_at_utc,
+	re.status AS raw_status, ee.email_kind, ee.amount_minor, ee.currency,
+	ee.occurred_at_utc, ee.merchant_raw, ee.category, ee.card_last4,
+	ee.payment_method_raw, ee.bank_account_hint, ee.llm_account_id,
+	ee.account_type_guess, ee.reference_code, ee.extraction_model,
+	ee.triage_signature_key, ee.triage_subject_pattern, ee.triage_body_cue,
+	ee.triage_state`
+
 func strPtrOrNil(s string) *string {
 	trimmed := strings.TrimSpace(s)
 	if trimmed == "" {
@@ -650,6 +660,76 @@ func isWithinRangeUtc(tsUtc, startUtc, endUtc string) bool {
 	return tsUtc >= startUtc && tsUtc < endUtc
 }
 
+func admitPromotedTransactionInTx(
+	tx *gorm.DB,
+	emailID string,
+	senderID *string,
+	fromAddress string,
+	effectiveRole string,
+	amountMinor int64,
+	currency string,
+	occurredAt string,
+	merchant string,
+	category string,
+	cardLast4 *string,
+	bankHint *string,
+	pmRaw *string,
+	llmAcctID *string,
+	acctTypeGuess *string,
+	refCode *string,
+	nowUtc string,
+) (txID string, createdProvAccountID *string, err error) {
+	acctID := MatchAccountForExtraction(tx, MatchAccountParams{
+		SenderID:        senderID,
+		CardLast4:       cardLast4,
+		BankAccountHint: bankHint,
+		PaymentMethod:   pmRaw,
+		LlmAccountID:    llmAcctID,
+	})
+	if acctID == nil {
+		prov, provErr := CreateProvisionalAccountForExtractionInTx(tx, ProvisionalAccountParams{
+			FromAddress:      fromAddress,
+			CardLast4:        cardLast4,
+			BankAccountHint:  bankHint,
+			PaymentMethod:    pmRaw,
+			AccountTypeGuess: acctTypeGuess,
+			Currency:         &currency,
+		})
+		if provErr != nil {
+			return "", nil, provErr
+		}
+		if prov != nil {
+			id := prov.ID
+			acctID = &id
+			createdProvAccountID = &id
+		}
+	}
+
+	txID, err = SaveExtractedTransactionInTx(tx, ExtractedTransactionInput{
+		EmailID:           emailID,
+		EmailKind:         effectiveRole,
+		AmountMinor:       amountMinor,
+		Currency:          currency,
+		OccurredAtUtc:     occurredAt,
+		MerchantRaw:       merchant,
+		Category:          category,
+		CardLast4:         cardLast4,
+		ReferenceCode:     refCode,
+		ResolvedAccountID: acctID,
+		NowUtc:            nowUtc,
+	})
+	if err != nil {
+		return "", nil, err
+	}
+
+	if err := tx.Model(&db.RawEmail{}).
+		Where("id = ?", emailID).
+		Updates(map[string]any{"status": "extracted", "error_message": nil}).Error; err != nil {
+		return "", nil, err
+	}
+	return txID, createdProvAccountID, nil
+}
+
 func ApplyTriageVerdict(gdb *gorm.DB, input ApplyTriageVerdictInput) (*TriageVerdictResult, error) {
 	emailID := strings.TrimSpace(input.EmailID)
 	if emailID == "" {
@@ -685,15 +765,7 @@ func ApplyTriageVerdict(gdb *gorm.DB, input ApplyTriageVerdictInput) (*TriageVer
 	err = db.RunImmediateTx(gdb, func(tx *gorm.DB) error {
 		var clicked []triageCandidateRow
 		if err := tx.Raw(`
-			SELECT
-				re.id AS email_id, re.sender_id, s.role_hint AS sender_role_hint,
-				re.from_address, re.subject, re.cleaned_text, re.received_at_utc,
-				re.status AS raw_status, ee.email_kind, ee.amount_minor, ee.currency,
-				ee.occurred_at_utc, ee.merchant_raw, ee.category, ee.card_last4,
-				ee.payment_method_raw, ee.bank_account_hint, ee.llm_account_id,
-				ee.account_type_guess, ee.reference_code, ee.extraction_model,
-				ee.triage_signature_key, ee.triage_subject_pattern, ee.triage_body_cue,
-				ee.triage_state
+			SELECT`+triageCandidateColumns+`
 			FROM raw_emails re
 			LEFT JOIN senders s ON s.id = re.sender_id
 			LEFT JOIN email_extractions ee ON ee.email_id = re.id
@@ -765,18 +837,9 @@ func ApplyTriageVerdict(gdb *gorm.DB, input ApplyTriageVerdictInput) (*TriageVer
 			return policyErr
 		}
 
-		// Match candidates by signature_key in SQL, then enforce bare sender equality in Go.
 		var rawSiblings []triageCandidateRow
 		if err := tx.Raw(`
-			SELECT
-				re.id AS email_id, re.sender_id, s.role_hint AS sender_role_hint,
-				re.from_address, re.subject, re.cleaned_text, re.received_at_utc,
-				re.status AS raw_status, ee.email_kind, ee.amount_minor, ee.currency,
-				ee.occurred_at_utc, ee.merchant_raw, ee.category, ee.card_last4,
-				ee.payment_method_raw, ee.bank_account_hint, ee.llm_account_id,
-				ee.account_type_guess, ee.reference_code, ee.extraction_model,
-				ee.triage_signature_key, ee.triage_subject_pattern, ee.triage_body_cue,
-				ee.triage_state
+			SELECT`+triageCandidateColumns+`
 			FROM raw_emails re
 			LEFT JOIN senders s ON s.id = re.sender_id
 			JOIN email_extractions ee ON ee.email_id = re.id
@@ -842,55 +905,19 @@ func ApplyTriageVerdict(gdb *gorm.DB, input ApplyTriageVerdictInput) (*TriageVer
 			category := ResolveKnownCategory(tx, rawCat)
 			effectiveRole := ResolveEffectiveEmailRole(sib.SenderRoleHint, sib.EmailKind, sib.CardLast4, sib.BankAccountHint)
 
-			acctID := MatchAccountForExtraction(tx, MatchAccountParams{
-				SenderID:        sib.SenderID,
-				CardLast4:       sib.CardLast4,
-				BankAccountHint: sib.BankAccountHint,
-				PaymentMethod:   sib.PaymentMethodRaw,
-				LlmAccountID:    sib.LlmAccountID,
-			})
-			if acctID == nil {
-				prov, provErr := CreateProvisionalAccountForExtractionInTx(tx, ProvisionalAccountParams{
-					FromAddress:      sib.FromAddress,
-					CardLast4:        sib.CardLast4,
-					BankAccountHint:  sib.BankAccountHint,
-					PaymentMethod:    sib.PaymentMethodRaw,
-					AccountTypeGuess: sib.AccountTypeGuess,
-					Currency:         &currency,
-				})
-				if provErr != nil {
-					return provErr
-				}
-				if prov != nil {
-					id := prov.ID
-					acctID = &id
-					createdProvAccountIDs = append(createdProvAccountIDs, id)
-				}
-			}
-
-			txID, saveErr := SaveExtractedTransactionInTx(tx, ExtractedTransactionInput{
-				EmailID:           sib.EmailID,
-				EmailKind:         effectiveRole,
-				AmountMinor:       *sib.AmountMinor,
-				Currency:          currency,
-				OccurredAtUtc:     occurredAt,
-				MerchantRaw:       merchant,
-				Category:          category,
-				CardLast4:         sib.CardLast4,
-				ReferenceCode:     sib.ReferenceCode,
-				ResolvedAccountID: acctID,
-				NowUtc:            nowUtc,
-			})
+			txID, createdProvID, saveErr := admitPromotedTransactionInTx(
+				tx, sib.EmailID, sib.SenderID, sib.FromAddress, effectiveRole,
+				*sib.AmountMinor, currency, occurredAt, merchant, category,
+				sib.CardLast4, sib.BankAccountHint, sib.PaymentMethodRaw, sib.LlmAccountID, sib.AccountTypeGuess, sib.ReferenceCode, nowUtc,
+			)
 			if saveErr != nil {
 				return saveErr
 			}
+			if createdProvID != nil {
+				createdProvAccountIDs = append(createdProvAccountIDs, *createdProvID)
+			}
 			createdTxIDs = append(createdTxIDs, txID)
 
-			if err := tx.Model(&db.RawEmail{}).
-				Where("id = ?", sib.EmailID).
-				Updates(map[string]any{"status": "extracted", "error_message": nil}).Error; err != nil {
-				return err
-			}
 			if err := tx.Model(&db.EmailExtraction{}).
 				Where("email_id = ?", sib.EmailID).
 				Update("triage_state", "promoted").Error; err != nil {
@@ -1145,13 +1172,71 @@ func ListTriagePolicies(gdb *gorm.DB, params ListTriagePoliciesParams) ([]Sender
 	if err := q.Order("updated_at_utc DESC, sender_email ASC").Find(&policies).Error; err != nil {
 		return nil, err
 	}
+	if len(policies) == 0 {
+		return []SenderTriagePolicyView{}, nil
+	}
+
+	sigKeys := make([]string, 0, len(policies))
+	seenSig := make(map[string]struct{}, len(policies))
+	for _, pol := range policies {
+		if _, ok := seenSig[pol.SignatureKey]; !ok {
+			seenSig[pol.SignatureKey] = struct{}{}
+			sigKeys = append(sigKeys, pol.SignatureKey)
+		}
+	}
+
+	type batchStateRow struct {
+		SignatureKey string  `gorm:"column:triage_signature_key"`
+		FromAddress  string  `gorm:"column:from_address"`
+		TriageState  *string `gorm:"column:triage_state"`
+	}
+	var stateRows []batchStateRow
+	if err := gdb.Raw(`
+		SELECT ee.triage_signature_key, re.from_address, ee.triage_state
+		FROM raw_emails re
+		JOIN email_extractions ee ON ee.email_id = re.id
+		WHERE re.status = 'non_transaction'
+		  AND ee.triage_signature_key IN ?
+		  AND ee.triage_state IN ('ignored', 'ghost')`,
+		sigKeys,
+	).Scan(&stateRows).Error; err != nil {
+		return nil, err
+	}
+
+	type policyStateCounts struct {
+		ignored int64
+		ghost   int64
+	}
+	countsByKey := make(map[string]policyStateCounts, len(policies))
+	for _, r := range stateRows {
+		if r.TriageState == nil {
+			continue
+		}
+		k := NormalizeSenderEmail(r.FromAddress) + "\n" + r.SignatureKey
+		c := countsByKey[k]
+		if *r.TriageState == "ignored" {
+			c.ignored++
+		} else if *r.TriageState == "ghost" {
+			c.ghost++
+		}
+		countsByKey[k] = c
+	}
+
 	out := make([]SenderTriagePolicyView, 0, len(policies))
 	for _, pol := range policies {
-		view, err := buildSenderTriagePolicyView(gdb, pol)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, view)
+		c := countsByKey[pol.SenderEmail+"\n"+pol.SignatureKey]
+		out = append(out, SenderTriagePolicyView{
+			ID:             pol.ID,
+			SenderEmail:    pol.SenderEmail,
+			SignatureKey:   pol.SignatureKey,
+			SubjectPattern: pol.SubjectPattern,
+			BodyCue:        pol.BodyCue,
+			Action:         pol.Action,
+			IgnoredCount:   c.ignored,
+			GhostCount:     c.ghost,
+			CreatedAtUtc:   pol.CreatedAtUtc,
+			UpdatedAtUtc:   pol.UpdatedAtUtc,
+		})
 	}
 	return out, nil
 }
@@ -1407,15 +1492,7 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 
 	var rows []triageCandidateRow
 	if err := gdb.Raw(`
-		SELECT
-			re.id AS email_id, re.sender_id, s.role_hint AS sender_role_hint,
-			re.from_address, re.subject, re.cleaned_text, re.received_at_utc,
-			re.status AS raw_status, ee.email_kind, ee.amount_minor, ee.currency,
-			ee.occurred_at_utc, ee.merchant_raw, ee.category, ee.card_last4,
-			ee.payment_method_raw, ee.bank_account_hint, ee.llm_account_id,
-			ee.account_type_guess, ee.reference_code, ee.extraction_model,
-			ee.triage_signature_key, ee.triage_subject_pattern, ee.triage_body_cue,
-			ee.triage_state
+		SELECT`+triageCandidateColumns+`
 		FROM raw_emails re
 		LEFT JOIN senders s ON s.id = re.sender_id
 		LEFT JOIN email_extractions ee ON ee.email_id = re.id
@@ -1510,15 +1587,7 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 	err := db.RunImmediateTx(gdb, func(tx *gorm.DB) error {
 		var current []triageCandidateRow
 		if err := tx.Raw(`
-			SELECT
-				re.id AS email_id, re.sender_id, s.role_hint AS sender_role_hint,
-				re.from_address, re.subject, re.cleaned_text, re.received_at_utc,
-				re.status AS raw_status, ee.email_kind, ee.amount_minor, ee.currency,
-				ee.occurred_at_utc, ee.merchant_raw, ee.category, ee.card_last4,
-				ee.payment_method_raw, ee.bank_account_hint, ee.llm_account_id,
-				ee.account_type_guess, ee.reference_code, ee.extraction_model,
-				ee.triage_signature_key, ee.triage_subject_pattern, ee.triage_body_cue,
-				ee.triage_state
+			SELECT`+triageCandidateColumns+`
 			FROM raw_emails re
 			LEFT JOIN senders s ON s.id = re.sender_id
 			LEFT JOIN email_extractions ee ON ee.email_id = re.id
@@ -1613,54 +1682,14 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 			}
 		}
 
-		acctID := MatchAccountForExtraction(tx, MatchAccountParams{
-			SenderID:        curRow.SenderID,
-			CardLast4:       cardLast4,
-			BankAccountHint: bankHint,
-			PaymentMethod:   pmRaw,
-			LlmAccountID:    llmAcctID,
-		})
-		if acctID == nil {
-			prov, provErr := CreateProvisionalAccountForExtractionInTx(tx, ProvisionalAccountParams{
-				FromAddress:      curRow.FromAddress,
-				CardLast4:        cardLast4,
-				BankAccountHint:  bankHint,
-				PaymentMethod:    pmRaw,
-				AccountTypeGuess: acctTypeGuess,
-				Currency:         &currency,
-			})
-			if provErr != nil {
-				return provErr
-			}
-			if prov != nil {
-				id := prov.ID
-				acctID = &id
-			}
-		}
-
 		nowUtc := NowUtcIsoSeconds()
 		var saveErr error
-		txID, saveErr = SaveExtractedTransactionInTx(tx, ExtractedTransactionInput{
-			EmailID:           emailID,
-			EmailKind:         effectiveRole,
-			AmountMinor:       amountMinor,
-			Currency:          currency,
-			OccurredAtUtc:     occurredAt,
-			MerchantRaw:       merchant,
-			Category:          category,
-			CardLast4:         cardLast4,
-			ReferenceCode:     refCode,
-			ResolvedAccountID: acctID,
-			NowUtc:            nowUtc,
-		})
-		if saveErr != nil {
-			return saveErr
-		}
-
-		return tx.Model(&db.RawEmail{}).Where("id = ?", emailID).Updates(map[string]any{
-			"status":        "extracted",
-			"error_message": nil,
-		}).Error
+		txID, _, saveErr = admitPromotedTransactionInTx(
+			tx, emailID, curRow.SenderID, curRow.FromAddress, effectiveRole,
+			amountMinor, currency, occurredAt, merchant, category,
+			cardLast4, bankHint, pmRaw, llmAcctID, acctTypeGuess, refCode, nowUtc,
+		)
+		return saveErr
 	})
 	if err != nil {
 		return nil, err

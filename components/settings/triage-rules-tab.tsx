@@ -157,6 +157,9 @@ export function TriageRulesTab({
       setPromoteError(null)
     },
     onSuccess: () => {
+      if ((ignoredQuery.data?.items.length ?? 0) <= 1 && page > 1) {
+        setPage((p) => Math.max(1, p - 1))
+      }
       invalidateTriageRelatedQueries(queryClient)
     },
     onError: (err) => {

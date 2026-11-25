@@ -530,6 +530,7 @@ function InspectorForm({
   }
 
   function handleMagicEnrich() {
+    if (tagCreatePending) return
     runEnrichment({
       transactionIds: [tx.id],
       onStart: () => {
@@ -636,7 +637,9 @@ function InspectorForm({
                 <MagicEnrichButton
                   isEnriching={isEnriching}
                   disabled={
-                    updateMutation.isPending || deleteMutation.isPending
+                    updateMutation.isPending ||
+                    deleteMutation.isPending ||
+                    tagCreatePending
                   }
                   onClick={handleMagicEnrich}
                 />

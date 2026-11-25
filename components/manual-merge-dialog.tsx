@@ -250,7 +250,7 @@ export function ManualMergeDialog({
   const isPending = duplicateMutation.isPending || combineMutation.isPending
 
   const handleMagicEnrich = () => {
-    if (mode !== "combine" || !hasSourceEmails) return
+    if (mode !== "combine" || !hasSourceEmails || tagCreatePending) return
     runEnrichment({
       transactionIds: transactions.map((tx) => tx.id),
       onStart: () => {
@@ -453,7 +453,7 @@ export function ManualMergeDialog({
                 {hasSourceEmails && (
                   <MagicEnrichButton
                     isEnriching={isEnriching}
-                    disabled={isPending}
+                    disabled={isPending || tagCreatePending}
                     onClick={handleMagicEnrich}
                   />
                 )}

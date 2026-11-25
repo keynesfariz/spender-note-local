@@ -1,18 +1,19 @@
 "use client"
 
-import { ChevronDownIcon, MailIcon } from "lucide-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { CheckLine, ChevronDownIcon, MailIcon } from "lucide-react"
 import {
   useCallback,
   useEffect,
-  useMemo,
   useId,
+  useMemo,
   useRef,
   useState,
   type SubmitEvent,
 } from "react"
 
 import { DatePicker } from "@/components/date-picker"
+import { DetailDrawerContent } from "@/components/detail-drawer-content"
 import { DynamicIcon } from "@/components/dynamic-icon"
 import {
   MagicEnrichButton,
@@ -22,7 +23,6 @@ import {
 } from "@/components/magic-enrich"
 import { TagMultiSelect } from "@/components/tag-multi-select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,20 +34,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
-import {
-  Drawer,
-  DrawerBody,
-  DrawerContent,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerTitle,
-} from "@/components/ui/drawer"
+import { Drawer } from "@/components/ui/drawer"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -57,9 +50,14 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
 import { categoriesQuery } from "@/lib/api/categories"
 import { tagsQuery } from "@/lib/api/tags"
+import {
+  transactionInspectorQuery,
+  transactionSourceBodyQuery,
+} from "@/lib/api/transaction-inspector"
 import {
   deleteTransactionApi,
   invalidateTransactionRelatedQueries,
@@ -75,10 +73,6 @@ import {
   type TransactionInspectorView,
   type TransactionListItem,
 } from "@/lib/api/types.generated"
-import {
-  transactionInspectorQuery,
-  transactionSourceBodyQuery,
-} from "@/lib/api/transaction-inspector"
 import {
   DEFAULT_CATEGORY,
   buildCategoryIconMap,
@@ -608,21 +602,22 @@ function InspectorForm({
         )}
       </div>
 
-      <Tabs defaultValue="details">
-        <TabsList aria-label="Transaction detail sections">
-          <TabsTab value="details">Details</TabsTab>
-          <TabsTab value="note">
-            Note
-            <span className="text-xs text-muted-foreground">
-              {note.trim() ? "Has content" : "Empty"}
-            </span>
-          </TabsTab>
-          <TabsTab value="sources">
+      <Tabs className="gap-4" defaultValue="details">
+        <TabsList
+          className="max-w-full overflow-x-auto"
+          aria-label="Transaction detail sections"
+        >
+          <TabsTrigger value="details">Details</TabsTrigger>
+          <TabsTrigger value="note">
+            <span>Note</span>
+            {note.trim() ? <CheckLine /> : null}
+          </TabsTrigger>
+          <TabsTrigger value="sources">
             <MailIcon className="size-3.5" /> Source emails (
             {detail.sources.length})
-          </TabsTab>
+          </TabsTrigger>
         </TabsList>
-        <TabsPanel value="details" keepMounted>
+        <TabsContent value="details" keepMounted>
           <form id={detailFormId} onSubmit={handleSave} className="space-y-4">
             {detail.sources.length >= 1 && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2">
@@ -852,8 +847,8 @@ function InspectorForm({
               </div>
             </div>
           </form>
-        </TabsPanel>
-        <TabsPanel value="note">
+        </TabsContent>
+        <TabsContent value="note" className="space-y-6">
           <Field>
             <FieldLabel htmlFor={noteId}>Note</FieldLabel>
             <Textarea
@@ -873,8 +868,8 @@ function InspectorForm({
           >
             {updateMutation.isPending ? "Saving..." : "Save changes"}
           </Button>
-        </TabsPanel>
-        <TabsPanel value="sources" className="space-y-3">
+        </TabsContent>
+        <TabsContent value="sources" className="space-y-3">
           {tx.manual_override === 1 && detail.sources.length > 1 && (
             <Alert>
               <AlertDescription>
@@ -912,7 +907,7 @@ function InspectorForm({
               ))}
             </ul>
           )}
-        </TabsPanel>
+        </TabsContent>
       </Tabs>
     </div>
   )
@@ -935,33 +930,28 @@ export function TransactionInspectorDrawer({
 }) {
   return (
     <Drawer
+      swipeDirection="right"
       open={transactionId !== null}
       onOpenChange={(open) => {
         if (!open) onClose()
       }}
     >
-      <DrawerContent>
-        <DrawerHeader>
-          <DrawerTitle>Transaction details</DrawerTitle>
-          <DrawerDescription>
-            Inspect attached source emails, mark reviewed, or edit transaction
-            fields.
-          </DrawerDescription>
-        </DrawerHeader>
-        <DrawerBody>
-          {transactionId && (
-            <InspectorBody
-              key={transactionId}
-              transactionId={transactionId}
-              accounts={accounts}
-              localCurrency={localCurrency}
-              timezone={timezone}
-              onClose={onClose}
-              onTransactionMutated={onTransactionMutated}
-            />
-          )}
-        </DrawerBody>
-      </DrawerContent>
+      <DetailDrawerContent
+        title="Transaction details"
+        description="Inspect attached source emails, mark reviewed, or edit transaction fields."
+      >
+        {transactionId && (
+          <InspectorBody
+            key={transactionId}
+            transactionId={transactionId}
+            accounts={accounts}
+            localCurrency={localCurrency}
+            timezone={timezone}
+            onClose={onClose}
+            onTransactionMutated={onTransactionMutated}
+          />
+        )}
+      </DetailDrawerContent>
     </Drawer>
   )
 }

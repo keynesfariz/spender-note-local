@@ -1,6 +1,6 @@
 "use client"
 
-import { IconTooltip } from "@/components/ui/tooltip"
+import { IconTooltip } from "@/components/icon-tooltip"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   FolderKanbanIcon,
@@ -11,9 +11,17 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { parseAsStringLiteral, useQueryState } from "nuqs"
-import { memo, useCallback, useMemo, useState, type SubmitEvent } from "react"
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type SubmitEvent,
+} from "react"
 
-import { CATEGORY_ICON_OPTIONS, DynamicIcon } from "@/components/dynamic-icon"
+import { DynamicIcon } from "@/components/dynamic-icon"
+import { PaginationControls } from "@/components/pagination-controls"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -42,7 +50,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   categoriesQuery,
@@ -61,12 +69,17 @@ import {
   type TagSummary,
 } from "@/lib/api/types.generated"
 import { DEFAULT_CATEGORY } from "@/lib/categories"
+import {
+  resolveCategoryIconName,
+  searchCategoryIcons,
+} from "@/lib/category-icons"
 import { cn } from "@/lib/utils"
 
 const EMPTY_CATEGORIES: CategorySummary[] = []
 const EMPTY_TAGS: TagSummary[] = []
 
 const TAB_VALUES = ["categories", "tags"] as const
+const ICONS_PER_PAGE = 48
 
 function formatTxCount(count: number): string {
   return `${count} transaction${count === 1 ? "" : "s"}`
@@ -74,6 +87,110 @@ function formatTxCount(count: number): string {
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
+}
+
+function CategoryIconPicker({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (value: string) => void
+}) {
+  const [iconSearch, setIconSearch] = useState("")
+  const [iconPage, setIconPage] = useState(1)
+  const iconGrid = useRef<HTMLDivElement>(null)
+  const matchingIcons = useMemo(
+    () => searchCategoryIcons(iconSearch),
+    [iconSearch]
+  )
+  const iconTotalPages = Math.ceil(matchingIcons.length / ICONS_PER_PAGE)
+  const visibleIcons = matchingIcons.slice(
+    (iconPage - 1) * ICONS_PER_PAGE,
+    iconPage * ICONS_PER_PAGE
+  )
+  const selectedIcon = resolveCategoryIconName(value)
+
+  function changeIconPage(page: number) {
+    setIconPage(page)
+    if (iconGrid.current) iconGrid.current.scrollTop = 0
+  }
+
+  return (
+    <Field>
+      <div className="flex items-center justify-between">
+        <FieldLabel>Icon</FieldLabel>
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <DynamicIcon name={value} className="size-3.5" />
+          {value}
+        </span>
+      </div>
+      <Input
+        type="search"
+        aria-label="Search icons"
+        placeholder="Search icons"
+        value={iconSearch}
+        onChange={(e) => {
+          setIconSearch(e.target.value)
+          changeIconPage(1)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+            e.preventDefault()
+          }
+        }}
+      />
+      {visibleIcons.length > 0 ? (
+        <div
+          ref={iconGrid}
+          className="grid max-h-52 grid-cols-6 gap-1.5 overflow-y-auto rounded-md border p-2 sm:grid-cols-8"
+          role="radiogroup"
+          aria-label="Category icon"
+        >
+          {visibleIcons.map((name) => {
+            const label = name.replaceAll("-", " ")
+            const checked = selectedIcon === name
+            return (
+              <IconTooltip key={name} label={label}>
+                <label
+                  className={cn(
+                    "relative flex h-9 cursor-pointer items-center justify-center rounded-md border transition-colors focus-within:ring-2 focus-within:ring-ring",
+                    checked
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="category-icon"
+                    value={name}
+                    checked={checked}
+                    onChange={() => onChange(name)}
+                    aria-label={label}
+                    className="sr-only"
+                  />
+                  <DynamicIcon name={name} />
+                </label>
+              </IconTooltip>
+            )
+          })}
+        </div>
+      ) : (
+        <p role="status" className="text-sm text-muted-foreground">
+          No icons match your search.
+        </p>
+      )}
+      {iconTotalPages > 1 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+          <PaginationControls
+            page={iconPage}
+            totalPages={iconTotalPages}
+            isLoading={false}
+            onPageChange={changeIconPage}
+          />
+        </div>
+      )}
+    </Field>
+  )
 }
 
 export function CategoriesTagsView() {
@@ -126,16 +243,11 @@ export function CategoriesTagsView() {
   }
 
   const saveCategoryMutation = useMutation({
-    mutationFn: async (input: { id?: string; name: string; icon: string }) => {
-      if (input.id) {
-        return updateCategoryApi({
-          id: input.id,
-          name: input.name,
-          icon: input.icon,
-        })
-      }
-      return createCategoryApi({ name: input.name, icon: input.icon })
-    },
+    mutationFn: (
+      input:
+        | { name: string; icon: string }
+        | { id: string; name: string; icon?: string }
+    ) => ("id" in input ? updateCategoryApi(input) : createCategoryApi(input)),
     onSuccess: async () => {
       await invalidateAfterCategoryChange()
       setCatDialogOpen(false)
@@ -260,11 +372,15 @@ export function CategoriesTagsView() {
       return
     }
     setCatFormError(null)
-    saveCategoryMutation.mutate({
-      id: editingCategory?.id,
-      name: trimmed,
-      icon: catIcon,
-    })
+    saveCategoryMutation.mutate(
+      editingCategory
+        ? {
+            id: editingCategory.id,
+            name: trimmed,
+            icon: catIcon === editingCategory.icon ? undefined : catIcon,
+          }
+        : { name: trimmed, icon: catIcon }
+    )
   }
 
   const handleTagSubmit = (e: SubmitEvent<HTMLFormElement>) => {
@@ -326,28 +442,33 @@ export function CategoriesTagsView() {
       </div>
 
       <Tabs
+        className="gap-4"
         value={tab}
         onValueChange={(value) => {
           if (value === "categories" || value === "tags") void setTab(value)
         }}
       >
-        <TabsList variant="line" aria-label="Categories and Tags sections">
-          <TabsTab value="categories">
+        <TabsList
+          variant="line"
+          className="max-w-full overflow-x-auto pb-1.5"
+          aria-label="Categories and Tags sections"
+        >
+          <TabsTrigger value="categories">
             <FolderKanbanIcon className="size-4" />
             Categories
             <Badge variant="secondary" className="text-xs">
               {catQuery.isLoading ? "…" : categories.length}
             </Badge>
-          </TabsTab>
-          <TabsTab value="tags">
+          </TabsTrigger>
+          <TabsTrigger value="tags">
             <TagIcon className="size-4" />
             Tags
             <Badge variant="secondary" className="text-xs">
               {tagQuery.isLoading ? "…" : tags.length}
             </Badge>
-          </TabsTab>
+          </TabsTrigger>
         </TabsList>
-        <TabsPanel value="categories">
+        <TabsContent value="categories">
           <Card>
             <CardHeader>
               <CardTitle>Categories</CardTitle>
@@ -387,8 +508,8 @@ export function CategoriesTagsView() {
               )}
             </CardContent>
           </Card>
-        </TabsPanel>
-        <TabsPanel value="tags">
+        </TabsContent>
+        <TabsContent value="tags">
           <Card>
             <CardHeader>
               <CardTitle>Tags</CardTitle>
@@ -440,11 +561,11 @@ export function CategoriesTagsView() {
               )}
             </CardContent>
           </Card>
-        </TabsPanel>
+        </TabsContent>
       </Tabs>
 
       <Dialog open={catDialogOpen} onOpenChange={setCatDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
           <form onSubmit={handleCategorySubmit} className="space-y-4">
             <DialogHeader>
               <DialogTitle>
@@ -474,43 +595,7 @@ export function CategoriesTagsView() {
               />
             </Field>
 
-            <Field>
-              <div className="flex items-center justify-between">
-                <FieldLabel>Icon</FieldLabel>
-                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <DynamicIcon name={catIcon} className="size-3.5" />
-                  {catIcon}
-                </span>
-              </div>
-              <div
-                className="grid max-h-52 grid-cols-6 gap-1.5 overflow-y-auto rounded-md border p-2 sm:grid-cols-8"
-                role="radiogroup"
-                aria-label="Category icon"
-              >
-                {CATEGORY_ICON_OPTIONS.map((opt) => {
-                  const selected = catIcon === opt.name
-                  return (
-                    <IconTooltip key={opt.name} label={opt.label}>
-                      <button
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        aria-label={opt.label}
-                        onClick={() => setCatIcon(opt.name)}
-                        className={cn(
-                          "flex h-9 items-center justify-center rounded-md border transition-colors",
-                          selected
-                            ? "border-primary bg-primary/10 text-primary"
-                            : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
-                        )}
-                      >
-                        <DynamicIcon name={opt.name} className="size-4" />
-                      </button>
-                    </IconTooltip>
-                  )
-                })}
-              </div>
-            </Field>
+            <CategoryIconPicker value={catIcon} onChange={setCatIcon} />
 
             <DialogFooter>
               <DialogClose render={<Button type="button" variant="outline" />}>

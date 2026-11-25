@@ -15,6 +15,8 @@ import { memo, useMemo } from "react"
 import { DynamicIcon } from "@/components/dynamic-icon"
 import { PaginationControls } from "@/components/pagination-controls"
 
+import { DebouncedSearchInput } from "@/components/debounced-search-input"
+import { IconTooltip } from "@/components/icon-tooltip"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -31,7 +33,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
-import { DebouncedSearchInput } from "@/components/debounced-search-input"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -42,7 +43,6 @@ import {
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
-import { IconTooltip } from "@/components/ui/tooltip"
 import { categoriesQuery } from "@/lib/api/categories"
 import { tagsQuery } from "@/lib/api/tags"
 import {
@@ -626,7 +626,6 @@ const TransactionRow = memo(function TransactionRow({
           aria-label={`Select ${title} (${formattedAmount})`}
           checked={isSelected}
           onCheckedChange={(checked) => onToggleRow(tx.id, Boolean(checked))}
-          className="mt-1 self-start"
         />
         <Button
           type="button"

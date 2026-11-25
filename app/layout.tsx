@@ -1,4 +1,4 @@
-import { Geist_Mono, Inter } from "next/font/google"
+import { Geist_Mono, Inter, Figtree, Manrope } from "next/font/google"
 import type { Metadata } from "next"
 
 import "./globals.css"
@@ -6,7 +6,9 @@ import { AppShell } from "@/components/app-shell"
 import { Providers } from "@/components/providers"
 import { cn } from "@/lib/utils"
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-sans" })
+const manropeHeading = Manrope({subsets:['latin'],variable:'--font-heading'});
+
+const inter = Inter({subsets:['latin'],variable:'--font-sans'})
 const fontMono = Geist_Mono({ subsets: ["latin"], variable: "--font-mono" })
 
 export const metadata: Metadata = {
@@ -25,11 +27,9 @@ export default function RootLayout({
       lang="en"
       suppressHydrationWarning
       className={cn(
-        "antialiased",
-        fontMono.variable,
-        "font-sans",
-        inter.variable
-      )}
+              "antialiased",
+              fontMono.variable
+            , "font-sans", inter.variable, manropeHeading.variable)}
     >
       <body>
         <Providers>

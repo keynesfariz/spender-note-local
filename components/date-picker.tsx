@@ -1,6 +1,6 @@
 "use client"
 
-import { IconTooltip } from "@/components/ui/tooltip"
+import { IconTooltip } from "@/components/icon-tooltip"
 import { CalendarIcon, XIcon } from "lucide-react"
 import { lazy, Suspense, useState } from "react"
 import type { DateRange } from "react-day-picker"

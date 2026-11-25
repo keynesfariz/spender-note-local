@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useMemo, useState, type SubmitEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
-import { IconTooltip } from "@/components/ui/tooltip"
+import { IconTooltip } from "@/components/icon-tooltip"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   AlertDialog,

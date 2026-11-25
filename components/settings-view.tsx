@@ -8,7 +8,7 @@ import { useState } from "react"
 import { LocaleSettingsTab } from "@/components/settings/locale-settings-tab"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { settingsQuery } from "@/lib/api/settings"
 
 function SettingsTabLoading() {
@@ -123,51 +123,55 @@ export function SettingsView({
         </Alert>
       )}
 
-      <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList variant="line" aria-label="Settings sections">
-          <TabsTab value="general">General</TabsTab>
-          <TabsTab
+      <Tabs className="gap-4" value={activeTab} onValueChange={handleTabChange}>
+        <TabsList
+          variant="line"
+          className="max-w-full overflow-x-auto pb-1.5"
+          aria-label="Settings sections"
+        >
+          <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger
             value="gmail"
             onPointerEnter={preloadGmailSendersTab}
             onFocus={preloadGmailSendersTab}
           >
             Gmail &amp; Senders
-          </TabsTab>
-          <TabsTab
+          </TabsTrigger>
+          <TabsTrigger
             value="triage"
             onPointerEnter={preloadTriageRulesTab}
             onFocus={preloadTriageRulesTab}
           >
             Triage &amp; Rules
-          </TabsTab>
-          <TabsTab
+          </TabsTrigger>
+          <TabsTrigger
             value="llm"
             onPointerEnter={preloadLlmSettingsTab}
             onFocus={preloadLlmSettingsTab}
           >
             Local LLM
-          </TabsTab>
+          </TabsTrigger>
         </TabsList>
 
-        <TabsPanel value="general">
+        <TabsContent value="general">
           <LocaleSettingsTab settings={settings.data} />
-        </TabsPanel>
+        </TabsContent>
 
-        <TabsPanel value="gmail">
+        <TabsContent value="gmail">
           {activeTab === "gmail" && (
             <GmailSendersTab settings={settings.data} />
           )}
-        </TabsPanel>
+        </TabsContent>
 
-        <TabsPanel value="triage">
+        <TabsContent value="triage">
           {activeTab === "triage" && (
             <TriageRulesTab settings={settings.data} />
           )}
-        </TabsPanel>
+        </TabsContent>
 
-        <TabsPanel value="llm">
+        <TabsContent value="llm">
           {activeTab === "llm" && <LlmSettingsTab settings={settings.data} />}
-        </TabsPanel>
+        </TabsContent>
       </Tabs>
     </div>
   )

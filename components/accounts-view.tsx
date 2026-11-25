@@ -1,6 +1,7 @@
 "use client"
 
-import { IconTooltip } from "@/components/ui/tooltip"
+import { DetailDrawerContent } from "@/components/detail-drawer-content"
+import { IconTooltip } from "@/components/icon-tooltip"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   CalendarRangeIcon,
@@ -34,15 +35,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import {
-  Drawer,
-  DrawerBody,
-  DrawerContent,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger,
-} from "@/components/ui/drawer"
+import { Drawer, DrawerTrigger } from "@/components/ui/drawer"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   accountReconciliationsQuery,
@@ -171,7 +164,7 @@ function AccountBillingDrawer({
   ]
 
   return (
-    <Drawer>
+    <Drawer swipeDirection="right">
       <IconTooltip label="Billing cycles · Unbilled and last cycle">
         <DrawerTrigger
           render={<Button variant="outline" size="icon-sm" />}
@@ -180,27 +173,21 @@ function AccountBillingDrawer({
           <CalendarRangeIcon />
         </DrawerTrigger>
       </IconTooltip>
-      <DrawerContent>
-        <DrawerHeader>
-          <DrawerTitle>Billing cycles</DrawerTitle>
-          <DrawerDescription>{account.name}</DrawerDescription>
-        </DrawerHeader>
-        <DrawerBody>
-          <dl className="grid gap-3 sm:grid-cols-2">
-            {cycles.map(({ label, period }) => (
-              <div key={label} className="rounded-xl border bg-muted/50 p-4">
-                <dt className="font-medium">{label}</dt>
-                <dd className="mt-1 text-xl font-semibold tabular-nums">
-                  {formatMinorCurrency(period.spent_minor, account.currency)}
-                </dd>
-                <dd className="mt-1 text-xs text-muted-foreground">
-                  {formatDateRangeLabel(period.start_date, period.end_date)}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </DrawerBody>
-      </DrawerContent>
+      <DetailDrawerContent title="Billing cycles" description={account.name}>
+        <dl className="grid gap-3 sm:grid-cols-2">
+          {cycles.map(({ label, period }) => (
+            <div key={label} className="rounded-xl border bg-muted/50 p-4">
+              <dt className="font-medium">{label}</dt>
+              <dd className="mt-1 text-xl font-semibold tabular-nums">
+                {formatMinorCurrency(period.spent_minor, account.currency)}
+              </dd>
+              <dd className="mt-1 text-xs text-muted-foreground">
+                {formatDateRangeLabel(period.start_date, period.end_date)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </DetailDrawerContent>
     </Drawer>
   )
 }
@@ -436,7 +423,7 @@ export function AccountsView() {
                       )}
                     </div>
                     <div className="flex items-center gap-1">
-                      <Drawer>
+                      <Drawer swipeDirection="right">
                         <IconTooltip label="Reconciliation history">
                           <DrawerTrigger
                             render={<Button variant="outline" size="icon-sm" />}
@@ -445,20 +432,15 @@ export function AccountsView() {
                             <HistoryIcon />
                           </DrawerTrigger>
                         </IconTooltip>
-                        <DrawerContent>
-                          <DrawerHeader>
-                            <DrawerTitle>Reconciliation history</DrawerTitle>
-                            <DrawerDescription>
-                              {account.name}
-                            </DrawerDescription>
-                          </DrawerHeader>
-                          <DrawerBody>
-                            <AccountReconciliationHistory
-                              accountId={account.id}
-                              timezone={settings.data?.timezone}
-                            />
-                          </DrawerBody>
-                        </DrawerContent>
+                        <DetailDrawerContent
+                          title="Reconciliation history"
+                          description={account.name}
+                        >
+                          <AccountReconciliationHistory
+                            accountId={account.id}
+                            timezone={settings.data?.timezone}
+                          />
+                        </DetailDrawerContent>
                       </Drawer>
                       {account.billing_cycle && (
                         <AccountBillingDrawer

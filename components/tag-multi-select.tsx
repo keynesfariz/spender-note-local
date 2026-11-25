@@ -1,6 +1,6 @@
 "use client"
 
-import { IconTooltip } from "@/components/ui/tooltip"
+import { IconTooltip } from "@/components/icon-tooltip"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { PlusIcon, TagIcon, XIcon } from "lucide-react"
 import { useMemo, useState } from "react"
@@ -169,17 +169,15 @@ export function TagMultiSelect({
             <Badge key={tag.id} variant="secondary" className="gap-1 pr-1">
               <span>{tag.name}</span>
               <IconTooltip label="Remove tag">
-                <IconTooltip label="Remove tag">
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    aria-label={`Remove tag ${tag.name}`}
-                    onClick={() => toggleTag(tag.id)}
-                    className="rounded-xs p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-                  >
-                    <XIcon className="size-3" />
-                  </button>
-                </IconTooltip>
+                <button
+                  type="button"
+                  disabled={disabled}
+                  aria-label={`Remove tag ${tag.name}`}
+                  onClick={() => toggleTag(tag.id)}
+                  className="rounded-xs p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                >
+                  <XIcon className="size-3" />
+                </button>
               </IconTooltip>
             </Badge>
           ))}

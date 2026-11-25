@@ -10,7 +10,7 @@ import { useState, type ReactNode } from "react"
 import { SyncToast } from "@/components/sync-toast"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { IconTooltip } from "@/components/ui/tooltip"
+import { IconTooltip } from "@/components/icon-tooltip"
 import { accountsQuery } from "@/lib/api/accounts"
 import { categoriesQuery } from "@/lib/api/categories"
 import {

@@ -32,7 +32,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { accountOptionsQuery } from "@/lib/api/accounts"
 import { localeQuery } from "@/lib/api/settings"
 import {
@@ -475,6 +475,7 @@ export function TransactionsView() {
         </Alert>
       ) : (
         <Tabs
+          className="gap-4"
           value={filters.tab}
           onValueChange={(value) => {
             if (value === "transactions" || value === "skipped") {
@@ -484,11 +485,12 @@ export function TransactionsView() {
         >
           <TabsList
             variant="line"
+            className="max-w-full overflow-x-auto pb-1.5"
             aria-label="Transaction views"
             activateOnFocus={false}
           >
-            <TabsTab value="transactions">Transactions</TabsTab>
-            <TabsTab
+            <TabsTrigger value="transactions">Transactions</TabsTrigger>
+            <TabsTrigger
               value="skipped"
               onPointerEnter={preloadSkippedTransactionsList}
               onFocus={preloadSkippedTransactionsList}
@@ -500,10 +502,10 @@ export function TransactionsView() {
                   <span className="sr-only"> awaiting triage</span>
                 </Badge>
               )}
-            </TabsTab>
+            </TabsTrigger>
           </TabsList>
 
-          <TabsPanel value="transactions">
+          <TabsContent value="transactions" className="space-y-6">
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
@@ -648,9 +650,9 @@ export function TransactionsView() {
               totalCount={totalCount}
               onPageChange={handlePageChange}
             />
-          </TabsPanel>
+          </TabsContent>
 
-          <TabsPanel value="skipped">
+          <TabsContent value="skipped">
             {isSkippedTab && (
               <SkippedTransactionsList
                 rows={skippedQuery.data?.items ?? []}
@@ -678,7 +680,7 @@ export function TransactionsView() {
                 onPageChange={(page) => void setFilters({ skippedPage: page })}
               />
             )}
-          </TabsPanel>
+          </TabsContent>
         </Tabs>
       )}
 

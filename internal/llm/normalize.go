@@ -224,10 +224,56 @@ func formatUtcIsoSeconds(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05Z")
 }
 
-func parseRawExtractedDateTimeToUtc(txDate, txTime, tzOffset *string, userTimezone string, receivedAtUtc string) string {
+func parseEmbeddedTimestamp(raw string, tzOffset *string, userTimezone string) (string, bool) {
+	clean := strings.TrimSpace(raw)
+	if clean == "" {
+		return "", false
+	}
+	for _, layout := range []string{
+		time.RFC3339,
+		"2006-01-02 15:04:05Z07:00",
+		"2006-01-02 15:04:05-0700",
+		"2006-01-02 15:04Z07:00",
+		"2006-01-02 15:04-0700",
+		"2006-01-02T15:04:05-0700",
+	} {
+		if parsed, err := time.Parse(layout, clean); err == nil {
+			return formatUtcIsoSeconds(parsed), true
+		}
+	}
+
+	loc := resolveLocationOrUTC(userTimezone)
+	if tzOffset != nil && tzOffsetRe.MatchString(strings.TrimSpace(*tzOffset)) {
+		cleanOff := strings.TrimSpace(*tzOffset)
+		for _, naive := range []string{"2006-01-02 15:04:05", "2006-01-02T15:04:05", "2006-01-02 15:04", "2006-01-02T15:04"} {
+			if parsedNaive, err := time.Parse(naive, clean); err == nil {
+				if parsed, err := time.Parse(time.RFC3339, parsedNaive.Format("2006-01-02T15:04:05")+cleanOff); err == nil {
+					return formatUtcIsoSeconds(parsed), true
+				}
+			}
+		}
+	}
+	for _, naive := range []string{"2006-01-02 15:04:05", "2006-01-02T15:04:05", "2006-01-02 15:04", "2006-01-02T15:04"} {
+		if parsed, err := time.ParseInLocation(naive, clean, loc); err == nil {
+			return formatUtcIsoSeconds(parsed), true
+		}
+	}
+	return "", false
+}
+
+// ParseRawExtractedDateTimeToUtc converts extracted date/time/offset fields into
+// canonical YYYY-MM-DDTHH:MM:SSZ timestamps, supporting RFC3339 and
+// space-separated ISO timestamps alongside split date/time fields.
+func ParseRawExtractedDateTimeToUtc(txDate, txTime, tzOffset *string, userTimezone string, receivedAtUtc string) string {
 	fallback := receivedAtUtc
 	if parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(receivedAtUtc)); err == nil {
 		fallback = formatUtcIsoSeconds(parsed)
+	}
+
+	if txDate != nil {
+		if ts, ok := parseEmbeddedTimestamp(*txDate, tzOffset, userTimezone); ok {
+			return ts
+		}
 	}
 
 	if strict := ParseStrictExtractedDateTimeToUtc(txDate, txTime, tzOffset, userTimezone); strict != nil {
@@ -273,26 +319,89 @@ func trimNonEmpty(raw *string) *string {
 	return &trimmed
 }
 
-func NormalizeExtractedResult(raw *RawExtraction, rawJSON string, input ExtractInput) (*ExtractResult, error) {
-	if raw.EmailKind == "non_transaction" {
-		return &ExtractResult{
-			EmailKind: "non_transaction",
-			RawJSON:   rawJSON,
-		}, nil
-	}
-
+func resolveNormalizedCurrency(raw *RawExtraction, input ExtractInput) string {
 	rawCurrency := ""
 	if raw.Currency != nil && strings.TrimSpace(*raw.Currency) != "" {
 		rawCurrency = strings.TrimSpace(*raw.Currency)
 	} else if input.UserCurrency != nil && strings.TrimSpace(*input.UserCurrency) != "" {
 		rawCurrency = strings.TrimSpace(*input.UserCurrency)
 	}
-	if rawCurrency == "" {
+	return strings.ToUpper(rawCurrency)
+}
+
+func resolveNormalizedCategory(rawCategory *string, categories []string) string {
+	validCategories := ResolveCategories(categories)
+	if rawCategory != nil {
+		trimmed := strings.TrimSpace(*rawCategory)
+		for _, c := range validCategories {
+			if strings.EqualFold(c, trimmed) {
+				return c
+			}
+		}
+	}
+	if slices.Contains(validCategories, "Other") {
+		return "Other"
+	}
+	return validCategories[0]
+}
+
+func NormalizeExtractedResult(raw *RawExtraction, rawJSON string, input ExtractInput) (*ExtractResult, error) {
+	if raw.EmailKind == "non_transaction" {
+		currency := resolveNormalizedCurrency(raw, input)
+		var amountMinor int64
+		if isoCurrencyRe.MatchString(currency) && raw.AmountDecimal != nil && strings.TrimSpace(*raw.AmountDecimal) != "" {
+			resolvedAmount := recoverTruncatedZeroDecimalAmount(*raw.AmountDecimal, currency, input.CleanedText)
+			if parsedMinor, err := parseAmountToMinor(resolvedAmount, currency); err == nil && parsedMinor > 0 {
+				amountMinor = parsedMinor
+			}
+		} else if !isoCurrencyRe.MatchString(currency) {
+			currency = ""
+		}
+
+		merchantRaw := ""
+		if raw.Merchant != nil {
+			merchantRaw = strings.TrimSpace(*raw.Merchant)
+		}
+
+		category := ""
+		if amountMinor > 0 {
+			category = resolveNormalizedCategory(raw.Category, input.Categories)
+		}
+
+		occurredAtUtc := ""
+		if amountMinor > 0 || input.ReceivedAtUtc != "" {
+			occurredAtUtc = ParseRawExtractedDateTimeToUtc(
+				raw.TransactionDate,
+				raw.TransactionTime,
+				raw.TimezoneOffset,
+				input.UserTimezone,
+				input.ReceivedAtUtc,
+			)
+		}
+
+		return &ExtractResult{
+			EmailKind:        "non_transaction",
+			AmountMinor:      amountMinor,
+			Currency:         currency,
+			OccurredAtUtc:    occurredAtUtc,
+			MerchantRaw:      merchantRaw,
+			Category:         category,
+			CardLast4:        normalizeCardLast4(raw.CardLast4),
+			PaymentMethodRaw: trimNonEmpty(raw.PaymentMethod),
+			BankAccountHint:  trimNonEmpty(raw.BankAccountHint),
+			MatchedAccountID: trimNonEmpty(raw.MatchedAccountID),
+			AccountTypeGuess: trimNonEmpty(raw.AccountTypeGuess),
+			ReferenceCode:    trimNonEmpty(raw.ReferenceCode),
+			RawJSON:          rawJSON,
+		}, nil
+	}
+
+	currency := resolveNormalizedCurrency(raw, input)
+	if currency == "" {
 		return nil, &ExtractionError{Message: "Missing currency for transaction extraction"}
 	}
-	currency := strings.ToUpper(rawCurrency)
 	if !isoCurrencyRe.MatchString(currency) {
-		return nil, &ExtractionError{Message: fmt.Sprintf("Invalid currency in extraction: %s", rawCurrency)}
+		return nil, &ExtractionError{Message: fmt.Sprintf("Invalid currency in extraction: %s", currency)}
 	}
 
 	if raw.AmountDecimal == nil || strings.TrimSpace(*raw.AmountDecimal) == "" {
@@ -304,7 +413,7 @@ func NormalizeExtractedResult(raw *RawExtraction, rawJSON string, input ExtractI
 		return nil, &ExtractionError{Message: fmt.Sprintf("Invalid amount_decimal %q for %s: %v", *raw.AmountDecimal, currency, err), Cause: err}
 	}
 
-	occurredAtUtc := parseRawExtractedDateTimeToUtc(
+	occurredAtUtc := ParseRawExtractedDateTimeToUtc(
 		raw.TransactionDate,
 		raw.TransactionTime,
 		raw.TimezoneOffset,
@@ -317,13 +426,7 @@ func NormalizeExtractedResult(raw *RawExtraction, rawJSON string, input ExtractI
 		merchantRaw = strings.TrimSpace(*raw.Merchant)
 	}
 
-	validCategories := ResolveCategories(input.Categories)
-	category := validCategories[0]
-	if raw.Category != nil && slices.Contains(validCategories, *raw.Category) {
-		category = *raw.Category
-	} else if slices.Contains(validCategories, "Other") {
-		category = "Other"
-	}
+	category := resolveNormalizedCategory(raw.Category, input.Categories)
 
 	return &ExtractResult{
 		EmailKind:        raw.EmailKind,

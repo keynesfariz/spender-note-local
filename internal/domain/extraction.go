@@ -174,7 +174,38 @@ func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc s
 	return nil
 }
 
+// ResolveEffectiveEmailRole resolves transaction source roles (`card_charge` or
+// `receipt`) consistently across sync admission, Ghost Row promotion, and Settings recovery.
+func ResolveEffectiveEmailRole(senderRoleHint *string, emailKind string, cardLast4, bankAccountHint *string) string {
+	if senderRoleHint != nil {
+		hint := strings.TrimSpace(*senderRoleHint)
+		if hint == "card_charge" || hint == "receipt" {
+			return hint
+		}
+	}
+	if emailKind == "card_charge" || emailKind == "receipt" {
+		return emailKind
+	}
+	if (cardLast4 != nil && strings.TrimSpace(*cardLast4) != "") ||
+		(bankAccountHint != nil && strings.TrimSpace(*bankAccountHint) != "") {
+		return "card_charge"
+	}
+	return "receipt"
+}
+
 func SaveExtractedTransaction(gdb *gorm.DB, input ExtractedTransactionInput) (string, error) {
+	var txID string
+	err := gdb.Transaction(func(tx *gorm.DB) error {
+		var saveErr error
+		txID, saveErr = SaveExtractedTransactionInTx(tx, input)
+		return saveErr
+	})
+	return txID, err
+}
+
+// SaveExtractedTransactionInTx persists an extracted transaction and source link
+// within an already-open transaction without starting a nested transaction.
+func SaveExtractedTransactionInTx(tx *gorm.DB, input ExtractedTransactionInput) (string, error) {
 	nowUtc := input.NowUtc
 	if nowUtc == "" {
 		nowUtc = NowUtcIsoSeconds()
@@ -187,62 +218,67 @@ func SaveExtractedTransaction(gdb *gorm.DB, input ExtractedTransactionInput) (st
 		return "", err
 	}
 
-	var txID string
-	err := gdb.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`
-			INSERT OR IGNORE INTO email_extractions (
-				id, email_id, email_kind, amount_minor, currency, occurred_at_utc,
-				merchant_raw, merchant_norm, category, card_last4, reference_code,
-				extraction_model, raw_llm_json
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sync', '{}')`,
-			uuid.NewString(), input.EmailID, input.EmailKind, input.AmountMinor, input.Currency,
-			input.OccurredAtUtc, input.MerchantRaw, merchantNorm, input.Category, input.CardLast4, input.ReferenceCode,
-		).Error; err != nil {
-			return err
-		}
+	var merchantRawPtr *string
+	if trimmed := strings.TrimSpace(input.MerchantRaw); trimmed != "" {
+		merchantRawPtr = &trimmed
+	}
+	var merchantNormPtr *string
+	if trimmed := strings.TrimSpace(merchantNorm); trimmed != "" {
+		merchantNormPtr = &trimmed
+	}
 
-		resolvedAccount := input.ResolvedAccountID
-		if resolvedAccount == nil {
-			resolvedAccount = MatchAccountForExtraction(tx, MatchAccountParams{CardLast4: input.CardLast4})
-		}
+	if err := tx.Exec(`
+		INSERT OR IGNORE INTO email_extractions (
+			id, email_id, email_kind, amount_minor, currency, occurred_at_utc,
+			merchant_raw, merchant_norm, category, card_last4, reference_code,
+			extraction_model, raw_llm_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sync', '{}')`,
+		uuid.NewString(), input.EmailID, input.EmailKind, input.AmountMinor, input.Currency,
+		input.OccurredAtUtc, merchantRawPtr, merchantNormPtr, input.Category, input.CardLast4, input.ReferenceCode,
+	).Error; err != nil {
+		return "", err
+	}
 
-		merchant := strings.TrimSpace(input.MerchantRaw)
-		if merchant == "" {
-			merchant = "Unknown Merchant"
-		}
-		category := ResolveKnownCategory(tx, input.Category)
+	resolvedAccount := input.ResolvedAccountID
+	if resolvedAccount == nil {
+		resolvedAccount = MatchAccountForExtraction(tx, MatchAccountParams{CardLast4: input.CardLast4})
+	}
 
-		txID = uuid.NewString()
-		if err := tx.Create(&db.Transaction{
-			ID:             txID,
-			SourceType:     "gmail",
-			AccountID:      resolvedAccount,
-			AmountMinor:    input.AmountMinor,
-			Currency:       input.Currency,
-			OccurredAtUtc:  input.OccurredAtUtc,
-			Merchant:       merchant,
-			Category:       category,
-			ManualOverride: 0,
-			Reviewed:       0,
-			CreatedAtUtc:   nowUtc,
-			UpdatedAtUtc:   nowUtc,
-		}).Error; err != nil {
-			return err
-		}
+	merchant := strings.TrimSpace(input.MerchantRaw)
+	if merchant == "" {
+		merchant = "Unknown Merchant"
+	}
+	category := ResolveKnownCategory(tx, input.Category)
 
-		if err := tx.Create(&db.TransactionSource{
-			ID:            uuid.NewString(),
-			TransactionID: txID,
-			EmailID:       input.EmailID,
-			Role:          input.EmailKind,
-			MatchScore:    1.0,
-			MatchState:    "single",
-		}).Error; err != nil {
-			return err
-		}
-		return nil
-	})
-	return txID, err
+	txID := uuid.NewString()
+	if err := tx.Create(&db.Transaction{
+		ID:             txID,
+		SourceType:     "gmail",
+		AccountID:      resolvedAccount,
+		AmountMinor:    input.AmountMinor,
+		Currency:       input.Currency,
+		OccurredAtUtc:  input.OccurredAtUtc,
+		Merchant:       merchant,
+		Category:       category,
+		ManualOverride: 0,
+		Reviewed:       0,
+		CreatedAtUtc:   nowUtc,
+		UpdatedAtUtc:   nowUtc,
+	}).Error; err != nil {
+		return "", err
+	}
+
+	if err := tx.Create(&db.TransactionSource{
+		ID:            uuid.NewString(),
+		TransactionID: txID,
+		EmailID:       input.EmailID,
+		Role:          input.EmailKind,
+		MatchScore:    1.0,
+		MatchState:    "single",
+	}).Error; err != nil {
+		return "", err
+	}
+	return txID, nil
 }
 
 func SplitTransactionSource(gdb *gorm.DB, transactionID, emailID string) (string, error) {

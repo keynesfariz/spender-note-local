@@ -983,3 +983,216 @@ func TestRunExtractionWorker_UsesCustomCategoriesFromDatabase(t *testing.T) {
 		t.Fatalf("expected persisted transaction category 'Pet Supplies', got %q", tx.Category)
 	}
 }
+
+func TestRunExtractionWorker_LearnedPoliciesPrecedenceGhostStateAndRace(t *testing.T) {
+	gdb := openTestDB(t)
+	sender := seedSender(t, gdb, "sender-grab", "no-reply@grab.com", nil)
+
+	ignoreSig := domain.DeriveEmailTemplateSignature(
+		"no-reply@grab.com",
+		"Ride Cover Plus: Sorry for the long wait. Here's your Rp11.000 voucher.",
+		"Ride Cover\nHi Nagib Fariz,",
+	)
+	admitSig := domain.DeriveEmailTemplateSignature(
+		"no-reply@grab.com",
+		"Your Grab E-Receipt",
+		"Grab Tips E-Receipt\nGrabFood\nRp 5000",
+	)
+	if err := gdb.Create([]db.SenderTriagePolicy{
+		{
+			ID:             "pol-ignore",
+			SenderEmail:    ignoreSig.SenderEmail,
+			SignatureKey:   ignoreSig.SignatureKey,
+			SubjectPattern: ignoreSig.SubjectPattern,
+			BodyCue:        ignoreSig.BodyCue,
+			Action:         "ignore",
+			CreatedAtUtc:   "2026-11-24T00:00:00Z",
+			UpdatedAtUtc:   "2026-11-24T00:00:00Z",
+		},
+		{
+			ID:             "pol-admit",
+			SenderEmail:    admitSig.SenderEmail,
+			SignatureKey:   admitSig.SignatureKey,
+			SubjectPattern: admitSig.SubjectPattern,
+			BodyCue:        admitSig.BodyCue,
+			Action:         "admit",
+			CreatedAtUtc:   "2026-11-24T00:00:00Z",
+			UpdatedAtUtc:   "2026-11-24T00:00:00Z",
+		},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var calls atomic.Int32
+	midFlightEntered := make(chan struct{})
+	releaseMidFlight := make(chan struct{})
+	raceSig := domain.DeriveEmailTemplateSignature(
+		"no-reply@grab.com",
+		"Race Test Transfer Alert",
+		"Transaction Type\n:\nRace Payment\nRp 75000",
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		userPrompt := ""
+		for _, m := range body.Messages {
+			if m.Role == "user" {
+				userPrompt = m.Content
+			}
+		}
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(userPrompt, "email-ignored"):
+			t.Fatalf("learned ignore policy must skip LLM call")
+		case strings.Contains(userPrompt, "email-admit-null"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{
+					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"card_last4":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
+				},
+			})
+		case strings.Contains(userPrompt, "email-admit-ok"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{
+					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"5000","currency":"IDR","transaction_date":"2026-11-23","transaction_time":"20:14:00","timezone_offset":"+07:00","merchant":"","category":"Transportation","card_last4":"6039","payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"credit_card","reference_code":null}`}},
+				},
+			})
+		case strings.Contains(userPrompt, "email-ghost"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{
+					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"100000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"11:34:40","timezone_offset":"+07:00","merchant":null,"category":null,"card_last4":null,"payment_method":"Bank Transfer","bank_account_hint":"****9988","matched_account_id":null,"account_type_guess":"debit_card","reference_code":null}`}},
+				},
+			})
+		case strings.Contains(userPrompt, "email-zero"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{
+					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"card_last4":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
+				},
+			})
+		case strings.Contains(userPrompt, "email-race"):
+			close(midFlightEntered)
+			<-releaseMidFlight
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{
+					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"75000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"12:00:00","timezone_offset":"+07:00","merchant":"Race Merchant","category":"Shopping","card_last4":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
+				},
+			})
+		}
+	}))
+	defer srv.Close()
+
+	emails := []db.RawEmail{
+		{
+			ID: "email-ignored", GmailMessageID: "gm-1", SenderID: &sender.ID, FromAddress: "no-reply@grab.com",
+			Subject: "Ride Cover Plus: Sorry for the long wait. Here's your Rp25.000 voucher.", CleanedText: "Ride Cover\nHi Nagib Fariz,",
+			InternalDateMs: 1795400001000, ReceivedAtUtc: "2026-11-24T01:00:01Z", Status: "pending",
+		},
+		{
+			ID: "email-admit-ok", GmailMessageID: "gm-2", SenderID: &sender.ID, FromAddress: "no-reply@grab.com",
+			Subject: "Your Grab E-Receipt", CleanedText: "Grab Tips E-Receipt\nGrabFood\nemail-admit-ok\nRp 5000",
+			InternalDateMs: 1795400002000, ReceivedAtUtc: "2026-11-24T01:00:02Z", Status: "pending",
+		},
+		{
+			ID: "email-admit-null", GmailMessageID: "gm-3", SenderID: &sender.ID, FromAddress: "no-reply@grab.com",
+			Subject: "Your Grab E-Receipt", CleanedText: "Grab Tips E-Receipt\nGrabFood\nemail-admit-null",
+			InternalDateMs: 1795400003000, ReceivedAtUtc: "2026-11-24T01:00:03Z", Status: "pending",
+		},
+		{
+			ID: "email-ghost", GmailMessageID: "gm-4", SenderID: &sender.ID, FromAddress: "no-reply@grab.com",
+			Subject: "Transfer Alert", CleanedText: "email-ghost",
+			InternalDateMs: 1795400004000, ReceivedAtUtc: "2026-11-24T01:00:04Z", Status: "pending",
+		},
+		{
+			ID: "email-zero", GmailMessageID: "gm-5", SenderID: &sender.ID, FromAddress: "no-reply@grab.com",
+			Subject: "Security Alert", CleanedText: "email-zero",
+			InternalDateMs: 1795400005000, ReceivedAtUtc: "2026-11-24T01:00:05Z", Status: "pending",
+		},
+		{
+			ID: "email-race", GmailMessageID: "gm-6", SenderID: &sender.ID, FromAddress: "no-reply@grab.com",
+			Subject: "Race Test Transfer Alert", CleanedText: "Transaction Type\n:\nRace Payment\nRp 75000\nemail-race",
+			InternalDateMs: 1795400006000, ReceivedAtUtc: "2026-11-24T01:00:06Z", Status: "pending",
+		},
+	}
+	for _, em := range emails {
+		if err := gdb.Create(&em).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := gdb.Create(&db.SyncRun{
+		ID: "run-triage", Status: "running", Phase: "extracting", LlmProvider: "openai_compatible", LlmModel: "qwen2.5", StartedAtUtc: "2026-11-24T02:00:00Z",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &validatedConfig{
+		Timezone: "Asia/Jakarta", Currency: "IDR", LlmProvider: "openai_compatible", LlmBaseURL: srv.URL + "/v1", LlmModel: "qwen2.5", LlmTimeoutMs: 5000,
+	}
+	client, err := llm.NewClient(cfg.LlmBaseURL, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedDone := make(chan struct{})
+	close(closedDone)
+
+	go func() {
+		<-midFlightEntered
+		_ = gdb.Create(&db.SenderTriagePolicy{
+			ID:             "pol-race-admit",
+			SenderEmail:    raceSig.SenderEmail,
+			SignatureKey:   raceSig.SignatureKey,
+			SubjectPattern: raceSig.SubjectPattern,
+			BodyCue:        raceSig.BodyCue,
+			Action:         "admit",
+			CreatedAtUtc:   "2026-11-24T02:01:00Z",
+			UpdatedAtUtc:   "2026-11-24T02:01:00Z",
+		}).Error
+		close(releaseMidFlight)
+	}()
+
+	if err := runExtractionWorker(context.Background(), gdb, "run-triage", cfg, client, nil, closedDone, nil); err != nil {
+		t.Fatalf("worker failed: %v", err)
+	}
+
+	if calls.Load() != 5 {
+		t.Fatalf("expected 5 LLM calls (ignored email skipped), got %d", calls.Load())
+	}
+
+	var extIgnored, extAdmitOK, extGhost, extZero, extRace db.EmailExtraction
+	var reAdmitNull db.RawEmail
+	gdb.First(&extIgnored, "email_id = ?", "email-ignored")
+	if extIgnored.ExtractionModel != "policy:ignore" || extIgnored.TriageState == nil || *extIgnored.TriageState != "ignored" {
+		t.Fatalf("unexpected ignored extraction: %+v", extIgnored)
+	}
+	gdb.First(&extAdmitOK, "email_id = ?", "email-admit-ok")
+	var srcAdmitOK db.TransactionSource
+	if err := gdb.First(&srcAdmitOK, "email_id = ?", "email-admit-ok").Error; err != nil || srcAdmitOK.Role != "card_charge" {
+		t.Fatalf("expected forced admit transaction source with card_charge role, got %+v err=%v", srcAdmitOK, err)
+	}
+	var txAdmitOK db.Transaction
+	gdb.First(&txAdmitOK, "id = ?", srcAdmitOK.TransactionID)
+	if txAdmitOK.Reviewed != 0 || txAdmitOK.AmountMinor != 5000 {
+		t.Fatalf("expected unreviewed 5000 transaction, got %+v", txAdmitOK)
+	}
+	if err := gdb.First(&reAdmitNull, "id = ?", "email-admit-null").Error; err != nil || reAdmitNull.Status != "failed" {
+		t.Fatalf("expected admit-matched missing-amount email to mark failed, got %+v", reAdmitNull)
+	}
+	gdb.First(&extGhost, "email_id = ?", "email-ghost")
+	if extGhost.TriageState == nil || *extGhost.TriageState != "ghost" || extGhost.AmountMinor == nil || *extGhost.AmountMinor != 100000 || extGhost.MerchantRaw != nil {
+		t.Fatalf("expected ghost extraction with 100000 and NULL blank merchant_raw, got %+v", extGhost)
+	}
+	gdb.First(&extZero, "email_id = ?", "email-zero")
+	if extZero.TriageState != nil {
+		t.Fatalf("expected zero-amount email to have NULL triage_state, got %q", *extZero.TriageState)
+	}
+	gdb.First(&extRace, "email_id = ?", "email-race")
+	var srcRace db.TransactionSource
+	if err := gdb.First(&srcRace, "email_id = ?", "email-race").Error; err != nil {
+		t.Fatalf("expected mid-sync admit policy race to force-admit email-race transaction, err=%v ext=%+v", err, extRace)
+	}
+}

@@ -180,6 +180,21 @@ type ProvisionalAccountParams struct {
 }
 
 func CreateProvisionalAccountForExtraction(gdb *gorm.DB, params ProvisionalAccountParams) (*AccountSummary, error) {
+	var summary *AccountSummary
+	err := gdb.Transaction(func(tx *gorm.DB) error {
+		var createErr error
+		summary, createErr = CreateProvisionalAccountForExtractionInTx(tx, params)
+		return createErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return summary, nil
+}
+
+// CreateProvisionalAccountForExtractionInTx creates a provisional account inside an
+// already-open transaction without starting a nested transaction.
+func CreateProvisionalAccountForExtractionInTx(tx *gorm.DB, params ProvisionalAccountParams) (*AccountSummary, error) {
 	var identifiers []AccountIdentifierInput
 	identifierLabel := ""
 
@@ -227,7 +242,7 @@ func CreateProvisionalAccountForExtraction(gdb *gorm.DB, params ProvisionalAccou
 		currency = strings.ToUpper(strings.TrimSpace(*params.Currency))
 	} else {
 		var err error
-		currency, err = getConfiguredAppCurrency(gdb)
+		currency, err = getConfiguredAppCurrency(tx)
 		if err != nil {
 			return nil, err
 		}
@@ -236,51 +251,44 @@ func CreateProvisionalAccountForExtraction(gdb *gorm.DB, params ProvisionalAccou
 	id := uuid.NewString()
 	nowUtc := NowUtcIsoSeconds()
 
-	var summary AccountSummary
-	err := gdb.Transaction(func(tx *gorm.DB) error {
-		acct := db.Account{
-			ID:                    id,
-			Name:                  name,
-			Type:                  resolvedType,
-			Currency:              currency,
-			InitialBalanceMinor:   nil,
-			InitialBalanceAsOfUtc: nowUtc,
-			Last4:                 validLast4,
-			Status:                "provisional",
-			CreatedAtUtc:          nowUtc,
-		}
-		if err := tx.Create(&acct).Error; err != nil {
-			return err
-		}
-		syncedLast4, err := replaceAccountIdentifiers(tx, id, identifiers, nowUtc)
-		if err != nil {
-			return err
-		}
-		if syncedLast4 != validLast4 {
-			if err := tx.Model(&db.Account{}).Where("id = ?", id).Update("last4", syncedLast4).Error; err != nil {
-				return err
-			}
-			acct.Last4 = syncedLast4
-		}
-		idents, err := listIdentifiersForAccount(tx, id)
-		if err != nil {
-			return err
-		}
-		summary = AccountSummary{
-			Account:               acct,
-			Identifiers:           idents,
-			ComputedBalanceMinor:  nil,
-			NetFlowMinor:          0,
-			UncountedForeignCount: 0,
-			LatestReconciliation:  nil,
-			TypeLocked:            false,
-		}
-		return nil
-	})
+	acct := db.Account{
+		ID:                    id,
+		Name:                  name,
+		Type:                  resolvedType,
+		Currency:              currency,
+		InitialBalanceMinor:   nil,
+		InitialBalanceAsOfUtc: nowUtc,
+		Last4:                 validLast4,
+		Status:                "provisional",
+		CreatedAtUtc:          nowUtc,
+	}
+	if err := tx.Create(&acct).Error; err != nil {
+		return nil, err
+	}
+	syncedLast4, err := replaceAccountIdentifiers(tx, id, identifiers, nowUtc)
 	if err != nil {
 		return nil, err
 	}
-	return &summary, nil
+	if syncedLast4 != validLast4 {
+		if err := tx.Model(&db.Account{}).Where("id = ?", id).Update("last4", syncedLast4).Error; err != nil {
+			return nil, err
+		}
+		acct.Last4 = syncedLast4
+	}
+	idents, err := listIdentifiersForAccount(tx, id)
+	if err != nil {
+		return nil, err
+	}
+	summary := &AccountSummary{
+		Account:               acct,
+		Identifiers:           idents,
+		ComputedBalanceMinor:  nil,
+		NetFlowMinor:          0,
+		UncountedForeignCount: 0,
+		LatestReconciliation:  nil,
+		TypeLocked:            false,
+	}
+	return summary, nil
 }
 
 func MergeAccounts(gdb *gorm.DB, sourceAccountID, targetAccountID string) (map[string]any, error) {

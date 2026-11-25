@@ -280,6 +280,110 @@ func TestParseStrictExtractedDateTimeToUtc(t *testing.T) {
 	}
 }
 
+func TestParseRawExtractedDateTimeToUtc_HandlesSpaceAndRFC3339Formats(t *testing.T) {
+	if got := ParseRawExtractedDateTimeToUtc(strPtr("2026-11-24 19:42:34+07:00"), nil, nil, "UTC", "2026-11-25T00:00:00Z"); got != "2026-11-24T12:42:34Z" {
+		t.Fatalf("expected 2026-11-24T12:42:34Z, got %s", got)
+	}
+	if got := ParseRawExtractedDateTimeToUtc(strPtr("2026-11-23T20:14:00+07:00"), nil, nil, "UTC", "2026-11-25T00:00:00Z"); got != "2026-11-23T13:14:00Z" {
+		t.Fatalf("expected 2026-11-23T13:14:00Z, got %s", got)
+	}
+	if got := ParseRawExtractedDateTimeToUtc(strPtr("2026-11-23"), strPtr("09:05"), nil, "Local", "2026-11-25T00:00:00Z"); got != "2026-11-23T09:05:00Z" {
+		t.Fatalf("expected Local timezone safely resolved as UTC 2026-11-23T09:05:00Z, got %s", got)
+	}
+}
+
+func TestBuildExtractionPrompt_GenericOutflowAndPositiveAmountCategory(t *testing.T) {
+	sysPrompt, _ := BuildExtractionPrompt(ExtractInput{
+		ReceivedAtUtc: "2026-11-24T00:00:00Z",
+		UserTimezone:  "UTC",
+		Categories:    []string{"Dining Out", "Other"},
+	})
+	lower := strings.ToLower(sysPrompt)
+	for _, want := range []string{"transfer", "qr", "tip", "positive amount"} {
+		if !strings.Contains(lower, want) {
+			t.Fatalf("expected generic outflow prompt rule containing %q, got:\n%s", want, sysPrompt)
+		}
+	}
+	if strings.Contains(lower, "(or null for non_transaction)") {
+		t.Fatalf("prompt must not force null category for non_transaction when an amount is present")
+	}
+	for _, banned := range []string{"qris", "bca", "jenius", "grab", "shopee", "idr"} {
+		if strings.Contains(lower, banned) {
+			t.Fatalf("baseline prompt must remain country-agnostic (found %q)", banned)
+		}
+	}
+}
+
+func TestNormalizeExtractedResult_NonTransactionDraftPreservationAndZeroFallback(t *testing.T) {
+	cur := "IDR"
+	raw, cleaned, err := ParseAndValidateExtraction(`{
+		"email_kind": "non_transaction",
+		"amount_decimal": "5000",
+		"currency": "IDR",
+		"transaction_date": "2026-11-23 20:14:00+07:00",
+		"transaction_time": null,
+		"timezone_offset": null,
+		"merchant": "   ",
+		"category": "Transportation",
+		"card_last4": "xxxx-6039",
+		"payment_method": "GrabPay",
+		"bank_account_hint": "****1234",
+		"matched_account_id": null,
+		"account_type_guess": "digital_wallet",
+		"reference_code": "A-123"
+	}`, []string{"Transportation", "Other"})
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	res, err := NormalizeExtractedResult(raw, cleaned, ExtractInput{
+		CleanedText:   "Grab Tips RP 5000",
+		ReceivedAtUtc: "2026-11-23T14:00:00Z",
+		UserTimezone:  "Asia/Jakarta",
+		UserCurrency:  &cur,
+		Categories:    []string{"Transportation", "Other"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error preserving non_transaction draft: %v", err)
+	}
+	if res.AmountMinor != 5000 || res.Currency != "IDR" || res.OccurredAtUtc != "2026-11-23T13:14:00Z" {
+		t.Fatalf("expected preserved amount/currency/utc, got %+v", res)
+	}
+	if res.MerchantRaw != "" {
+		t.Fatalf("expected blank MerchantRaw stored empty (for NULL) instead of synthetic fallback, got %q", res.MerchantRaw)
+	}
+	if res.Category != "Transportation" || res.CardLast4 == nil || *res.CardLast4 != "6039" || res.AccountTypeGuess == nil || *res.AccountTypeGuess != "digital_wallet" {
+		t.Fatalf("expected draft category/card/account_type preserved, got %+v", res)
+	}
+
+	// Non-transaction with null amount or invalid currency must return AmountMinor=0 with nil error.
+	for _, tc := range []struct {
+		name string
+		raw  *RawExtraction
+	}{
+		{
+			name: "null amount",
+			raw:  &RawExtraction{EmailKind: "non_transaction", AmountDecimal: nil, Currency: strPtr("IDR")},
+		},
+		{
+			name: "invalid currency",
+			raw:  &RawExtraction{EmailKind: "non_transaction", AmountDecimal: strPtr("100"), Currency: strPtr("UNKNOWN")},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			noAmt, err := NormalizeExtractedResult(tc.raw, `{}`, ExtractInput{
+				ReceivedAtUtc: "2026-11-23T14:00:00Z",
+				UserTimezone:  "UTC",
+			})
+			if err != nil {
+				t.Fatalf("expected non-fatal zero result on non_transaction (%s), got err=%v", tc.name, err)
+			}
+			if noAmt.AmountMinor != 0 {
+				t.Fatalf("expected AmountMinor=0, got %d", noAmt.AmountMinor)
+			}
+		})
+	}
+}
+
 func TestParseAndValidateEnrichment_RejectsInvalidOrMissingMerchant(t *testing.T) {
 	for _, bad := range []string{
 		"",

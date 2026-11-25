@@ -81,16 +81,17 @@ func BuildExtractionPrompt(input ExtractInput) (systemPrompt string, userPrompt 
 	sysLines := []string{
 		"You are a strict financial email extraction engine. Output ONLY a single JSON object matching the required schema.",
 		"Classify email_kind as:",
-		`- "card_charge": bank/card authorization or charge alert.`,
-		`- "receipt": merchant purchase receipt or order confirmation.`,
-		`- "non_transaction": credit card or bank billing statements, e-statements, monthly bill summaries (emails showing Total Billing, Minimum Payment, Statement Balance, or a future Payment Due Date), bill payments, shipping updates, OTPs, security alerts, promotional emails, and refunds. Never classify a billing statement or its due date as a card_charge.`,
+		`- "card_charge": bank, card, or digital-wallet charge, transfer outflow, or payment authorization alert.`,
+		`- "receipt": merchant purchase receipt, order confirmation, mobile or QR payment receipt, or service tip receipt.`,
+		`- "non_transaction": credit card or bank billing statements, e-statements, monthly bill summaries (emails showing Total Billing, Minimum Payment, Statement Balance, or a future Payment Due Date), bill payments, shipping updates, OTPs, security alerts, promotional vouchers, and cancellations. Never classify a billing statement or its due date as a card_charge.`,
 		"Rules:",
 		`- Return amount_decimal as a plain unformatted number string without thousand separators (e.g. "12.50" for "$12.50", or "1250" for "1,250").`,
 		`- Return currency as a 3-letter ISO 4217 code (e.g. "USD", "EUR", "GBP").`,
+		`- Whenever an email shows a positive amount (even when email_kind is "non_transaction"), still populate amount_decimal, currency, transaction_date, transaction_time, timezone_offset, merchant, category, and account cues rather than leaving them blank.`,
 	}
 	sysLines = append(sysLines, countryAndTzRules...)
 	sysLines = append(sysLines,
-		fmt.Sprintf("- Choose category strictly from: %s (or null for non_transaction).", strings.Join(validCategories, ", ")),
+		fmt.Sprintf("- Choose category strictly from: %s whenever any positive amount is present (or null only when no positive amount exists).", strings.Join(validCategories, ", ")),
 		"- Return card_last4 as 4 digits if present, otherwise null.",
 		`- Return payment_method as the raw payment method or wallet name shown in the email (e.g. "Apple Pay", "PayPal") if present, otherwise null.`,
 		`- Return bank_account_hint as the bank account number or masked suffix (e.g. "****5678") if present, otherwise null.`,

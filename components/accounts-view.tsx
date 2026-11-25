@@ -197,7 +197,7 @@ export function AccountsView() {
   const accounts = useQuery(accountsQuery())
   const settings = useQuery(localeQuery())
 
-  const addAccountTrigger = useRef<HTMLButtonElement>(null)
+  const formTrigger = useRef<HTMLButtonElement>(null)
   const [formOpen, setFormOpen] = useState(false)
   const [editingAccount, setEditingAccount] = useState<AccountSummary | null>(
     null
@@ -211,6 +211,15 @@ export function AccountsView() {
   const hasOpenedReconcile = useHasOpened(reconcilingAccount !== null)
   const hasOpenedMerge = useHasOpened(mergingAccount !== null)
   const [actionError, setActionError] = useState<string | null>(null)
+
+  function openAccountForm(
+    account: AccountSummary | null,
+    trigger: HTMLButtonElement
+  ) {
+    formTrigger.current = trigger
+    setEditingAccount(account)
+    setFormOpen(true)
+  }
 
   const hasCurrency = Boolean(settings.data?.currency)
   const provisionalCount = (accounts.data ?? []).reduce(
@@ -259,15 +268,11 @@ export function AccountsView() {
         </div>
 
         <Button
-          ref={addAccountTrigger}
           type="button"
           disabled={!hasCurrency}
           onPointerEnter={preloadAccountFormDialog}
           onFocus={preloadAccountFormDialog}
-          onClick={() => {
-            setEditingAccount(null)
-            setFormOpen(true)
-          }}
+          onClick={(event) => openAccountForm(null, event.currentTarget)}
         >
           Add account
         </Button>
@@ -480,10 +485,9 @@ export function AccountsView() {
                     size="sm"
                     onPointerEnter={preloadAccountFormDialog}
                     onFocus={preloadAccountFormDialog}
-                    onClick={() => {
-                      setEditingAccount(account)
-                      setFormOpen(true)
-                    }}
+                    onClick={(event) =>
+                      openAccountForm(account, event.currentTarget)
+                    }
                   >
                     Edit
                   </Button>
@@ -556,7 +560,7 @@ export function AccountsView() {
           account={editingAccount}
           currency={settings.data?.currency ?? "USD"}
           timezone={settings.data?.timezone}
-          addAccountTrigger={addAccountTrigger}
+          formTrigger={formTrigger}
         />
       )}
 

@@ -16,15 +16,6 @@ import { CreateFormDrawer } from "@/components/detail-drawer-content"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
   Field,
   FieldDescription,
   FieldError,
@@ -92,14 +83,14 @@ export function AccountFormDialog({
   account,
   currency,
   timezone,
-  addAccountTrigger,
+  formTrigger,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   account?: AccountSummary | null
   currency: string
   timezone?: string | null
-  addAccountTrigger: RefObject<HTMLButtonElement | null>
+  formTrigger: RefObject<HTMLButtonElement | null>
 }) {
   const queryClient = useQueryClient()
   const formId = useId()
@@ -222,10 +213,6 @@ export function AccountFormDialog({
   }, [formError, open])
 
   function showFieldError(tab: AccountTab, fieldId: string, message: string) {
-    if (account) {
-      setFormError({ message })
-      return
-    }
     setActiveTab(tab)
     setFormError({ message, fieldId })
   }
@@ -505,13 +492,7 @@ export function AccountFormDialog({
 
         return (
           <div key={row.key} className="space-y-2">
-            <div
-              className={
-                account
-                  ? "flex items-center gap-2"
-                  : "flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:border-0 sm:p-0"
-              }
-            >
+            <div className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:border-0 sm:p-0">
               <Input
                 id={valueId}
                 type="text"
@@ -521,7 +502,7 @@ export function AccountFormDialog({
                   updateIdentifier(row.key, { value: e.target.value })
                 }
                 placeholder={IDENTIFIER_PLACEHOLDERS[row.kind]}
-                className={account ? "flex-1" : "sm:flex-1"}
+                className="sm:flex-1"
                 {...invalidFieldProps(valueId)}
               />
               <Select
@@ -532,7 +513,7 @@ export function AccountFormDialog({
                 }}
               >
                 <SelectTrigger
-                  className={account ? "w-36" : "w-full sm:w-36"}
+                  className="w-full sm:w-36"
                   aria-label="Identifier type"
                 >
                   <SelectValue />
@@ -549,7 +530,7 @@ export function AccountFormDialog({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className={account ? undefined : "self-start sm:self-auto"}
+                className="self-start sm:self-auto"
                 onClick={() =>
                   setIdentifiers((prev) =>
                     prev.filter((r) => r.key !== row.key)
@@ -568,56 +549,30 @@ export function AccountFormDialog({
 
   const errorAlert =
     formError && !formError.fieldId ? (
-      <Alert
-        variant="destructive"
-        className={account ? undefined : "sticky top-0 z-10"}
-      >
+      <Alert variant="destructive" className="sticky top-0 z-10">
         <AlertDescription>{formError.message}</AlertDescription>
       </Alert>
     ) : null
 
-  if (account) {
-    return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Edit account</DialogTitle>
-            <DialogDescription>
-              Update account details and starting balance.
-            </DialogDescription>
-          </DialogHeader>
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {detailsFields}
-            {identifierFields}
-            {errorAlert}
-            <DialogFooter>
-              <DialogClose render={<Button type="button" variant="outline" />}>
-                Cancel
-              </DialogClose>
-              <Button type="submit" disabled={saveMutation.isPending}>
-                {saveMutation.isPending ? "Saving..." : "Save changes"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-    )
-  }
+  const actionLabel = account ? "Save changes" : "Create account"
 
   return (
     <CreateFormDrawer
       open={open}
       onOpenChange={onOpenChange}
-      title="Add account"
-      description={`Track balances in ${currency}.`}
+      title={account ? "Edit account" : "Add account"}
+      description={
+        account
+          ? "Update account details and starting balance."
+          : `Track balances in ${currency}.`
+      }
       formId={formId}
       onSubmit={handleSubmit}
       onInvalid={handleDetailsInvalid}
-      submitLabel={saveMutation.isPending ? "Saving..." : "Create account"}
+      submitLabel={saveMutation.isPending ? "Saving..." : actionLabel}
       submitDisabled={saveMutation.isPending}
       initialFocus={nameInput}
-      finalFocus={addAccountTrigger}
+      finalFocus={formTrigger}
     >
       {errorAlert}
       <Tabs

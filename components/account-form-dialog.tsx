@@ -1,9 +1,18 @@
 "use client"
 
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { useState, type SubmitEvent } from "react"
+import {
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type InvalidEvent,
+  type RefObject,
+  type SubmitEvent,
+} from "react"
 
 import { DatePicker } from "@/components/date-picker"
+import { CreateFormDrawer } from "@/components/detail-drawer-content"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -15,7 +24,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -24,6 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { createAccountApi, updateAccountApi } from "@/lib/api/accounts"
 import {
   type AccountIdentifierInput,
@@ -44,6 +59,8 @@ interface IdentifierDraft {
   kind: AccountIdentifierKind
   value: string
 }
+
+type AccountTab = "details" | "identifiers"
 
 const IDENTIFIER_PLACEHOLDERS: Record<AccountIdentifierKind, string> = {
   card_last4: "1234",
@@ -75,22 +92,34 @@ export function AccountFormDialog({
   account,
   currency,
   timezone,
+  addAccountTrigger,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   account?: AccountSummary | null
   currency: string
   timezone?: string | null
+  addAccountTrigger: RefObject<HTMLButtonElement | null>
 }) {
   const queryClient = useQueryClient()
+  const formId = useId()
+  const nameInput = useRef<HTMLInputElement>(null)
+  const nameId = `${formId}-name`
+  const balanceId = `${formId}-balance`
+  const balanceDateId = `${formId}-balance-date`
+  const statementDayId = `${formId}-statement-day`
 
+  const [activeTab, setActiveTab] = useState<AccountTab>("details")
   const [name, setName] = useState("")
   const [type, setType] = useState<AccountType>("credit_card")
   const [initialBalance, setInitialBalance] = useState("0")
   const [initialBalanceAsOf, setInitialBalanceAsOf] = useState("")
   const [statementDay, setStatementDay] = useState("")
   const [identifiers, setIdentifiers] = useState<IdentifierDraft[]>([])
-  const [formError, setFormError] = useState<string | null>(null)
+  const [formError, setFormError] = useState<{
+    message: string
+    fieldId?: string
+  } | null>(null)
 
   const [previous, setPrevious] = useState({
     open: false,
@@ -108,6 +137,7 @@ export function AccountFormDialog({
   }
   if (inputsChanged && open) {
     setFormError(null)
+    setActiveTab("details")
     if (account) {
       setName(account.name)
       setType(account.type)
@@ -179,19 +209,65 @@ export function AccountFormDialog({
       onOpenChange(false)
     },
     onError: (err) => {
-      setFormError(
-        err instanceof Error ? err.message : "Could not save account."
-      )
+      setFormError({
+        message: err instanceof Error ? err.message : "Could not save account.",
+      })
     },
   })
 
+  useLayoutEffect(() => {
+    if (open && formError?.fieldId) {
+      document.getElementById(formError.fieldId)?.focus()
+    }
+  }, [formError, open])
+
+  function showFieldError(tab: AccountTab, fieldId: string, message: string) {
+    if (account) {
+      setFormError({ message })
+      return
+    }
+    setActiveTab(tab)
+    setFormError({ message, fieldId })
+  }
+
+  function handleInvalid(event: InvalidEvent<HTMLFormElement>) {
+    // Only Details has native constraints. If it is hidden, replace the
+    // browser's validation bubble with the same message in the revealed tab.
+    if (activeTab !== "details") event.preventDefault()
+    const field = event.target
+    if (
+      !(field instanceof HTMLInputElement) ||
+      field !== event.currentTarget.querySelector("input:invalid")
+    ) {
+      return
+    }
+    if (activeTab === "details") {
+      setFormError(null)
+    } else {
+      showFieldError("details", field.id, field.validationMessage)
+    }
+  }
+
+  function invalidFieldProps(fieldId: string) {
+    return formError?.fieldId === fieldId
+      ? { "aria-invalid": true, "aria-describedby": `${fieldId}-error` }
+      : undefined
+  }
+
+  function renderFieldError(fieldId: string) {
+    return formError?.fieldId === fieldId ? (
+      <FieldError id={`${fieldId}-error`}>{formError.message}</FieldError>
+    ) : null
+  }
+
   function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
+    if (saveMutation.isPending) return
     setFormError(null)
 
     const trimmedName = name.trim()
     if (!trimmedName) {
-      setFormError("Account name is required.")
+      showFieldError("details", nameId, "Account name is required.")
       return
     }
 
@@ -200,14 +276,22 @@ export function AccountFormDialog({
       const trimmed = row.value.trim()
       if (!trimmed) continue
       if (row.kind === "card_last4" && !/^\d{4}$/.test(trimmed)) {
-        setFormError("Card last 4 digits must be exactly 4 numeric digits.")
+        showFieldError(
+          "identifiers",
+          `${formId}-identifier-${row.key}`,
+          "Card last 4 digits must be exactly 4 numeric digits."
+        )
         return
       }
       if (
         row.kind === "bank_account" &&
         trimmed.replace(/\D/g, "").length < 4
       ) {
-        setFormError("Bank account number must contain at least 4 digits.")
+        showFieldError(
+          "identifiers",
+          `${formId}-identifier-${row.key}`,
+          "Bank account number must contain at least 4 digits."
+        )
         return
       }
       cleanedIdentifiers.push({ kind: row.kind, value: trimmed })
@@ -223,7 +307,9 @@ export function AccountFormDialog({
           account?.currency || currency
         )
       } catch (err) {
-        setFormError(
+        showFieldError(
+          "details",
+          balanceId,
           err instanceof Error ? err.message : "Invalid initial balance."
         )
         return
@@ -240,7 +326,11 @@ export function AccountFormDialog({
         asOfUtc = dateInputToUtcIso(initialBalanceAsOf, timezone)
       }
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Invalid date.")
+      showFieldError(
+        "details",
+        balanceDateId,
+        err instanceof Error ? err.message : "Invalid date."
+      )
       return
     }
 
@@ -248,7 +338,11 @@ export function AccountFormDialog({
     if (type === "credit_card" && statementDay.trim() !== "") {
       const n = Number(statementDay.trim())
       if (!Number.isInteger(n) || n < 1 || n > 31) {
-        setFormError("Statement day must be a whole number between 1 and 31.")
+        showFieldError(
+          "details",
+          statementDayId,
+          "Statement day must be a whole number between 1 and 31."
+        )
         return
       }
       parsedStatementDay = n
@@ -265,209 +359,294 @@ export function AccountFormDialog({
     })
   }
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{account ? "Edit account" : "Add account"}</DialogTitle>
-          <DialogDescription>
-            {account
-              ? "Update account details and starting balance."
-              : `Track balances in ${currency}.`}
-          </DialogDescription>
-        </DialogHeader>
+  const detailsFields = (
+    <div className="space-y-4">
+      <Field>
+        <FieldLabel htmlFor={nameId}>Account name</FieldLabel>
+        <Input
+          ref={nameInput}
+          id={nameId}
+          type="text"
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Chase Sapphire"
+          {...invalidFieldProps(nameId)}
+        />
+        {renderFieldError(nameId)}
+      </Field>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <Field>
-            <FieldLabel>Account name</FieldLabel>
-            <Input
-              type="text"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Chase Sapphire"
-            />
-          </Field>
+      <Field>
+        <FieldLabel>Account type</FieldLabel>
+        <Select
+          items={ACCOUNT_TYPE_OPTIONS}
+          value={type}
+          disabled={Boolean(account?.type_locked)}
+          onValueChange={(v) => {
+            if (v) setType(v as AccountType)
+          }}
+        >
+          <SelectTrigger className="w-full" aria-label="Account type">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {ACCOUNT_TYPE_OPTIONS.map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {account?.type_locked && (
+          <FieldDescription>
+            Account type is locked because transactions or reconciliations
+            already exist.
+          </FieldDescription>
+        )}
+      </Field>
 
-          <Field>
-            <FieldLabel>Account type</FieldLabel>
-            <Select
-              items={ACCOUNT_TYPE_OPTIONS}
-              value={type}
-              disabled={Boolean(account?.type_locked)}
-              onValueChange={(v) => {
-                if (v) setType(v as AccountType)
-              }}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field>
+          <FieldLabel htmlFor={balanceId}>
+            Initial balance ({account?.currency || currency})
+          </FieldLabel>
+          <Input
+            id={balanceId}
+            type="text"
+            inputMode="decimal"
+            required={!account}
+            value={initialBalance}
+            onChange={(e) => setInitialBalance(e.target.value)}
+            placeholder="0.00"
+            {...invalidFieldProps(balanceId)}
+          />
+          {renderFieldError(balanceId)}
+        </Field>
+
+        <Field>
+          <FieldLabel htmlFor={balanceDateId}>As of date</FieldLabel>
+          <DatePicker
+            id={balanceDateId}
+            value={initialBalanceAsOf}
+            onChange={setInitialBalanceAsOf}
+            ariaLabel="As of date"
+          />
+          {renderFieldError(balanceDateId)}
+        </Field>
+      </div>
+
+      {type === "credit_card" && (
+        <Field>
+          <FieldLabel htmlFor={statementDayId}>
+            Statement day (optional)
+          </FieldLabel>
+          <Input
+            id={statementDayId}
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={31}
+            step={1}
+            value={statementDay}
+            onChange={(e) => setStatementDay(e.target.value)}
+            placeholder="e.g. 22"
+            {...invalidFieldProps(statementDayId)}
+          />
+          {renderFieldError(statementDayId)}
+          <FieldDescription>
+            Day of the month your credit card statement closes (1–31). Shorter
+            months clamp to the last day of the month.
+          </FieldDescription>
+        </Field>
+      )}
+    </div>
+  )
+
+  const identifierFields = (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground">
+          Identifiers (optional)
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            setIdentifiers((prev) => [
+              ...prev,
+              {
+                key: crypto.randomUUID(),
+                kind: type === "digital_wallet" ? "alias" : "card_last4",
+                value: "",
+              },
+            ])
+          }
+        >
+          Add identifier
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Add card last-4 digits, bank account numbers, or wallet aliases that
+        appear on emails.
+      </p>
+      {identifiers.map((row) => {
+        const valueId = `${formId}-identifier-${row.key}`
+
+        return (
+          <div key={row.key} className="space-y-2">
+            <div
+              className={
+                account
+                  ? "flex items-center gap-2"
+                  : "flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:border-0 sm:p-0"
+              }
             >
-              <SelectTrigger className="w-full" aria-label="Account type">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ACCOUNT_TYPE_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {account?.type_locked && (
-              <FieldDescription>
-                Account type is locked because transactions or reconciliations
-                already exist.
-              </FieldDescription>
-            )}
-          </Field>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field>
-              <FieldLabel>
-                Initial balance ({account?.currency || currency})
-              </FieldLabel>
               <Input
+                id={valueId}
                 type="text"
-                inputMode="decimal"
-                required={!account}
-                value={initialBalance}
-                onChange={(e) => setInitialBalance(e.target.value)}
-                placeholder="0.00"
-              />
-            </Field>
-
-            <Field>
-              <FieldLabel>As of date</FieldLabel>
-              <DatePicker
-                value={initialBalanceAsOf}
-                onChange={setInitialBalanceAsOf}
-                ariaLabel="As of date"
-              />
-            </Field>
-          </div>
-
-          {type === "credit_card" && (
-            <Field>
-              <FieldLabel>Statement day (optional)</FieldLabel>
-              <Input
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={31}
-                step={1}
-                value={statementDay}
-                onChange={(e) => setStatementDay(e.target.value)}
-                placeholder="e.g. 22"
-              />
-              <FieldDescription>
-                Day of the month your credit card statement closes (1–31).
-                Shorter months clamp to the last day of the month.
-              </FieldDescription>
-            </Field>
-          )}
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground">
-                Identifiers (optional)
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  setIdentifiers((prev) => [
-                    ...prev,
-                    {
-                      key: crypto.randomUUID(),
-                      kind: type === "digital_wallet" ? "alias" : "card_last4",
-                      value: "",
-                    },
-                  ])
+                aria-label="Identifier value"
+                value={row.value}
+                onChange={(e) =>
+                  setIdentifiers((prev) =>
+                    prev.map((r) =>
+                      r.key === row.key ? { ...r, value: e.target.value } : r
+                    )
+                  )
                 }
-              >
-                Add identifier
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Add card last-4 digits, bank account numbers, or wallet aliases
-              that appear on emails.
-            </p>
-            {identifiers.map((row) => (
-              <div key={row.key} className="flex items-center gap-2">
-                <Input
-                  type="text"
-                  aria-label="Identifier value"
-                  value={row.value}
-                  onChange={(e) =>
+                placeholder={IDENTIFIER_PLACEHOLDERS[row.kind]}
+                className={account ? "flex-1" : "sm:flex-1"}
+                {...invalidFieldProps(valueId)}
+              />
+              <Select
+                items={IDENTIFIER_KIND_OPTIONS}
+                value={row.kind}
+                onValueChange={(v) => {
+                  if (v) {
                     setIdentifiers((prev) =>
                       prev.map((r) =>
-                        r.key === row.key ? { ...r, value: e.target.value } : r
+                        r.key === row.key
+                          ? { ...r, kind: v as AccountIdentifierKind }
+                          : r
                       )
                     )
                   }
-                  placeholder={IDENTIFIER_PLACEHOLDERS[row.kind]}
-                  className="flex-1"
-                />
-                <Select
-                  items={IDENTIFIER_KIND_OPTIONS}
-                  value={row.kind}
-                  onValueChange={(v) => {
-                    if (v) {
-                      setIdentifiers((prev) =>
-                        prev.map((r) =>
-                          r.key === row.key
-                            ? { ...r, kind: v as AccountIdentifierKind }
-                            : r
-                        )
-                      )
-                    }
-                  }}
+                }}
+              >
+                <SelectTrigger
+                  className={account ? "w-36" : "w-full sm:w-36"}
+                  aria-label="Identifier type"
                 >
-                  <SelectTrigger className="w-36" aria-label="Identifier type">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {IDENTIFIER_KIND_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    setIdentifiers((prev) =>
-                      prev.filter((r) => r.key !== row.key)
-                    )
-                  }
-                >
-                  Remove
-                </Button>
-              </div>
-            ))}
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {IDENTIFIER_KIND_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={account ? undefined : "self-start sm:self-auto"}
+                onClick={() =>
+                  setIdentifiers((prev) =>
+                    prev.filter((r) => r.key !== row.key)
+                  )
+                }
+              >
+                Remove
+              </Button>
+            </div>
+            {renderFieldError(valueId)}
           </div>
+        )
+      })}
+    </div>
+  )
 
-          {formError && (
-            <Alert variant="destructive">
-              <AlertDescription>{formError}</AlertDescription>
-            </Alert>
-          )}
+  const errorAlert =
+    formError && !formError.fieldId ? (
+      <Alert
+        variant="destructive"
+        className={account ? undefined : "sticky top-0 z-10"}
+      >
+        <AlertDescription>{formError.message}</AlertDescription>
+      </Alert>
+    ) : null
 
-          <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" />}>
-              Cancel
-            </DialogClose>
-            <Button type="submit" disabled={saveMutation.isPending}>
-              {saveMutation.isPending
-                ? "Saving..."
-                : account
-                  ? "Save changes"
-                  : "Create account"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+  if (account) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit account</DialogTitle>
+            <DialogDescription>
+              Update account details and starting balance.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {detailsFields}
+            {identifierFields}
+            {errorAlert}
+            <DialogFooter>
+              <DialogClose render={<Button type="button" variant="outline" />}>
+                Cancel
+              </DialogClose>
+              <Button type="submit" disabled={saveMutation.isPending}>
+                {saveMutation.isPending ? "Saving..." : "Save changes"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
+  return (
+    <CreateFormDrawer
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Add account"
+      description={`Track balances in ${currency}.`}
+      formId={formId}
+      submitLabel={saveMutation.isPending ? "Saving..." : "Create account"}
+      submitDisabled={saveMutation.isPending}
+      initialFocus={nameInput}
+      finalFocus={addAccountTrigger}
+    >
+      <form
+        id={formId}
+        onInvalid={handleInvalid}
+        onSubmit={handleSubmit}
+        className="space-y-4"
+      >
+        {errorAlert}
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => {
+            if (value === "details" || value === "identifiers") {
+              setActiveTab(value)
+            }
+          }}
+          className="gap-4"
+        >
+          <TabsList aria-label="Account form sections">
+            <TabsTrigger value="details">Details</TabsTrigger>
+            <TabsTrigger value="identifiers">Identifiers</TabsTrigger>
+          </TabsList>
+          <TabsContent value="details" keepMounted>
+            {detailsFields}
+          </TabsContent>
+          <TabsContent value="identifiers" keepMounted>
+            {identifierFields}
+          </TabsContent>
+        </Tabs>
+      </form>
+    </CreateFormDrawer>
   )
 }

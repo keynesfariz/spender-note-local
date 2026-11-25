@@ -11,7 +11,7 @@ import {
 } from "lucide-react"
 import dynamic from "next/dynamic"
 import Link from "next/link"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { useHasOpened } from "@/hooks/use-has-opened"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -197,6 +197,7 @@ export function AccountsView() {
   const accounts = useQuery(accountsQuery())
   const settings = useQuery(localeQuery())
 
+  const addAccountTrigger = useRef<HTMLButtonElement>(null)
   const [formOpen, setFormOpen] = useState(false)
   const [editingAccount, setEditingAccount] = useState<AccountSummary | null>(
     null
@@ -258,6 +259,7 @@ export function AccountsView() {
         </div>
 
         <Button
+          ref={addAccountTrigger}
           type="button"
           disabled={!hasCurrency}
           onPointerEnter={preloadAccountFormDialog}
@@ -550,13 +552,11 @@ export function AccountsView() {
       {hasOpenedForm && (
         <AccountFormDialog
           open={formOpen}
-          onOpenChange={(open) => {
-            setFormOpen(open)
-            if (!open) setEditingAccount(null)
-          }}
+          onOpenChange={setFormOpen}
           account={editingAccount}
           currency={settings.data?.currency ?? "USD"}
           timezone={settings.data?.timezone}
+          addAccountTrigger={addAccountTrigger}
         />
       )}
 

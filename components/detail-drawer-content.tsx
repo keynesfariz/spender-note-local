@@ -30,7 +30,7 @@ export function DetailDrawerContent({
 }: DetailDrawerContentProps) {
   return (
     <DrawerContent
-      className="h-dvh w-full max-w-2xl shadow-2xl data-[swipe-direction=right]:rounded-none motion-reduce:transition-none"
+      className="h-dvh w-full max-w-2xl shadow-2xl data-[swipe-direction=right]:rounded-none data-[swipe-direction=right]:[--drawer-inset:0px] motion-reduce:transition-none"
       initialFocus={initialFocus}
       finalFocus={finalFocus}
     >

@@ -473,9 +473,12 @@ function InspectorForm({
     setter(value)
   }
 
+  const saveDisabled =
+    isEnriching || updateMutation.isPending || tagCreatePending
+
   function handleSave(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (isEnriching || updateMutation.isPending || tagCreatePending) return
+    if (saveDisabled) return
     setFormError(null)
     setStatusMessage(null)
     try {
@@ -840,12 +843,7 @@ function InspectorForm({
                       : "Mark reviewed"}
                   </Button>
                 ) : null}
-                <Button
-                  type="submit"
-                  disabled={
-                    updateMutation.isPending || isEnriching || tagCreatePending
-                  }
-                >
+                <Button type="submit" disabled={saveDisabled}>
                   {updateMutation.isPending ? "Saving..." : "Save changes"}
                 </Button>
               </div>
@@ -868,9 +866,7 @@ function InspectorForm({
             type="submit"
             form={detailFormId}
             formNoValidate
-            disabled={
-              updateMutation.isPending || isEnriching || tagCreatePending
-            }
+            disabled={saveDisabled}
           >
             {updateMutation.isPending ? "Saving..." : "Save changes"}
           </Button>

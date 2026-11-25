@@ -664,6 +664,7 @@ export function CategoriesTagsView() {
           title="New category"
           description="Create a category for organizing and auto-classifying expenses."
           formId={categoryFormId}
+          onSubmit={handleCategorySubmit}
           submitLabel={
             saveCategoryMutation.isPending ? "Saving…" : "Create category"
           }
@@ -671,13 +672,7 @@ export function CategoriesTagsView() {
           initialFocus={categoryNameInput}
           finalFocus={newCategoryButton}
         >
-          <form
-            id={categoryFormId}
-            onSubmit={handleCategorySubmit}
-            className="space-y-4"
-          >
-            {categoryFields}
-          </form>
+          {categoryFields}
         </CreateFormDrawer>
       )}
 
@@ -784,18 +779,16 @@ export function CategoriesTagsView() {
           title="New tag"
           description="Create a manual tag to group transactions across categories."
           formId={tagFormId}
+          onSubmit={handleTagSubmit}
           submitLabel={saveTagMutation.isPending ? "Saving…" : "Create tag"}
           submitDisabled={saveTagMutation.isPending}
           initialFocus={tagNameInput}
           finalFocus={() => {
-            const trigger = tagDrawerTrigger.current
-            // Creating the first tag removes the empty-state launcher.
-            return trigger?.isConnected ? trigger : newTagButton.current
+            const opener = tagDrawerTrigger.current
+            return opener?.isConnected ? opener : newTagButton.current
           }}
         >
-          <form id={tagFormId} onSubmit={handleTagSubmit} className="space-y-4">
-            {tagFields}
-          </form>
+          {tagFields}
         </CreateFormDrawer>
       )}
 

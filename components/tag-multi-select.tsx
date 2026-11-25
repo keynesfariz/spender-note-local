@@ -72,6 +72,7 @@ export function TagMultiSelect({
   const [sessionDraftNames, setSessionDraftNames] = useState<string[]>([])
 
   const trimmedSearch = search.trim()
+  const searchName = trimmedSearch.toLowerCase()
   const selectedSet = useMemo(() => new Set(selectedTagIds), [selectedTagIds])
 
   const tagById = useMemo(() => new Map(tags.map((t) => [t.id, t])), [tags])
@@ -110,26 +111,23 @@ export function TagMultiSelect({
   )
 
   const filteredTags = useMemo(() => {
-    if (!trimmedSearch) return tags
-    const needle = trimmedSearch.toLowerCase()
-    return tags.filter((t) => t.name.toLowerCase().includes(needle))
-  }, [tags, trimmedSearch])
+    if (!searchName) return tags
+    return tags.filter((tag) => tag.name.toLowerCase().includes(searchName))
+  }, [tags, searchName])
 
   const filteredDraftNames = useMemo(() => {
-    if (!trimmedSearch) return popoverDraftNames
-    const needle = trimmedSearch.toLowerCase()
+    if (!searchName) return popoverDraftNames
     return popoverDraftNames.filter((name) =>
-      name.toLowerCase().includes(needle)
+      name.toLowerCase().includes(searchName)
     )
-  }, [popoverDraftNames, trimmedSearch])
+  }, [popoverDraftNames, searchName])
 
-  const searchName = normalizeTagName(search)
-  const matchingTag = tags.find(
-    (tag) => normalizeTagName(tag.name) === searchName
-  )
-  const matchingDraft = popoverDraftNames.find(
-    (name) => normalizeTagName(name) === searchName
-  )
+  const matchingTag = persistedNamesLower.has(searchName)
+    ? tags.find((tag) => normalizeTagName(tag.name) === searchName)
+    : undefined
+  const matchingDraft = searchName
+    ? popoverDraftNames.find((name) => normalizeTagName(name) === searchName)
+    : undefined
 
   const createTagMutation = useMutation({
     mutationFn: (name: string) => createTagApi({ name }),

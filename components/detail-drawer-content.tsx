@@ -66,13 +66,18 @@ export function CreateFormDrawer({
   open,
   onOpenChange,
   formId,
+  onSubmit,
+  onInvalid,
   submitLabel,
   submitDisabled,
+  children,
   ...content
 }: Omit<DetailDrawerContentProps, "footer"> & {
   open: boolean
   onOpenChange: (open: boolean) => void
   formId: string
+  onSubmit: NonNullable<ComponentProps<"form">["onSubmit"]>
+  onInvalid?: ComponentProps<"form">["onInvalid"]
   submitLabel: string
   submitDisabled?: boolean
 }) {
@@ -90,7 +95,16 @@ export function CreateFormDrawer({
             </Button>
           </DrawerFooter>
         }
-      />
+      >
+        <form
+          id={formId}
+          onSubmit={onSubmit}
+          onInvalid={onInvalid}
+          className="space-y-4"
+        >
+          {children}
+        </form>
+      </DetailDrawerContent>
     </Drawer>
   )
 }

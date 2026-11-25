@@ -260,6 +260,17 @@ export function AccountFormDialog({
     ) : null
   }
 
+  const identifierValueId = (key: string) => `${formId}-identifier-${key}`
+
+  function updateIdentifier(
+    key: string,
+    changes: Partial<Pick<IdentifierDraft, "kind" | "value">>
+  ) {
+    setIdentifiers((rows) =>
+      rows.map((row) => (row.key === key ? { ...row, ...changes } : row))
+    )
+  }
+
   function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     if (saveMutation.isPending) return
@@ -278,7 +289,7 @@ export function AccountFormDialog({
       if (row.kind === "card_last4" && !/^\d{4}$/.test(trimmed)) {
         showFieldError(
           "identifiers",
-          `${formId}-identifier-${row.key}`,
+          identifierValueId(row.key),
           "Card last 4 digits must be exactly 4 numeric digits."
         )
         return
@@ -289,7 +300,7 @@ export function AccountFormDialog({
       ) {
         showFieldError(
           "identifiers",
-          `${formId}-identifier-${row.key}`,
+          identifierValueId(row.key),
           "Bank account number must contain at least 4 digits."
         )
         return
@@ -491,7 +502,7 @@ export function AccountFormDialog({
         appear on emails.
       </p>
       {identifiers.map((row) => {
-        const valueId = `${formId}-identifier-${row.key}`
+        const valueId = identifierValueId(row.key)
 
         return (
           <div key={row.key} className="space-y-2">
@@ -508,11 +519,7 @@ export function AccountFormDialog({
                 aria-label="Identifier value"
                 value={row.value}
                 onChange={(e) =>
-                  setIdentifiers((prev) =>
-                    prev.map((r) =>
-                      r.key === row.key ? { ...r, value: e.target.value } : r
-                    )
-                  )
+                  updateIdentifier(row.key, { value: e.target.value })
                 }
                 placeholder={IDENTIFIER_PLACEHOLDERS[row.kind]}
                 className={account ? "flex-1" : "sm:flex-1"}
@@ -521,16 +528,8 @@ export function AccountFormDialog({
               <Select
                 items={IDENTIFIER_KIND_OPTIONS}
                 value={row.kind}
-                onValueChange={(v) => {
-                  if (v) {
-                    setIdentifiers((prev) =>
-                      prev.map((r) =>
-                        r.key === row.key
-                          ? { ...r, kind: v as AccountIdentifierKind }
-                          : r
-                      )
-                    )
-                  }
+                onValueChange={(kind) => {
+                  if (kind) updateIdentifier(row.key, { kind })
                 }}
               >
                 <SelectTrigger
@@ -614,39 +613,34 @@ export function AccountFormDialog({
       title="Add account"
       description={`Track balances in ${currency}.`}
       formId={formId}
+      onSubmit={handleSubmit}
+      onInvalid={handleInvalid}
       submitLabel={saveMutation.isPending ? "Saving..." : "Create account"}
       submitDisabled={saveMutation.isPending}
       initialFocus={nameInput}
       finalFocus={addAccountTrigger}
     >
-      <form
-        id={formId}
-        onInvalid={handleInvalid}
-        onSubmit={handleSubmit}
-        className="space-y-4"
+      {errorAlert}
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => {
+          if (value === "details" || value === "identifiers") {
+            setActiveTab(value)
+          }
+        }}
+        className="gap-4"
       >
-        {errorAlert}
-        <Tabs
-          value={activeTab}
-          onValueChange={(value) => {
-            if (value === "details" || value === "identifiers") {
-              setActiveTab(value)
-            }
-          }}
-          className="gap-4"
-        >
-          <TabsList aria-label="Account form sections">
-            <TabsTrigger value="details">Details</TabsTrigger>
-            <TabsTrigger value="identifiers">Identifiers</TabsTrigger>
-          </TabsList>
-          <TabsContent value="details" keepMounted>
-            {detailsFields}
-          </TabsContent>
-          <TabsContent value="identifiers" keepMounted>
-            {identifierFields}
-          </TabsContent>
-        </Tabs>
-      </form>
+        <TabsList aria-label="Account form sections">
+          <TabsTrigger value="details">Details</TabsTrigger>
+          <TabsTrigger value="identifiers">Identifiers</TabsTrigger>
+        </TabsList>
+        <TabsContent value="details" keepMounted>
+          {detailsFields}
+        </TabsContent>
+        <TabsContent value="identifiers" keepMounted>
+          {identifierFields}
+        </TabsContent>
+      </Tabs>
     </CreateFormDrawer>
   )
 }

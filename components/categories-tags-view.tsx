@@ -14,12 +14,15 @@ import { parseAsStringLiteral, useQueryState } from "nuqs"
 import {
   memo,
   useCallback,
+  useId,
   useMemo,
   useRef,
   useState,
+  type MouseEvent,
   type SubmitEvent,
 } from "react"
 
+import { CreateFormDrawer } from "@/components/detail-drawer-content"
 import { DynamicIcon } from "@/components/dynamic-icon"
 import { PaginationControls } from "@/components/pagination-controls"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -206,7 +209,10 @@ export function CategoriesTagsView() {
   const categories = catQuery.data ?? EMPTY_CATEGORIES
   const tags = tagQuery.data ?? EMPTY_TAGS
 
-  const [catDialogOpen, setCatDialogOpen] = useState(false)
+  const categoryFormId = useId()
+  const categoryNameInput = useRef<HTMLInputElement>(null)
+  const newCategoryButton = useRef<HTMLButtonElement>(null)
+  const [categoryFormOpen, setCategoryFormOpen] = useState(false)
   const [editingCategory, setEditingCategory] =
     useState<CategorySummary | null>(null)
   const [catName, setCatName] = useState("")
@@ -219,7 +225,11 @@ export function CategoriesTagsView() {
     useState(DEFAULT_CATEGORY)
   const [deleteCatError, setDeleteCatError] = useState<string | null>(null)
 
-  const [tagDialogOpen, setTagDialogOpen] = useState(false)
+  const tagFormId = useId()
+  const tagNameInput = useRef<HTMLInputElement>(null)
+  const newTagButton = useRef<HTMLButtonElement>(null)
+  const tagDrawerTrigger = useRef<HTMLButtonElement>(null)
+  const [tagFormOpen, setTagFormOpen] = useState(false)
   const [editingTag, setEditingTag] = useState<TagSummary | null>(null)
   const [tagName, setTagName] = useState("")
   const [tagFormError, setTagFormError] = useState<string | null>(null)
@@ -248,15 +258,7 @@ export function CategoriesTagsView() {
         | { name: string; icon: string }
         | { id: string; name: string; icon?: string }
     ) => ("id" in input ? updateCategoryApi(input) : createCategoryApi(input)),
-    onSuccess: async () => {
-      await invalidateAfterCategoryChange()
-      setCatDialogOpen(false)
-      setEditingCategory(null)
-      setCatFormError(null)
-    },
-    onError: (err) => {
-      setCatFormError(getErrorMessage(err, "Failed to save category."))
-    },
+    onSuccess: invalidateAfterCategoryChange,
   })
 
   const deleteCategoryMutation = useMutation({
@@ -278,15 +280,7 @@ export function CategoriesTagsView() {
       }
       return createTagApi({ name: input.name })
     },
-    onSuccess: async () => {
-      await invalidateAfterTagChange()
-      setTagDialogOpen(false)
-      setEditingTag(null)
-      setTagFormError(null)
-    },
-    onError: (err) => {
-      setTagFormError(getErrorMessage(err, "Failed to save tag."))
-    },
+    onSuccess: invalidateAfterTagChange,
   })
 
   const deleteTagMutation = useMutation({
@@ -307,7 +301,7 @@ export function CategoriesTagsView() {
     setCatIcon("Tag")
     setCatFormError(null)
     saveCategoryMutation.reset()
-    setCatDialogOpen(true)
+    setCategoryFormOpen(true)
   }
 
   const resetEditCategory = saveCategoryMutation.reset
@@ -318,7 +312,7 @@ export function CategoriesTagsView() {
       setCatIcon(cat.icon || "Tag")
       setCatFormError(null)
       resetEditCategory()
-      setCatDialogOpen(true)
+      setCategoryFormOpen(true)
     },
     [resetEditCategory]
   )
@@ -334,12 +328,13 @@ export function CategoriesTagsView() {
     [resetDeleteCategory]
   )
 
-  const openCreateTag = () => {
+  const openCreateTag = (e: MouseEvent<HTMLButtonElement>) => {
+    tagDrawerTrigger.current = e.currentTarget
     setEditingTag(null)
     setTagName("")
     setTagFormError(null)
     saveTagMutation.reset()
-    setTagDialogOpen(true)
+    setTagFormOpen(true)
   }
 
   const resetEditTag = saveTagMutation.reset
@@ -349,7 +344,7 @@ export function CategoriesTagsView() {
       setTagName(tag.name)
       setTagFormError(null)
       resetEditTag()
-      setTagDialogOpen(true)
+      setTagFormOpen(true)
     },
     [resetEditTag]
   )
@@ -379,7 +374,13 @@ export function CategoriesTagsView() {
             name: trimmed,
             icon: catIcon === editingCategory.icon ? undefined : catIcon,
           }
-        : { name: trimmed, icon: catIcon }
+        : { name: trimmed, icon: catIcon },
+      {
+        onSuccess: () => setCategoryFormOpen(false),
+        onError: (err) => {
+          setCatFormError(getErrorMessage(err, "Failed to save category."))
+        },
+      }
     )
   }
 
@@ -391,10 +392,15 @@ export function CategoriesTagsView() {
       return
     }
     setTagFormError(null)
-    saveTagMutation.mutate({
-      id: editingTag?.id,
-      name: trimmed,
-    })
+    saveTagMutation.mutate(
+      { id: editingTag?.id, name: trimmed },
+      {
+        onSuccess: () => setTagFormOpen(false),
+        onError: (err) => {
+          setTagFormError(getErrorMessage(err, "Failed to save tag."))
+        },
+      }
+    )
   }
 
   const replacementItems = useMemo(() => {
@@ -415,6 +421,50 @@ export function CategoriesTagsView() {
     return items
   }, [categories, deletingCategory, replacementCategory])
 
+  const categoryFields = (
+    <>
+      {catFormError ? (
+        <Alert variant="destructive">
+          <AlertDescription>{catFormError}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <Field>
+        <FieldLabel htmlFor={`${categoryFormId}-name`}>Name</FieldLabel>
+        <Input
+          ref={categoryNameInput}
+          id={`${categoryFormId}-name`}
+          value={catName}
+          onChange={(e) => setCatName(e.target.value)}
+          placeholder="e.g. Subscriptions"
+        />
+      </Field>
+
+      <CategoryIconPicker value={catIcon} onChange={setCatIcon} />
+    </>
+  )
+
+  const tagFields = (
+    <>
+      {tagFormError ? (
+        <Alert variant="destructive">
+          <AlertDescription>{tagFormError}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <Field>
+        <FieldLabel htmlFor={`${tagFormId}-name`}>Tag name</FieldLabel>
+        <Input
+          ref={tagNameInput}
+          id={`${tagFormId}-name`}
+          value={tagName}
+          onChange={(e) => setTagName(e.target.value)}
+          placeholder="e.g. Reimbursable"
+        />
+      </Field>
+    </>
+  )
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -429,12 +479,24 @@ export function CategoriesTagsView() {
         </div>
 
         {tab === "categories" ? (
-          <Button type="button" size="sm" onClick={openCreateCategory}>
+          <Button
+            ref={newCategoryButton}
+            type="button"
+            size="sm"
+            aria-haspopup="dialog"
+            onClick={openCreateCategory}
+          >
             <PlusIcon className="mr-1.5 size-4" />
             New category
           </Button>
         ) : (
-          <Button type="button" size="sm" onClick={openCreateTag}>
+          <Button
+            ref={newTagButton}
+            type="button"
+            size="sm"
+            aria-haspopup="dialog"
+            onClick={openCreateTag}
+          >
             <PlusIcon className="mr-1.5 size-4" />
             New tag
           </Button>
@@ -546,6 +608,7 @@ export function CategoriesTagsView() {
                     type="button"
                     size="sm"
                     className="mt-4"
+                    aria-haspopup="dialog"
                     onClick={openCreateTag}
                   >
                     <PlusIcon className="mr-1.5 size-4" />
@@ -564,54 +627,59 @@ export function CategoriesTagsView() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={catDialogOpen} onOpenChange={setCatDialogOpen}>
-        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
-          <form onSubmit={handleCategorySubmit} className="space-y-4">
-            <DialogHeader>
-              <DialogTitle>
-                {editingCategory ? "Edit category" : "New category"}
-              </DialogTitle>
-              <DialogDescription>
-                {editingCategory
-                  ? "Renaming updates existing transactions and email extractions using this category."
-                  : "Create a category for organizing and auto-classifying expenses."}
-              </DialogDescription>
-            </DialogHeader>
+      {editingCategory ? (
+        <Dialog open={categoryFormOpen} onOpenChange={setCategoryFormOpen}>
+          <DialogContent
+            className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
+            initialFocus={categoryNameInput}
+          >
+            <form onSubmit={handleCategorySubmit} className="space-y-4">
+              <DialogHeader>
+                <DialogTitle>Edit category</DialogTitle>
+                <DialogDescription>
+                  Renaming updates existing transactions and email extractions
+                  using this category.
+                </DialogDescription>
+              </DialogHeader>
 
-            {catFormError ? (
-              <Alert variant="destructive">
-                <AlertDescription>{catFormError}</AlertDescription>
-              </Alert>
-            ) : null}
+              {categoryFields}
 
-            <Field>
-              <FieldLabel htmlFor="category-name-input">Name</FieldLabel>
-              <Input
-                id="category-name-input"
-                value={catName}
-                onChange={(e) => setCatName(e.target.value)}
-                placeholder="e.g. Subscriptions"
-                autoFocus
-              />
-            </Field>
-
-            <CategoryIconPicker value={catIcon} onChange={setCatIcon} />
-
-            <DialogFooter>
-              <DialogClose render={<Button type="button" variant="outline" />}>
-                Cancel
-              </DialogClose>
-              <Button type="submit" disabled={saveCategoryMutation.isPending}>
-                {saveCategoryMutation.isPending
-                  ? "Saving…"
-                  : editingCategory
-                    ? "Save changes"
-                    : "Create category"}
-              </Button>
-            </DialogFooter>
+              <DialogFooter>
+                <DialogClose
+                  render={<Button type="button" variant="outline" />}
+                >
+                  Cancel
+                </DialogClose>
+                <Button type="submit" disabled={saveCategoryMutation.isPending}>
+                  {saveCategoryMutation.isPending ? "Saving…" : "Save changes"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ) : (
+        <CreateFormDrawer
+          open={categoryFormOpen}
+          onOpenChange={setCategoryFormOpen}
+          title="New category"
+          description="Create a category for organizing and auto-classifying expenses."
+          formId={categoryFormId}
+          submitLabel={
+            saveCategoryMutation.isPending ? "Saving…" : "Create category"
+          }
+          submitDisabled={saveCategoryMutation.isPending}
+          initialFocus={categoryNameInput}
+          finalFocus={newCategoryButton}
+        >
+          <form
+            id={categoryFormId}
+            onSubmit={handleCategorySubmit}
+            className="space-y-4"
+          >
+            {categoryFields}
           </form>
-        </DialogContent>
-      </Dialog>
+        </CreateFormDrawer>
+      )}
 
       <Dialog
         open={Boolean(deletingCategory)}
@@ -683,50 +751,53 @@ export function CategoriesTagsView() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={tagDialogOpen} onOpenChange={setTagDialogOpen}>
-        <DialogContent>
-          <form onSubmit={handleTagSubmit} className="space-y-4">
-            <DialogHeader>
-              <DialogTitle>{editingTag ? "Rename tag" : "New tag"}</DialogTitle>
-              <DialogDescription>
-                {editingTag
-                  ? "Renaming updates this tag across all transactions using it."
-                  : "Create a manual tag to group transactions across categories."}
-              </DialogDescription>
-            </DialogHeader>
+      {editingTag ? (
+        <Dialog open={tagFormOpen} onOpenChange={setTagFormOpen}>
+          <DialogContent initialFocus={tagNameInput}>
+            <form onSubmit={handleTagSubmit} className="space-y-4">
+              <DialogHeader>
+                <DialogTitle>Rename tag</DialogTitle>
+                <DialogDescription>
+                  Renaming updates this tag across all transactions using it.
+                </DialogDescription>
+              </DialogHeader>
 
-            {tagFormError ? (
-              <Alert variant="destructive">
-                <AlertDescription>{tagFormError}</AlertDescription>
-              </Alert>
-            ) : null}
+              {tagFields}
 
-            <Field>
-              <FieldLabel htmlFor="tag-name-input">Tag name</FieldLabel>
-              <Input
-                id="tag-name-input"
-                value={tagName}
-                onChange={(e) => setTagName(e.target.value)}
-                placeholder="e.g. Reimbursable"
-                autoFocus
-              />
-            </Field>
-
-            <DialogFooter>
-              <DialogClose render={<Button type="button" variant="outline" />}>
-                Cancel
-              </DialogClose>
-              <Button type="submit" disabled={saveTagMutation.isPending}>
-                {saveTagMutation.isPending
-                  ? "Saving…"
-                  : editingTag
-                    ? "Save changes"
-                    : "Create tag"}
-              </Button>
-            </DialogFooter>
+              <DialogFooter>
+                <DialogClose
+                  render={<Button type="button" variant="outline" />}
+                >
+                  Cancel
+                </DialogClose>
+                <Button type="submit" disabled={saveTagMutation.isPending}>
+                  {saveTagMutation.isPending ? "Saving…" : "Save changes"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ) : (
+        <CreateFormDrawer
+          open={tagFormOpen}
+          onOpenChange={setTagFormOpen}
+          title="New tag"
+          description="Create a manual tag to group transactions across categories."
+          formId={tagFormId}
+          submitLabel={saveTagMutation.isPending ? "Saving…" : "Create tag"}
+          submitDisabled={saveTagMutation.isPending}
+          initialFocus={tagNameInput}
+          finalFocus={() => {
+            const trigger = tagDrawerTrigger.current
+            // Creating the first tag removes the empty-state launcher.
+            return trigger?.isConnected ? trigger : newTagButton.current
+          }}
+        >
+          <form id={tagFormId} onSubmit={handleTagSubmit} className="space-y-4">
+            {tagFields}
           </form>
-        </DialogContent>
-      </Dialog>
+        </CreateFormDrawer>
+      )}
 
       <Dialog
         open={Boolean(deletingTag)}

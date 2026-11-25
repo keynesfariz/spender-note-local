@@ -524,3 +524,60 @@ func TestPromoteHistoricalGhostRow_PreservesReconciledBalanceAnchor(t *testing.T
 		}
 	}
 }
+
+func TestListSkippedTransactions_IndependentPagination(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	configureTestLocale(t, gdb, "Asia/Jakarta", "IDR")
+	const received = "2026-10-12T12:00:00Z"
+	for _, id := range []string{"a", "b", "c", "d", "ignored", "invalid", "statement", "dismissed", "zero"} {
+		seedLegacySkippedEmail(t, gdb, id, nil, "merchant@example.com", "Payment receipt", "Paid 100", 10, received, "fixture", "{}")
+		if err := gdb.Exec("UPDATE email_extractions SET triage_state = 'ghost', currency = 'IDR', amount_minor = 100 WHERE email_id = ?", id).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, sql := range []string{
+		"UPDATE email_extractions SET triage_state = 'ignored' WHERE email_id = 'ignored'",
+		"UPDATE email_extractions SET currency = 'XX' WHERE email_id = 'invalid'",
+		"UPDATE email_extractions SET extraction_model = 'rule:billing_statement' WHERE email_id = 'statement'",
+		"UPDATE raw_emails SET status = 'dismissed' WHERE id = 'dismissed'",
+		"UPDATE email_extractions SET amount_minor = 0 WHERE email_id = 'zero'",
+	} {
+		if err := gdb.Exec(sql).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedLegacySkippedEmail(t, gdb, "e", nil, "merchant@example.com", "Payment receipt", "Paid 100", 10, received, "fixture",
+		`{"email_kind":"non_transaction","amount_decimal":"100","currency":"IDR"}`)
+
+	wantPages := [][]string{{"e", "d"}, {"c", "b"}, {"a"}, {}}
+	for i, wantIDs := range wantPages {
+		page := i + 1
+		result, err := ListSkippedTransactions(gdb, page, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.TotalCount != 5 || result.Page != page || result.PageSize != 2 || result.Items == nil {
+			t.Fatalf("unexpected pagination: %+v", result)
+		}
+		var ids []string
+		for _, row := range result.Items {
+			if row.OccurredAtUtc != received {
+				t.Errorf("expected received-time fallback, got %q", row.OccurredAtUtc)
+			}
+			ids = append(ids, row.EmailID)
+		}
+		if !slices.Equal(ids, wantIDs) {
+			t.Errorf("page %d skipped IDs = %v, want %v", page, ids, wantIDs)
+		}
+	}
+	largePage, err := ListSkippedTransactions(gdb, 1<<30, 1000)
+	if err != nil || largePage.TotalCount != 5 || largePage.PageSize != 100 || len(largePage.Items) != 0 {
+		t.Fatalf("oversized request should return an empty page with a bounded size: %+v, %v", largePage, err)
+	}
+
+	hide := false
+	ledger, err := ListTransactions(gdb, ListTransactionsParams{ShowSkipped: &hide})
+	if err != nil || ledger.TotalCount != 0 || ledger.TotalGhostCount != 5 || len(ledger.GhostRows) != 0 {
+		t.Fatalf("ledger should show neither ghost rows nor ghost spending: %+v, %v", ledger, err)
+	}
+}

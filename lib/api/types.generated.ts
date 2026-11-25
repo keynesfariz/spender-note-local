@@ -195,6 +195,13 @@ export interface GhostRowItem {
   isForeignCurrency: boolean
 }
 
+export interface PaginatedSkippedTransactionsResponse {
+  items: GhostRowItem[]
+  totalCount: number
+  page: number
+  pageSize: number
+}
+
 export interface PaginatedTransactionsResponse {
   items: TransactionListItem[]
   totalCount: number

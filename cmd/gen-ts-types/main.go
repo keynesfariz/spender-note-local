@@ -119,6 +119,10 @@ var typeSpecs = []structSpec{
 		goType: reflect.TypeOf(domain.GhostRowItem{}),
 	},
 	{
+		tsName: "PaginatedSkippedTransactionsResponse",
+		goType: reflect.TypeOf(domain.PaginatedSkippedTransactionsResponse{}),
+	},
+	{
 		tsName: "PaginatedTransactionsResponse",
 		goType: reflect.TypeOf(domain.PaginatedTransactionsResponse{}),
 	},

@@ -1,6 +1,11 @@
 "use client"
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query"
 import {
   CheckCircle2Icon,
   Clock3Icon,
@@ -23,12 +28,15 @@ import {
   ManualMergeDialog,
   type ManualMergeMode,
 } from "@/components/manual-merge-dialog"
+import { SkippedTransactionsList } from "@/components/skipped-transactions-list"
 import { TransactionInspectorDrawer } from "@/components/transaction-inspector-drawer"
 import { TransactionList } from "@/components/transaction-list"
 import { TriageUndoToast } from "@/components/triage-undo-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs"
 import {
   accountsQuery,
   applyTriageVerdictApi,
@@ -38,7 +46,9 @@ import {
   markTransactionsReviewedApi,
   settingsQuery,
   transactionsQuery,
+  triageSkippedTransactionsQuery,
   undoTriageVerdictApi,
+  type ApplyTriageVerdictInput,
   type TriageVerdictResult,
 } from "@/lib/api"
 import { getTodayDateString, shiftDateRange } from "@/lib/format"
@@ -65,7 +75,10 @@ export function TransactionsView() {
     tag: parseAsString.withDefault(""),
     accountId: parseAsString.withDefault("all"),
     unreviewed: parseAsBoolean.withDefault(false),
-    skipped: parseAsBoolean.withDefault(true),
+    tab: parseAsStringLiteral(["transactions", "skipped"] as const).withDefault(
+      "transactions"
+    ),
+    skippedPage: parseAsInteger.withDefault(1),
     page: parseAsInteger.withDefault(1),
   })
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -78,14 +91,14 @@ export function TransactionsView() {
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [triageError, setTriageError] = useState<string | null>(null)
   const [undoError, setUndoError] = useState<string | null>(null)
-  const [pendingVerdict, setPendingVerdict] = useState<{
-    emailId: string
-    action: "promote" | "ignore"
-  } | null>(null)
+  const [pendingVerdict, setPendingVerdict] = useState<Pick<
+    ApplyTriageVerdictInput,
+    "emailId" | "action"
+  > | null>(null)
   const [activeUndo, setActiveUndo] = useState<{
     key: string
     verdict: TriageVerdictResult
-    action: "promote" | "ignore"
+    action: ApplyTriageVerdictInput["action"]
   } | null>(null)
 
   const todayStr = useMemo(() => getTodayDateString(timezone), [timezone])
@@ -95,6 +108,8 @@ export function TransactionsView() {
     to: filters.to ?? filters.from ?? todayStr,
   }
   const activePage = Math.max(1, filters.page)
+  const isSkippedTab = filters.tab === "skipped"
+  const skippedPage = Math.max(1, filters.skippedPage)
 
   const txQuery = useQuery({
     ...transactionsQuery({
@@ -105,21 +120,33 @@ export function TransactionsView() {
       accountId: filters.accountId === "all" ? undefined : filters.accountId,
       search: filters.search.trim() || undefined,
       unreviewedOnly: filters.unreviewed || undefined,
-      showSkipped: filters.skipped,
+      showSkipped: false,
       page: activePage,
       pageSize: DEFAULT_PAGE_SIZE,
     }),
-    enabled: isConfigured,
+    enabled: isConfigured && !isSkippedTab,
   })
 
   const items = useMemo(() => txQuery.data?.items ?? [], [txQuery.data?.items])
-  const ghostRows = useMemo(
-    () => txQuery.data?.ghostRows ?? [],
-    [txQuery.data?.ghostRows]
+  const skippedQuery = useQuery({
+    ...triageSkippedTransactionsQuery(skippedPage, DEFAULT_PAGE_SIZE),
+    placeholderData: keepPreviousData,
+    enabled: isConfigured && isSkippedTab,
+  })
+  const pendingCount = isSkippedTab
+    ? skippedQuery.data?.totalCount
+    : txQuery.data?.totalGhostCount
+  const skippedTotalPages = Math.max(
+    1,
+    Math.ceil((skippedQuery.data?.totalCount ?? 0) / DEFAULT_PAGE_SIZE)
   )
-  const ghostInRangeCount = txQuery.data?.ghostInRangeCount ?? 0
-  const totalGhostCount = txQuery.data?.totalGhostCount ?? 0
-  const ghostRowsTruncated = txQuery.data?.ghostRowsTruncated ?? false
+  const skippedPageOutOfRange =
+    isSkippedTab &&
+    skippedQuery.isSuccess &&
+    !skippedQuery.isPlaceholderData &&
+    !skippedQuery.isFetching &&
+    skippedPage > skippedTotalPages
+
   const totalCount = txQuery.data?.totalCount ?? 0
   const totalInRangeCount = txQuery.data?.totalInRangeCount ?? 0
   const unreviewedInRangeCount = txQuery.data?.unreviewedInRangeCount ?? 0
@@ -134,12 +161,22 @@ export function TransactionsView() {
     setUndoError(null)
   }
 
-  const pageOutOfRange = txQuery.isSuccess && activePage > totalPages
+  const pageOutOfRange =
+    !isSkippedTab &&
+    txQuery.isSuccess &&
+    !txQuery.isFetching &&
+    activePage > totalPages
   useEffect(() => {
     if (pageOutOfRange) {
       void setFilters({ page: totalPages })
     }
-  }, [pageOutOfRange, activePage, totalPages, setFilters])
+  }, [pageOutOfRange, totalPages, setFilters])
+
+  useEffect(() => {
+    if (skippedPageOutOfRange) {
+      void setFilters({ skippedPage: skippedTotalPages })
+    }
+  }, [skippedPageOutOfRange, skippedTotalPages, setFilters])
 
   const [previousItems, setPreviousItems] = useState(items)
   if (previousItems !== items) {
@@ -185,13 +222,7 @@ export function TransactionsView() {
   })
 
   const triageVerdictMutation = useMutation({
-    mutationFn: (vars: { emailId: string; action: "promote" | "ignore" }) =>
-      applyTriageVerdictApi({
-        emailId: vars.emailId,
-        action: vars.action,
-        startDate: isAllDates ? undefined : activeRange.from,
-        endDate: isAllDates ? undefined : activeRange.to,
-      }),
+    mutationFn: applyTriageVerdictApi,
     onMutate: (vars) => {
       setPendingVerdict(vars)
       setTriageError(null)
@@ -280,12 +311,6 @@ export function TransactionsView() {
     deleteTransactionsMutation.reset()
   }
 
-  const handleShowSkippedChange = (value: boolean) => {
-    void setFilters({ skipped: value, page: 1 })
-    clearSelection()
-    deleteTransactionsMutation.reset()
-  }
-
   const handleResetFilters = () => {
     void setFilters({
       search: null,
@@ -293,7 +318,6 @@ export function TransactionsView() {
       tag: null,
       accountId: null,
       unreviewed: null,
-      skipped: null,
       page: 1,
     })
     clearSelection()
@@ -340,66 +364,12 @@ export function TransactionsView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Transactions
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Review daily spending, merge duplicate emails, or combine related
-            charges.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={!isConfigured || isAllDates}
-            onClick={() => handleShiftRange(-1)}
-          >
-            <ChevronLeftIcon className="mr-1 size-4" />
-            Previous
-          </Button>
-
-          <DateRangePicker
-            from={activeRange.from}
-            to={activeRange.to}
-            disabled={!isConfigured}
-            onChange={updateRange}
-          />
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={!isConfigured || isAllDates}
-            onClick={() => handleShiftRange(1)}
-          >
-            Next
-            <ChevronRightIcon className="ml-1 size-4" />
-          </Button>
-
-          <Button
-            type="button"
-            variant={isAllDates ? "default" : "outline"}
-            size="sm"
-            disabled={!isConfigured}
-            onClick={handleToggleAllDates}
-          >
-            All dates
-          </Button>
-
-          <Button
-            type="button"
-            size="sm"
-            disabled={!isConfigured}
-            onClick={() => setAddDialogOpen(true)}
-          >
-            Add transaction
-          </Button>
-        </div>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Transactions</h1>
+        <p className="text-sm text-muted-foreground">
+          Review daily spending, merge duplicate emails, or combine related
+          charges.
+        </p>
       </div>
 
       {settingsDataQuery.isPending ? (
@@ -421,153 +391,201 @@ export function TransactionsView() {
           </AlertDescription>
         </Alert>
       ) : (
-        <>
-          <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2">
-            <p
-              role="status"
-              className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium"
-            >
-              {allInRangeReviewed ? (
-                <>
-                  <CheckCircle2Icon className="size-4 shrink-0 text-emerald-700 dark:text-emerald-300" />
-                  <span className="text-emerald-800 dark:text-emerald-300">
-                    All transactions reviewed
-                  </span>
-                </>
-              ) : txQuery.isLoading || txQuery.isError ? (
-                <span className="text-muted-foreground">Review status</span>
-              ) : (
-                <>
-                  <Clock3Icon className="size-4 shrink-0 text-amber-700 dark:text-amber-300" />
-                  <span>
-                    {allOnPageReviewedButMoreUnreviewed
-                      ? `Page reviewed · ${unreviewedInRangeCount} left`
-                      : unreviewedInRangeCount > 0
-                        ? `${unreviewedInRangeCount} need review`
-                        : "No transactions to review"}
-                  </span>
-                </>
+        <Tabs
+          value={filters.tab}
+          onValueChange={(value) => {
+            if (value === "transactions" || value === "skipped") {
+              void setFilters({ tab: value })
+            }
+          }}
+        >
+          <TabsList
+            variant="line"
+            aria-label="Transaction views"
+            activateOnFocus={false}
+          >
+            <TabsTab value="transactions">Transactions</TabsTab>
+            <TabsTab value="skipped">
+              Skipped
+              {pendingCount !== undefined && (
+                <Badge variant="secondary" className="tabular-nums">
+                  {pendingCount}
+                  <span className="sr-only"> awaiting triage</span>
+                </Badge>
               )}
-              {!txQuery.isLoading &&
-                !txQuery.isError &&
-                ghostInRangeCount > 0 && (
-                  <span className="font-normal text-muted-foreground">
-                    · {ghostInRangeCount} skipped
-                  </span>
-                )}
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              {allOnPageReviewedButMoreUnreviewed && activePage < totalPages && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handlePageChange(activePage + 1)}
-                >
-                  Next page
-                </Button>
-              )}
-              {!txQuery.isLoading &&
-                !txQuery.isError &&
-                !isAllDates &&
-                filters.skipped &&
-                ghostInRangeCount === 0 &&
-                totalGhostCount > 0 && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      void setFilters({
-                        range: "all",
-                        from: null,
-                        to: null,
-                        page: 1,
-                      })
-                      clearSelection()
-                      deleteTransactionsMutation.reset()
-                    }}
-                  >
-                    View all dates
-                  </Button>
-                )}
-              {!txQuery.isLoading &&
-                !txQuery.isError &&
-                !filters.skipped &&
-                totalGhostCount > 0 && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleShowSkippedChange(true)}
-                  >
-                    Show skipped
-                  </Button>
-                )}
-            </div>
-          </div>
+            </TabsTab>
+          </TabsList>
 
-          <TransactionList
-            transactions={items}
-            ghostRows={ghostRows}
-            ghostRowsTruncated={ghostRowsTruncated}
-            accounts={accountsListQuery.data ?? []}
-            timezone={timezone}
-            isLoading={txQuery.isLoading}
-            errorMessage={
-              txQuery.isError
-                ? txQuery.error instanceof Error
-                  ? txQuery.error.message
-                  : "Failed to load transactions."
-                : null
-            }
-            search={filters.search}
-            onSearchChange={handleSearchChange}
-            category={filters.category}
-            onCategoryChange={handleCategoryChange}
-            tag={filters.tag}
-            onTagChange={handleTagChange}
-            accountId={filters.accountId}
-            onAccountIdChange={handleAccountIdChange}
-            unreviewedOnly={filters.unreviewed}
-            onUnreviewedOnlyChange={handleUnreviewedOnlyChange}
-            showSkipped={filters.skipped}
-            onShowSkippedChange={handleShowSkippedChange}
-            onResetFilters={handleResetFilters}
-            selectedIds={selectedIds}
-            onToggleRow={handleToggleRow}
-            onToggleSelectAllPage={handleToggleSelectAllPage}
-            onSelectTransaction={setSelectedTransactionId}
-            onOpenDuplicateMerge={() => setMergeMode("duplicate")}
-            onOpenCombine={() => setMergeMode("combine")}
-            onMarkReviewed={(ids) => markReviewedMutation.mutate(ids)}
-            isMarkingReviewed={markReviewedMutation.isPending}
-            reviewErrorMessage={reviewError}
-            onDeleteSelected={(ids) => deleteTransactionsMutation.mutate(ids)}
-            deleteDialogOpen={deleteDialogOpen}
-            onDeleteDialogOpenChange={(open) => {
-              if (!open && deleteTransactionsMutation.isPending) return
-              setDeleteDialogOpen(open)
-            }}
-            isDeleting={deleteTransactionsMutation.isPending}
-            deleteErrorMessage={
-              deleteTransactionsMutation.isError
-                ? deleteTransactionsMutation.error instanceof Error
-                  ? deleteTransactionsMutation.error.message
-                  : "Failed to delete transactions."
-                : null
-            }
-            onTriageVerdict={(emailId, action) =>
-              triageVerdictMutation.mutate({ emailId, action })
-            }
-            pendingTriageVerdict={pendingVerdict}
-            triageErrorMessage={triageError}
-            page={activePage}
-            pageSize={DEFAULT_PAGE_SIZE}
-            totalCount={totalCount}
-            onPageChange={handlePageChange}
-          />
-        </>
+          <TabsPanel value="transactions">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isAllDates}
+                onClick={() => handleShiftRange(-1)}
+              >
+                <ChevronLeftIcon className="mr-1 size-4" />
+                Previous
+              </Button>
+
+              <DateRangePicker
+                from={activeRange.from}
+                to={activeRange.to}
+                onChange={updateRange}
+              />
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isAllDates}
+                onClick={() => handleShiftRange(1)}
+              >
+                Next
+                <ChevronRightIcon className="ml-1 size-4" />
+              </Button>
+
+              <Button
+                type="button"
+                variant={isAllDates ? "default" : "outline"}
+                size="sm"
+                onClick={handleToggleAllDates}
+              >
+                All dates
+              </Button>
+
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setAddDialogOpen(true)}
+              >
+                Add transaction
+              </Button>
+            </div>
+            <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2">
+              <p
+                role="status"
+                className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium"
+              >
+                {allInRangeReviewed ? (
+                  <>
+                    <CheckCircle2Icon className="size-4 shrink-0 text-emerald-700 dark:text-emerald-300" />
+                    <span className="text-emerald-800 dark:text-emerald-300">
+                      All transactions reviewed
+                    </span>
+                  </>
+                ) : txQuery.isLoading || txQuery.isError ? (
+                  <span className="text-muted-foreground">Review status</span>
+                ) : (
+                  <>
+                    <Clock3Icon className="size-4 shrink-0 text-amber-700 dark:text-amber-300" />
+                    <span>
+                      {allOnPageReviewedButMoreUnreviewed
+                        ? `Page reviewed · ${unreviewedInRangeCount} left`
+                        : unreviewedInRangeCount > 0
+                          ? `${unreviewedInRangeCount} need review`
+                          : "No transactions to review"}
+                    </span>
+                  </>
+                )}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {allOnPageReviewedButMoreUnreviewed &&
+                  activePage < totalPages && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handlePageChange(activePage + 1)}
+                    >
+                      Next page
+                    </Button>
+                  )}
+              </div>
+            </div>
+
+            <TransactionList
+              transactions={items}
+              accounts={accountsListQuery.data ?? []}
+              timezone={timezone}
+              isLoading={txQuery.isLoading}
+              errorMessage={
+                txQuery.isError
+                  ? txQuery.error instanceof Error
+                    ? txQuery.error.message
+                    : "Failed to load transactions."
+                  : null
+              }
+              search={filters.search}
+              onSearchChange={handleSearchChange}
+              category={filters.category}
+              onCategoryChange={handleCategoryChange}
+              tag={filters.tag}
+              onTagChange={handleTagChange}
+              accountId={filters.accountId}
+              onAccountIdChange={handleAccountIdChange}
+              unreviewedOnly={filters.unreviewed}
+              onUnreviewedOnlyChange={handleUnreviewedOnlyChange}
+              onResetFilters={handleResetFilters}
+              selectedIds={selectedIds}
+              onToggleRow={handleToggleRow}
+              onToggleSelectAllPage={handleToggleSelectAllPage}
+              onSelectTransaction={setSelectedTransactionId}
+              onOpenDuplicateMerge={() => setMergeMode("duplicate")}
+              onOpenCombine={() => setMergeMode("combine")}
+              onMarkReviewed={(ids) => markReviewedMutation.mutate(ids)}
+              isMarkingReviewed={markReviewedMutation.isPending}
+              reviewErrorMessage={reviewError}
+              onDeleteSelected={(ids) => deleteTransactionsMutation.mutate(ids)}
+              deleteDialogOpen={deleteDialogOpen}
+              onDeleteDialogOpenChange={(open) => {
+                if (!open && deleteTransactionsMutation.isPending) return
+                setDeleteDialogOpen(open)
+              }}
+              isDeleting={deleteTransactionsMutation.isPending}
+              deleteErrorMessage={
+                deleteTransactionsMutation.isError
+                  ? deleteTransactionsMutation.error instanceof Error
+                    ? deleteTransactionsMutation.error.message
+                    : "Failed to delete transactions."
+                  : null
+              }
+              page={activePage}
+              pageSize={DEFAULT_PAGE_SIZE}
+              totalCount={totalCount}
+              onPageChange={handlePageChange}
+            />
+          </TabsPanel>
+
+          <TabsPanel value="skipped">
+            <SkippedTransactionsList
+              rows={skippedQuery.data?.items ?? []}
+              timezone={timezone}
+              isLoading={
+                skippedQuery.isPending ||
+                skippedQuery.isPlaceholderData ||
+                skippedPageOutOfRange
+              }
+              errorMessage={
+                skippedQuery.isError
+                  ? skippedQuery.error instanceof Error
+                    ? skippedQuery.error.message
+                    : "Failed to load skipped emails."
+                  : null
+              }
+              triageError={triageError}
+              pendingTriageVerdict={pendingVerdict}
+              isUndoing={undoVerdictMutation.isPending}
+              onTriageVerdict={(emailId, action) =>
+                triageVerdictMutation.mutate({ emailId, action })
+              }
+              page={skippedPage}
+              totalPages={skippedTotalPages}
+              onPageChange={(page) => void setFilters({ skippedPage: page })}
+            />
+          </TabsPanel>
+        </Tabs>
       )}
 
       <ManualMergeDialog
@@ -605,6 +623,7 @@ export function TransactionsView() {
           verdict={activeUndo.verdict}
           action={activeUndo.action}
           isUndoing={undoVerdictMutation.isPending}
+          isVerdictPending={triageVerdictMutation.isPending}
           undoError={undoError}
           onUndo={() =>
             undoVerdictMutation.mutate({

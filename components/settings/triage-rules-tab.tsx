@@ -111,7 +111,7 @@ export function TriageRulesTab({
       const restoredCount = updated.restoredGhostCount ?? 0
       if (restoredCount > 0) {
         setRecoveryMessage(
-          `Updated rule for ${updated.sender_email}. ${restoredCount} previously ignored ${restoredCount === 1 ? "email is" : "emails are"} now visible on Transactions.`
+          `Updated rule for ${updated.sender_email}. ${restoredCount} previously ignored ${restoredCount === 1 ? "email is" : "emails are"} now visible in Skipped.`
         )
       }
     },
@@ -136,7 +136,7 @@ export function TriageRulesTab({
       invalidateTriageRelatedQueries(queryClient)
       if (res.restoredGhostCount > 0) {
         setRecoveryMessage(
-          `Rule deleted. ${res.restoredGhostCount} previously ignored ${res.restoredGhostCount === 1 ? "email" : "emails"} returned to Transactions for review.`
+          `Rule deleted. ${res.restoredGhostCount} previously ignored ${res.restoredGhostCount === 1 ? "email" : "emails"} returned to Skipped for review.`
         )
       }
     },
@@ -190,10 +190,10 @@ export function TriageRulesTab({
             <span>{recoveryMessage}</span>
             <div className="flex flex-wrap items-center gap-2">
               <Link
-                href="/transactions?range=all"
+                href="/transactions?tab=skipped"
                 className={buttonVariants({ variant: "outline", size: "sm" })}
               >
-                View on Transactions
+                View skipped emails
               </Link>
               <Button
                 type="button"

@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import type { TriageVerdictResult } from "@/lib/api"
+import type { ApplyTriageVerdictInput, TriageVerdictResult } from "@/lib/api"
 
 const UNDO_TIMEOUT_MS = 12_000
 
@@ -14,13 +14,15 @@ export function TriageUndoToast({
   verdict,
   action,
   isUndoing,
+  isVerdictPending,
   undoError,
   onUndo,
   onDismiss,
 }: {
   verdict: TriageVerdictResult
-  action: "promote" | "ignore"
+  action: ApplyTriageVerdictInput["action"]
   isUndoing: boolean
+  isVerdictPending: boolean
   undoError: string | null
   onUndo: () => void
   onDismiss: () => void
@@ -35,7 +37,7 @@ export function TriageUndoToast({
     onDismissRef.current = onDismiss
   }, [onDismiss])
 
-  const isPaused = isHovered || isFocused || isUndoing
+  const isPaused = isHovered || isFocused || isUndoing || isVerdictPending
 
   useEffect(() => {
     if (isPaused) {
@@ -106,7 +108,7 @@ export function TriageUndoToast({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={isUndoing}
+                disabled={isUndoing || isVerdictPending}
                 onClick={onUndo}
               >
                 {isUndoing ? "Undoing..." : "Undo"}

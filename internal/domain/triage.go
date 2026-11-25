@@ -190,7 +190,7 @@ func BackfillSkippedEmailTriageData(gdb *gorm.DB) error {
 		SELECT 1
 		FROM raw_emails re
 		LEFT JOIN email_extractions ee ON ee.email_id = re.id
-		WHERE `+unbackfilledCondition+`
+		WHERE ` + unbackfilledCondition + `
 		LIMIT 1`,
 	).Scan(&needsWork).Error; err != nil {
 		return err
@@ -406,6 +406,16 @@ type ghostListQueryResult struct {
 	GhostRowsTruncated bool
 }
 
+const eligibleGhostBase = `
+		FROM raw_emails re
+		JOIN email_extractions ee ON ee.email_id = re.id
+		WHERE re.status = 'non_transaction'
+		  AND ee.triage_state = 'ghost'
+		  AND COALESCE(ee.extraction_model, '') != 'rule:billing_statement'
+		  AND ee.amount_minor > 0
+		  AND ee.currency IS NOT NULL
+		  AND LENGTH(TRIM(ee.currency)) = 3`
+
 func queryGhostRowsForTransactions(
 	gdb *gorm.DB,
 	params ListTransactionsParams,
@@ -418,62 +428,35 @@ func queryGhostRowsForTransactions(
 	prevPageOldestUtc string,
 	currPageOldestUtc string,
 ) (*ghostListQueryResult, error) {
-	const eligibleGhostBase = `
-		FROM raw_emails re
-		JOIN email_extractions ee ON ee.email_id = re.id
-		WHERE re.status = 'non_transaction'
-		  AND ee.triage_state = 'ghost'
-		  AND COALESCE(ee.extraction_model, '') != 'rule:billing_statement'
-		  AND ee.amount_minor > 0
-		  AND ee.currency IS NOT NULL
-		  AND LENGTH(TRIM(ee.currency)) = 3`
+	const dateBounds = "COALESCE(ee.occurred_at_utc, re.received_at_utc) >= ? AND COALESCE(ee.occurred_at_utc, re.received_at_utc) < ?"
+	inRangeCount := "COUNT(*)"
+	var conds []string
+	var args []any
+	if rangeStartUtc != "" && rangeEndUtc != "" {
+		inRangeCount += " FILTER (WHERE " + dateBounds + ")"
+		conds = append(conds, dateBounds)
+		args = append(args, rangeStartUtc, rangeEndUtc)
+	}
 
-	var totalGhostCount int64
-	if err := gdb.Raw(`SELECT COUNT(*) ` + eligibleGhostBase).Scan(&totalGhostCount).Error; err != nil {
+	var counts struct {
+		Total   int64
+		InRange int64
+	}
+	if err := gdb.Raw(`SELECT COUNT(*) AS total, `+inRangeCount+` AS in_range `+eligibleGhostBase, args...).Scan(&counts).Error; err != nil {
 		return nil, err
 	}
 
-	ghostInRangeCount := totalGhostCount
-	if rangeStartUtc != "" && rangeEndUtc != "" {
-		if err := gdb.Raw(
-			`SELECT COUNT(*) `+eligibleGhostBase+` AND COALESCE(ee.occurred_at_utc, re.received_at_utc) >= ? AND COALESCE(ee.occurred_at_utc, re.received_at_utc) < ?`,
-			rangeStartUtc, rangeEndUtc,
-		).Scan(&ghostInRangeCount).Error; err != nil {
-			return nil, err
-		}
+	result := &ghostListQueryResult{
+		Items:             []GhostRowItem{},
+		GhostInRangeCount: counts.InRange,
+		TotalGhostCount:   counts.Total,
 	}
-
 	showSkipped := params.ShowSkipped == nil || *params.ShowSkipped
-	if !showSkipped || strings.TrimSpace(params.Tag) != "" {
-		return &ghostListQueryResult{
-			Items:             []GhostRowItem{},
-			GhostInRangeCount: ghostInRangeCount,
-			TotalGhostCount:   totalGhostCount,
-		}, nil
+	outsideLedgerPage := (totalTxCount > 0 && pageRowsCount == 0) || (totalTxCount == 0 && params.Page > 1)
+	if !showSkipped || strings.TrimSpace(params.Tag) != "" || outsideLedgerPage {
+		return result, nil
 	}
 
-	if totalTxCount > 0 && pageRowsCount == 0 {
-		return &ghostListQueryResult{
-			Items:             []GhostRowItem{},
-			GhostInRangeCount: ghostInRangeCount,
-			TotalGhostCount:   totalGhostCount,
-		}, nil
-	}
-	if totalTxCount == 0 && params.Page > 1 {
-		return &ghostListQueryResult{
-			Items:             []GhostRowItem{},
-			GhostInRangeCount: ghostInRangeCount,
-			TotalGhostCount:   totalGhostCount,
-		}, nil
-	}
-
-	var conds []string
-	var args []any
-
-	if rangeStartUtc != "" && rangeEndUtc != "" {
-		conds = append(conds, "COALESCE(ee.occurred_at_utc, re.received_at_utc) >= ? AND COALESCE(ee.occurred_at_utc, re.received_at_utc) < ?")
-		args = append(args, rangeStartUtc, rangeEndUtc)
-	}
 	if params.Category != "" {
 		conds = append(conds, "ee.category = ?")
 		args = append(args, params.Category)
@@ -506,23 +489,43 @@ func queryGhostRowsForTransactions(
 		extraWhere = " AND " + strings.Join(conds, " AND ")
 	}
 
-	type rawGhostRow struct {
-		EmailID              string  `gorm:"column:email_id"`
-		SenderID             *string `gorm:"column:sender_id"`
-		FromAddress          string  `gorm:"column:from_address"`
-		Subject              string  `gorm:"column:subject"`
-		AmountMinor          int64   `gorm:"column:amount_minor"`
-		Currency             string  `gorm:"column:currency"`
-		OccurredAtUtc        string  `gorm:"column:effective_occurred_at_utc"`
-		MerchantRaw          *string `gorm:"column:merchant_raw"`
-		Category             *string `gorm:"column:category"`
-		CardLast4            *string `gorm:"column:card_last4"`
-		BankAccountHint      *string `gorm:"column:bank_account_hint"`
-		PaymentMethodRaw     *string `gorm:"column:payment_method_raw"`
-		LlmAccountID         *string `gorm:"column:llm_account_id"`
-		TriageSignatureKey   string  `gorm:"column:triage_signature_key"`
-		TriageSubjectPattern string  `gorm:"column:triage_subject_pattern"`
-		TriageBodyCue        string  `gorm:"column:triage_body_cue"`
+	rawRows, err := readGhostRows(gdb, extraWhere, args, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	out, truncated, err := mapGhostRows(gdb, rawRows, params.AccountID, appCurrency)
+	if err != nil {
+		return nil, err
+	}
+	result.Items = out
+	result.GhostRowsTruncated = truncated
+	return result, nil
+}
+
+type rawGhostRow struct {
+	EmailID              string  `gorm:"column:email_id"`
+	SenderID             *string `gorm:"column:sender_id"`
+	FromAddress          string  `gorm:"column:from_address"`
+	Subject              string  `gorm:"column:subject"`
+	AmountMinor          int64   `gorm:"column:amount_minor"`
+	Currency             string  `gorm:"column:currency"`
+	OccurredAtUtc        string  `gorm:"column:effective_occurred_at_utc"`
+	MerchantRaw          *string `gorm:"column:merchant_raw"`
+	Category             *string `gorm:"column:category"`
+	CardLast4            *string `gorm:"column:card_last4"`
+	BankAccountHint      *string `gorm:"column:bank_account_hint"`
+	PaymentMethodRaw     *string `gorm:"column:payment_method_raw"`
+	LlmAccountID         *string `gorm:"column:llm_account_id"`
+	TriageSignatureKey   string  `gorm:"column:triage_signature_key"`
+	TriageSubjectPattern string  `gorm:"column:triage_subject_pattern"`
+	TriageBodyCue        string  `gorm:"column:triage_body_cue"`
+}
+
+func readGhostRows(gdb *gorm.DB, extraWhere string, args []any, limit, offset int) ([]rawGhostRow, error) {
+	pageClause := ""
+	if limit > 0 {
+		pageClause = " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
 	}
 
 	var rawRows []rawGhostRow
@@ -545,10 +548,18 @@ func queryGhostRowsForTransactions(
 			COALESCE(ee.triage_subject_pattern, '') AS triage_subject_pattern,
 			COALESCE(ee.triage_body_cue, '') AS triage_body_cue
 		`+eligibleGhostBase+extraWhere+`
-		ORDER BY effective_occurred_at_utc DESC, re.internal_date_ms DESC, re.id DESC`,
+		ORDER BY effective_occurred_at_utc DESC, re.internal_date_ms DESC, re.id DESC`+pageClause,
 		args...,
 	).Scan(&rawRows).Error; err != nil {
 		return nil, err
+	}
+
+	return rawRows, nil
+}
+
+func mapGhostRows(gdb *gorm.DB, rawRows []rawGhostRow, accountFilter, appCurrency string) ([]GhostRowItem, bool, error) {
+	if len(rawRows) == 0 {
+		return []GhostRowItem{}, false, nil
 	}
 
 	type acctNameRow struct {
@@ -557,7 +568,7 @@ func queryGhostRowsForTransactions(
 	}
 	var acctRows []acctNameRow
 	if err := gdb.Raw(`SELECT id, name FROM accounts`).Scan(&acctRows).Error; err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	acctNameByID := make(map[string]string, len(acctRows))
 	for _, a := range acctRows {
@@ -574,12 +585,12 @@ func queryGhostRowsForTransactions(
 			PaymentMethod:   r.PaymentMethodRaw,
 			LlmAccountID:    r.LlmAccountID,
 		})
-		if params.AccountID != "" && params.AccountID != "all" {
-			if params.AccountID == "unassigned" {
+		if accountFilter != "" && accountFilter != "all" {
+			if accountFilter == "unassigned" {
 				if resolvedAcctID != nil {
 					continue
 				}
-			} else if resolvedAcctID == nil || *resolvedAcctID != params.AccountID {
+			} else if resolvedAcctID == nil || *resolvedAcctID != accountFilter {
 				continue
 			}
 		}
@@ -617,12 +628,57 @@ func queryGhostRowsForTransactions(
 		})
 	}
 
-	return &ghostListQueryResult{
-		Items:              out,
-		GhostInRangeCount:  ghostInRangeCount,
-		TotalGhostCount:    totalGhostCount,
-		GhostRowsTruncated: truncated,
-	}, nil
+	return out, truncated, nil
+}
+
+type PaginatedSkippedTransactionsResponse struct {
+	Items      []GhostRowItem `json:"items"`
+	TotalCount int64          `json:"totalCount"`
+	Page       int            `json:"page"`
+	PageSize   int            `json:"pageSize"`
+}
+
+func ListSkippedTransactions(gdb *gorm.DB, page, pageSize int) (*PaginatedSkippedTransactionsResponse, error) {
+	page = max(1, page)
+	if pageSize <= 0 {
+		pageSize = 25
+	}
+	pageSize = min(pageSize, maxGhostRowsPerPage)
+
+	result := PaginatedSkippedTransactionsResponse{
+		Items: []GhostRowItem{}, Page: page, PageSize: pageSize,
+	}
+	timezone, currency, err := getLocaleConfig(gdb)
+	if err != nil {
+		return nil, err
+	}
+	if timezone == nil || *timezone == "" || currency == nil || *currency == "" {
+		return &result, nil
+	}
+	if err := BackfillSkippedEmailTriageData(gdb); err != nil {
+		return nil, err
+	}
+
+	var rows []rawGhostRow
+	err = gdb.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT COUNT(*) ` + eligibleGhostBase).Scan(&result.TotalCount).Error; err != nil {
+			return err
+		}
+		if result.TotalCount == 0 || int64(page-1) > (result.TotalCount-1)/int64(pageSize) {
+			return nil
+		}
+		var err error
+		rows, err = readGhostRows(tx, "", nil, pageSize, (page-1)*pageSize)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.Items, _, err = mapGhostRows(gdb, rows, "", *currency)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 type triageCandidateRow struct {

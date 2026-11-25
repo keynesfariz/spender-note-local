@@ -5,6 +5,7 @@ import type {
   ApplyTriageVerdictInput,
   DeleteTriagePolicyResult,
   PaginatedIgnoredEmailsResponse,
+  PaginatedSkippedTransactionsResponse,
   PromoteIgnoredEmailResult,
   SenderTriagePolicyView,
   TriageUndoInput,
@@ -47,6 +48,23 @@ export const triageIgnoredEmailsQuery = (params?: {
       const qs = sp.toString()
       return apiFetch<PaginatedIgnoredEmailsResponse>(
         `/api/triage/ignored${qs ? `?${qs}` : ""}`
+      )
+    },
+  })
+
+export const triageSkippedTransactionsQuery = (
+  page: number,
+  pageSize: number
+) =>
+  queryOptions({
+    queryKey: ["triage", "skipped", page, pageSize] as const,
+    queryFn: () => {
+      const sp = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+      })
+      return apiFetch<PaginatedSkippedTransactionsResponse>(
+        `/api/triage/skipped?${sp}`
       )
     },
   })

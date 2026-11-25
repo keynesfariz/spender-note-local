@@ -497,7 +497,7 @@ func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTr
 		})
 	}
 	prevPageOldestUtc := ""
-	if page > 1 && totalCount > 0 && len(rows) > 0 {
+	if (params.ShowSkipped == nil || *params.ShowSkipped) && page > 1 && totalCount > 0 && len(rows) > 0 {
 		prevArgs := append(append([]any{}, args...), offset-1)
 		_ = gdb.Raw(`
 			SELECT t.occurred_at_utc

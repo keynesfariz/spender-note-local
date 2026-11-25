@@ -1,6 +1,5 @@
 "use client"
 
-import { IconTooltip } from "@/components/ui/tooltip"
 import * as React from "react"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { cn } from "cn"
@@ -61,21 +60,20 @@ function DialogContent({
       >
         {children}
         {showCloseButton && (
-          <IconTooltip label="Close">
-            <DialogPrimitive.Close
-              data-slot="dialog-close"
-              render={
-                <Button
-                  variant="ghost"
-                  className="absolute top-4 right-4"
-                  size="icon-sm"
-                />
-              }
-            >
-              <XIcon />
-              <span className="sr-only">Close</span>
-            </DialogPrimitive.Close>
-          </IconTooltip>
+          <DialogPrimitive.Close
+            data-slot="dialog-close"
+            render={
+              <Button
+                variant="ghost"
+                className="absolute top-4 right-4"
+                size="icon-sm"
+              />
+            }
+          >
+            <XIcon
+            />
+            <span className="sr-only">Close</span>
+          </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Popup>
     </DialogPortal>

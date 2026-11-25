@@ -6,3 +6,4 @@ coverage/
 pnpm-lock.yaml
 .pnpm-store/
 lib/api/types.generated.ts
+/components/ui/

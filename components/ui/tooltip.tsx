@@ -2,7 +2,6 @@
 
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip"
 import { cn } from "cn"
-import type { ReactElement } from "react"
 
 function TooltipProvider({
   delay = 0,
@@ -63,19 +62,4 @@ function TooltipContent({
   )
 }
 
-function IconTooltip({
-  label,
-  children,
-}: {
-  label: string
-  children: ReactElement
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger render={children} />
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  )
-}
-
-export { IconTooltip, Tooltip, TooltipTrigger, TooltipContent, TooltipProvider }
+export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider }

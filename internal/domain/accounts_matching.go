@@ -9,28 +9,29 @@ import (
 	"gorm.io/gorm"
 
 	"portspendernote/internal/db"
+	"portspendernote/internal/llm"
 )
 
-func ListExtractionAccountContexts(gdb *gorm.DB) []ExtractionAccountContext {
+func listExtractionAccountContexts(gdb *gorm.DB) []llm.AccountContext {
 	var accounts []db.Account
 	if err := gdb.Order("created_at_utc ASC, name ASC").Find(&accounts).Error; err != nil || len(accounts) == 0 {
-		return []ExtractionAccountContext{}
+		return []llm.AccountContext{}
 	}
 	var idents []db.AccountIdentifier
 	if err := gdb.Order("created_at_utc ASC, rowid ASC").Find(&idents).Error; err != nil {
-		return []ExtractionAccountContext{}
+		return []llm.AccountContext{}
 	}
 	byAcct := map[string][]string{}
 	for _, ident := range idents {
 		byAcct[ident.AccountID] = append(byAcct[ident.AccountID], ident.Value)
 	}
-	out := make([]ExtractionAccountContext, 0, len(accounts))
+	out := make([]llm.AccountContext, 0, len(accounts))
 	for _, a := range accounts {
 		vals := byAcct[a.ID]
 		if vals == nil {
 			vals = []string{}
 		}
-		out = append(out, ExtractionAccountContext{
+		out = append(out, llm.AccountContext{
 			ID:          a.ID,
 			Name:        a.Name,
 			Type:        a.Type,

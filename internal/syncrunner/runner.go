@@ -265,19 +265,6 @@ func DismissPendingQueue(gdb *gorm.DB) (int64, error) {
 	return res.RowsAffected, res.Error
 }
 
-func toLlmAccountContexts(src []domain.ExtractionAccountContext) []llm.AccountContext {
-	out := make([]llm.AccountContext, 0, len(src))
-	for _, a := range src {
-		out = append(out, llm.AccountContext{
-			ID:          a.ID,
-			Name:        a.Name,
-			Type:        a.Type,
-			Identifiers: append([]string(nil), a.Identifiers...),
-		})
-	}
-	return out
-}
-
 func runRetryJob(runCtx context.Context, gdb *gorm.DB, runID string, cfg *validatedConfig) {
 	llmClient, err := llm.NewClient(cfg.LlmBaseURL, time.Duration(cfg.LlmTimeoutMs)*time.Millisecond)
 	if err != nil {
@@ -603,18 +590,10 @@ func runExtractionWorker(
 	fetchDoneCh <-chan struct{},
 	cancelFetch context.CancelFunc,
 ) error {
-	accountContexts := toLlmAccountContexts(domain.ListExtractionAccountContexts(gdb))
-	categoryNames, _ := domain.ListCategoryNames(gdb)
-	categoryLookup := make(map[string]string, len(categoryNames))
-	for _, name := range categoryNames {
+	prompt, _ := domain.LoadExtractionInput(gdb, cfg.CountryCode, &cfg.Currency, cfg.Timezone)
+	categoryLookup := make(map[string]string, len(prompt.Categories))
+	for _, name := range prompt.Categories {
 		categoryLookup[strings.ToLower(strings.TrimSpace(name))] = name
-	}
-
-	var countryPromptRules []string
-	if cfg.CountryCode != nil && strings.TrimSpace(*cfg.CountryCode) != "" {
-		if pack := domain.FindCountryPackByCode(*cfg.CountryCode); pack != nil && len(pack.LlmPromptRules) > 0 {
-			countryPromptRules = pack.LlmPromptRules
-		}
 	}
 
 	fetchDone := false
@@ -689,21 +668,11 @@ func runExtractionWorker(
 			continue
 		}
 
-		userCurrency := cfg.Currency
-		extracted, err := llmClient.ExtractTransaction(runCtx, cfg.LlmModel, llm.ExtractInput{
-			EmailID:            email.ID,
-			FromAddress:        email.FromAddress,
-			Subject:            email.Subject,
-			CleanedText:        email.CleanedText,
-			ReceivedAtUtc:      email.ReceivedAtUtc,
-			UserCountry:        cfg.CountryCode,
-			CountryPromptRules: countryPromptRules,
-			UserTimezone:       cfg.Timezone,
-			UserCurrency:       &userCurrency,
-			Categories:         categoryNames,
-			Accounts:           accountContexts,
-			DefaultAccountID:   domain.SenderDefaultAccountID(gdb, email.SenderID),
+		input := domain.ExtractionInputForEmail(gdb, prompt, domain.ExtractionEmail{
+			EmailID: email.ID, FromAddress: email.FromAddress, Subject: email.Subject,
+			CleanedText: email.CleanedText, ReceivedAtUtc: email.ReceivedAtUtc, SenderID: email.SenderID,
 		})
+		extracted, err := llmClient.ExtractTransaction(runCtx, cfg.LlmModel, input)
 		if runCtx.Err() != nil {
 			return nil
 		}
@@ -851,7 +820,7 @@ func runExtractionWorker(
 			for _, ident := range createdProvisional.Identifiers {
 				idents = append(idents, ident.Value)
 			}
-			accountContexts = append(accountContexts, llm.AccountContext{
+			prompt.Accounts = append(prompt.Accounts, llm.AccountContext{
 				ID:          createdProvisional.ID,
 				Name:        createdProvisional.Name,
 				Type:        createdProvisional.Type,

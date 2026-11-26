@@ -9,7 +9,46 @@ import (
 	"gorm.io/gorm"
 
 	"portspendernote/internal/db"
+	"portspendernote/internal/llm"
 )
+
+// LoadExtractionInput prepares the prompt context shared by a batch or recovery request.
+func LoadExtractionInput(gdb *gorm.DB, country, currency *string, timezone string) (llm.ExtractInput, error) {
+	categories, err := ListCategoryNames(gdb)
+	input := llm.ExtractInput{
+		UserCountry:  country,
+		UserCurrency: currency,
+		UserTimezone: timezone,
+		Categories:   categories,
+	}
+	if country != nil {
+		if pack := FindCountryPackByCode(*country); pack != nil {
+			input.CountryPromptRules = pack.LlmPromptRules
+		}
+	}
+	input.Accounts = listExtractionAccountContexts(gdb)
+	return input, err
+}
+
+type ExtractionEmail struct {
+	EmailID       string
+	FromAddress   string
+	Subject       string
+	CleanedText   string
+	ReceivedAtUtc string
+	SenderID      *string
+}
+
+// ExtractionInputForEmail copies the batch context and resolves the sender's current default.
+func ExtractionInputForEmail(gdb *gorm.DB, input llm.ExtractInput, email ExtractionEmail) llm.ExtractInput {
+	input.EmailID = email.EmailID
+	input.FromAddress = email.FromAddress
+	input.Subject = email.Subject
+	input.CleanedText = email.CleanedText
+	input.ReceivedAtUtc = email.ReceivedAtUtc
+	input.DefaultAccountID = SenderDefaultAccountID(gdb, email.SenderID)
+	return input
+}
 
 type ExtractedTransactionInput struct {
 	EmailID       string

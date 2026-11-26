@@ -1240,41 +1240,15 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 		if settings.Timezone != nil && strings.TrimSpace(*settings.Timezone) != "" && !strings.EqualFold(strings.TrimSpace(*settings.Timezone), "Local") {
 			userTimezone = strings.TrimSpace(*settings.Timezone)
 		}
-		var countryRules []string
-		if settings.CountryCode != nil && strings.TrimSpace(*settings.CountryCode) != "" {
-			if pack := FindCountryPackByCode(*settings.CountryCode); pack != nil {
-				countryRules = pack.LlmPromptRules
-			}
-		}
-		catNames, err := ListCategoryNames(gdb)
+		prompt, err := LoadExtractionInput(gdb, settings.CountryCode, settings.Currency, userTimezone)
 		if err != nil {
 			return nil, err
 		}
-		acctContexts := ListExtractionAccountContexts(gdb)
-		llmAccounts := make([]llm.AccountContext, 0, len(acctContexts))
-		for _, a := range acctContexts {
-			llmAccounts = append(llmAccounts, llm.AccountContext{
-				ID:          a.ID,
-				Name:        a.Name,
-				Type:        a.Type,
-				Identifiers: a.Identifiers,
-			})
-		}
-
-		extracted, err = client.ExtractTransaction(ctx, llmModelName, llm.ExtractInput{
-			EmailID:            target.EmailID,
-			FromAddress:        target.FromAddress,
-			Subject:            target.Subject,
-			CleanedText:        target.CleanedText,
-			ReceivedAtUtc:      target.ReceivedAtUtc,
-			UserCountry:        settings.CountryCode,
-			CountryPromptRules: countryRules,
-			UserTimezone:       userTimezone,
-			UserCurrency:       settings.Currency,
-			Categories:         catNames,
-			Accounts:           llmAccounts,
-			DefaultAccountID:   SenderDefaultAccountID(gdb, target.SenderID),
+		input := ExtractionInputForEmail(gdb, prompt, ExtractionEmail{
+			EmailID: target.EmailID, FromAddress: target.FromAddress, Subject: target.Subject,
+			CleanedText: target.CleanedText, ReceivedAtUtc: target.ReceivedAtUtc, SenderID: target.SenderID,
 		})
+		extracted, err = client.ExtractTransaction(ctx, llmModelName, input)
 		if err != nil {
 			return nil, err
 		}

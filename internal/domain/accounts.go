@@ -53,13 +53,6 @@ type AccountOption struct {
 	Name string `json:"name"`
 }
 
-type ExtractionAccountContext struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Type        string   `json:"type"`
-	Identifiers []string `json:"identifiers"`
-}
-
 func isValidAccountType(t string) bool {
 	return t == "credit_card" || t == "debit_card" || t == "digital_wallet"
 }

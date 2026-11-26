@@ -2,10 +2,9 @@
 
 import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { DynamicIcon } from "@/components/dynamic-icon"
+import { CategoryBadge } from "@/components/category-badge"
 import { PaginationControls } from "@/components/pagination-controls"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -143,13 +142,10 @@ export function SkippedTransactionsList({
                           {ghostTitle}
                         </span>
                         {ghost.category && (
-                          <Badge variant="secondary" className="gap-1">
-                            <DynamicIcon
-                              name={categoryIconMap.get(ghost.category)}
-                              className="size-3"
-                            />
-                            {ghost.category}
-                          </Badge>
+                          <CategoryBadge
+                            category={ghost.category}
+                            icon={categoryIconMap.get(ghost.category)}
+                          />
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground">

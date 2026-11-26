@@ -1,9 +1,10 @@
-import { CheckLine, MailIcon } from "lucide-react"
+import { MailIcon, StickyNote, StickyNoteCheck } from "lucide-react"
 import { useId, useMemo, type ComponentProps, type ReactNode } from "react"
 
+import { CategoryField } from "@/components/category-field"
 import { DatePicker } from "@/components/date-picker"
-import { DynamicIcon } from "@/components/dynamic-icon"
 import { TagMultiSelect } from "@/components/tag-multi-select"
+import { Badge } from "@/components/ui/badge"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
@@ -16,11 +17,6 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import type { AccountOption, CategorySummary } from "@/lib/api/types.generated"
-import {
-  DEFAULT_CATEGORY,
-  buildCategoryIconMap,
-  buildCategorySelectOptions,
-} from "@/lib/categories"
 
 export const UNASSIGNED_ACCOUNT = "__unassigned__"
 
@@ -84,14 +80,6 @@ export function TransactionFormFields({
   const amountId = useId()
   const descriptionId = useId()
   const dateId = useId()
-  const categoryIconMap = useMemo(
-    () => buildCategoryIconMap(categories),
-    [categories]
-  )
-  const categoryOptions = useMemo(
-    () => buildCategorySelectOptions(categories, category),
-    [categories, category]
-  )
   const accountItems = useMemo(() => {
     const items = [
       {
@@ -111,23 +99,20 @@ export function TransactionFormFields({
     }
     return items
   }, [accounts, accountId, missingAccountLabel, receivingAccount])
-  const descriptionField = (
-    <Field>
-      <FieldLabel htmlFor={descriptionId}>Remark</FieldLabel>
-      <Input
-        id={descriptionId}
-        type="text"
-        required={description.required}
-        value={description.value}
-        placeholder={description.placeholder}
-        onChange={(event) => description.onChange(event.target.value)}
-      />
-    </Field>
-  )
 
   return (
     <div className="grid gap-4 sm:grid-cols-2" inert={inert}>
-      {descriptionField}
+      <Field className="sm:col-span-2">
+        <FieldLabel htmlFor={descriptionId}>Remark</FieldLabel>
+        <Input
+          id={descriptionId}
+          type="text"
+          required={description.required}
+          value={description.value}
+          placeholder={description.placeholder}
+          onChange={(event) => description.onChange(event.target.value)}
+        />
+      </Field>
       <Field>
         <FieldLabel htmlFor={amountId}>Amount ({currency})</FieldLabel>
         <Input
@@ -140,42 +125,6 @@ export function TransactionFormFields({
           onChange={(event) => onAmountChange(event.target.value)}
         />
       </Field>
-
-      <Field>
-        <FieldLabel>Category</FieldLabel>
-        <Select
-          items={categoryOptions}
-          value={category}
-          onValueChange={(value) => onCategoryChange(value ?? DEFAULT_CATEGORY)}
-        >
-          <SelectTrigger className="w-full" aria-label="Category">
-            <DynamicIcon
-              name={categoryIconMap.get(category)}
-              className="size-4 text-muted-foreground"
-            />
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {categoryOptions.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                <span className="flex items-center gap-2">
-                  <DynamicIcon
-                    name={categoryIconMap.get(option.value)}
-                    className="size-4 text-muted-foreground"
-                  />
-                  <span>{option.label}</span>
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </Field>
-
-      <Field className="sm:col-span-2">
-        <FieldLabel>Tags</FieldLabel>
-        {tagPicker && <TagMultiSelect key={tagPickerKey} {...tagPicker} />}
-      </Field>
-
       <Field>
         <FieldLabel>
           {receivingAccount ? "Receiving account" : "Account"}
@@ -208,7 +157,7 @@ export function TransactionFormFields({
         )}
       </Field>
 
-      <Field className="min-w-0">
+      <Field>
         <FieldLabel htmlFor={dateId}>{dateLabel}</FieldLabel>
         <DatePicker
           id={dateId}
@@ -218,6 +167,17 @@ export function TransactionFormFields({
           time={time}
           disabled={inert}
         />
+      </Field>
+
+      <CategoryField
+        categories={categories}
+        value={category}
+        onChange={onCategoryChange}
+      />
+
+      <Field className="sm:col-span-2">
+        <FieldLabel>Tags</FieldLabel>
+        {tagPicker && <TagMultiSelect key={tagPickerKey} {...tagPicker} />}
       </Field>
     </div>
   )
@@ -253,30 +213,35 @@ export function TransactionForm({
   details,
   note,
   noteActions,
-  sourceCount,
-  sources,
+  sourceTab,
   ...tabs
 }: {
   details: ReactNode
   note: ComponentProps<typeof TransactionNoteField>
   noteActions?: ReactNode
-  sourceCount: number
-  sources?: ReactNode
+  sourceTab?: { count: number; content?: ReactNode }
 } & Pick<ComponentProps<typeof Tabs>, "value" | "onValueChange">) {
   return (
     <Tabs className="gap-4" defaultValue="details" {...tabs}>
       <TabsList
+        variant="line"
         className="max-w-full overflow-x-auto"
         aria-label="Transaction detail sections"
       >
         <TabsTrigger value="details">Details</TabsTrigger>
         <TabsTrigger value="note">
+          {note.value.trim() ? <StickyNoteCheck /> : <StickyNote />}
           <span>Note</span>
-          {note.value.trim() ? <CheckLine /> : null}
         </TabsTrigger>
-        <TabsTrigger value="sources">
-          <MailIcon className="size-3.5" /> Source emails ({sourceCount})
-        </TabsTrigger>
+        {sourceTab ? (
+          <TabsTrigger value="sources">
+            <MailIcon className="size-3.5" />
+            <span>Source emails</span>
+            <Badge variant="secondary" className="tabular-nums">
+              {sourceTab.count}
+            </Badge>
+          </TabsTrigger>
+        ) : null}
       </TabsList>
       <TabsContent value="details" keepMounted>
         {details}
@@ -285,13 +250,15 @@ export function TransactionForm({
         <TransactionNoteField {...note} />
         {noteActions}
       </TabsContent>
-      <TabsContent value="sources" className="space-y-3">
-        {sources ?? (
-          <p className="text-sm text-muted-foreground">
-            No source emails attached (manual transaction).
-          </p>
-        )}
-      </TabsContent>
+      {sourceTab ? (
+        <TabsContent value="sources" className="space-y-3">
+          {sourceTab.content ?? (
+            <p className="text-sm text-muted-foreground">
+              No source emails attached (manual transaction).
+            </p>
+          )}
+        </TabsContent>
+      ) : null}
     </Tabs>
   )
 }

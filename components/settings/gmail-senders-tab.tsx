@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useMemo, useState, type SubmitEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
+import { DestructiveConfirmationContent } from "@/components/destructive-confirmation-content"
 import { IconTooltip } from "@/components/icon-tooltip"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
@@ -487,28 +488,12 @@ export function GmailSendersTab({
                         >
                           Remove
                         </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>
-                              Remove {sender.email}?
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              This permanently removes {sender.email} and its
-                              sync cursor from your trusted senders list.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              variant="destructive"
-                              onClick={() =>
-                                deleteSenderMutation.mutate(sender.id)
-                              }
-                            >
-                              Remove sender permanently
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
+                        <DestructiveConfirmationContent
+                          title={`Remove ${sender.email}?`}
+                          description={`This permanently removes ${sender.email} and its sync cursor from your trusted senders list.`}
+                          confirmLabel="Remove sender permanently"
+                          onConfirm={() => deleteSenderMutation.mutate(sender.id)}
+                        />
                       </AlertDialog>
                     </div>
                   </div>

@@ -1,5 +1,7 @@
 "use client"
 
+import { useHasOpened } from "@/hooks/use-has-opened"
+import { useTransactionReview } from "@/hooks/use-transaction-review"
 import {
   keepPreviousData,
   type QueryState,
@@ -9,12 +11,11 @@ import {
 } from "@tanstack/react-query"
 import {
   CheckCircle2Icon,
-  Clock3Icon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  Clock3Icon,
 } from "lucide-react"
 import dynamic from "next/dynamic"
-import Link from "next/link"
 import {
   parseAsBoolean,
   parseAsInteger,
@@ -23,26 +24,25 @@ import {
   useQueryStates,
 } from "nuqs"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { useHasOpened } from "@/hooks/use-has-opened"
-import { useTransactionReview } from "@/hooks/use-transaction-review"
 
 import { DateRangePicker } from "@/components/date-picker"
+import { LocaleSetupAlert } from "@/components/locale-setup-alert"
 import type { ManualMergeMode } from "@/components/manual-merge-dialog"
-import type { TransferTarget } from "@/components/transfer-form-dialog"
+import { PageLayout } from "@/components/PageLayout"
 import { TransactionList } from "@/components/transaction-list"
+import type { TransferTarget } from "@/components/transfer-form-dialog"
 import { TriageUndoToast } from "@/components/triage-undo-toast"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { accountOptionsQuery } from "@/lib/api/accounts"
 import { localeQuery } from "@/lib/api/settings"
 import {
+  DEFAULT_LEDGER_PARAMS,
   deleteTransactionsApi,
   invalidateTransactionRelatedQueries,
   markTransactionsReviewedApi,
-  DEFAULT_LEDGER_PARAMS,
   TRANSACTIONS_PAGE_SIZE,
   transactionsQuery,
 } from "@/lib/api/transactions"
@@ -56,8 +56,8 @@ import {
   type AccountOption,
   type ApplyTriageVerdictInput,
   type PaginatedTransactionsResponse,
-  type TriageVerdictResult,
   type TransactionListItem,
+  type TriageVerdictResult,
 } from "@/lib/api/types.generated"
 import { getTodayDateString, shiftDateRange } from "@/lib/format"
 
@@ -477,33 +477,33 @@ export function TransactionsView() {
     unreviewedInRangeCount > 0
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Transactions</h1>
-        <p className="text-sm text-muted-foreground">
-          Review daily spending, merge duplicate emails, or combine related
-          charges.
-        </p>
-      </div>
-
+    <PageLayout
+      title="Transactions"
+      subtitle="Review daily spending, merge duplicate emails, or combine related charges."
+      actions={
+        isConfigured ? (
+          <Button
+            type="button"
+            size="sm"
+            onPointerEnter={preloadAddTransactionDialog}
+            onFocus={preloadAddTransactionDialog}
+            onClick={() => setAddDialogOpen(true)}
+          >
+            Add transaction
+          </Button>
+        ) : null
+      }
+    >
       {settingsDataQuery.isPending ? (
         <div className="space-y-4">
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-64 w-full" />
         </div>
       ) : !isConfigured ? (
-        <Alert>
-          <AlertTitle>Finish initial setup</AlertTitle>
-          <AlertDescription className="mt-2 flex flex-wrap items-center justify-between gap-3">
-            <span>
-              Configure your country and currency in Settings to review and
-              manage transactions.
-            </span>
-            <Link href="/settings" className={buttonVariants({ size: "sm" })}>
-              Go to Settings
-            </Link>
-          </AlertDescription>
-        </Alert>
+        <LocaleSetupAlert>
+          Configure your country and currency in Settings to review and manage
+          transactions.
+        </LocaleSetupAlert>
       ) : (
         <Tabs
           className="gap-4"
@@ -573,16 +573,6 @@ export function TransactionsView() {
                 onClick={handleToggleAllDates}
               >
                 All dates
-              </Button>
-
-              <Button
-                type="button"
-                size="sm"
-                onPointerEnter={preloadAddTransactionDialog}
-                onFocus={preloadAddTransactionDialog}
-                onClick={() => setAddDialogOpen(true)}
-              >
-                Add transaction
               </Button>
             </div>
             <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2">
@@ -802,6 +792,6 @@ export function TransactionsView() {
           onDismiss={clearActiveUndo}
         />
       )}
-    </div>
+    </PageLayout>
   )
 }

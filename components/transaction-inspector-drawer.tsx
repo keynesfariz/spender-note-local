@@ -26,12 +26,14 @@ import {
   resolveMagicDraft,
   useMagicEnrich,
 } from "@/components/magic-enrich"
-import { TransferFormDialog } from "@/components/transfer-form-dialog"
+import { DestructiveConfirmationContent } from "@/components/destructive-confirmation-content"
+import { ReviewedIcon } from "@/components/reviewed"
 import {
   TransactionForm,
   TransactionFormFields,
   UNASSIGNED_ACCOUNT,
 } from "@/components/transaction-form"
+import { TransferFormDialog } from "@/components/transfer-form-dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -55,7 +57,6 @@ import type { useTransactionReview } from "@/hooks/use-transaction-review"
 import { accountsQuery } from "@/lib/api/accounts"
 import { categoriesQuery } from "@/lib/api/categories"
 import { tagsQuery } from "@/lib/api/tags"
-import { invalidateTriageRelatedQueries } from "@/lib/api/triage"
 import {
   transactionInspectorQuery,
   transactionSourceBodyQuery,
@@ -68,6 +69,7 @@ import {
   splitTransactionSourceApi,
   updateTransactionApi,
 } from "@/lib/api/transactions"
+import { invalidateTriageRelatedQueries } from "@/lib/api/triage"
 import {
   type AccountOption,
   type CategorySummary,
@@ -79,11 +81,11 @@ import {
 import {
   dateTimeInputToUtcIso,
   formatTransactionAmount,
-  transactionKindLabel,
   formatUtcInTimezone,
-  minorToDecimalInput,
   groupAmountInput,
+  minorToDecimalInput,
   parseDecimalToMinorClient,
+  transactionKindLabel,
   utcToDateInputValue,
   utcToTimeInputValue,
 } from "@/lib/format"
@@ -159,7 +161,7 @@ function SourceEmail({
 
   return (
     <Card>
-      <CardContent className="space-y-2 py-3 text-sm">
+      <CardContent className="space-y-2 text-sm">
         <details
           className="group"
           onToggle={(event) => setOpen(event.currentTarget.open)}
@@ -652,7 +654,7 @@ function InspectorForm({
 
     return (
       <div className="flex flex-wrap items-center gap-2">
-        {reviewed ? <Badge variant="secondary">Reviewed</Badge> : null}
+        {reviewed ? <ReviewedIcon /> : null}
         <Button
           type="submit"
           form={form}
@@ -691,25 +693,13 @@ function InspectorForm({
       >
         Delete transaction
       </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete this transaction?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This permanently deletes the transaction and marks any linked source
-            emails as dismissed.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={deleteMutation.isPending}
-            onClick={() => deleteMutation.mutate(tx.id)}
-          >
-            Delete forever
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
+      <DestructiveConfirmationContent
+        title="Delete this transaction?"
+        description="This permanently deletes the transaction and marks any linked source emails as dismissed."
+        confirmLabel="Delete forever"
+        confirmDisabled={deleteMutation.isPending}
+        onConfirm={() => deleteMutation.mutate(tx.id)}
+      />
     </AlertDialog>
   )
 
@@ -775,7 +765,6 @@ function InspectorForm({
           onChange: (value) => editDraft("note", setNote, value),
         }}
         noteActions={isTransfer ? undefined : reviewActions(detailFormId)}
-        sourceCount={detail.sources.length}
         details={
           isTransfer ? (
             <div className="flex flex-wrap gap-2">
@@ -954,46 +943,48 @@ function InspectorForm({
             </form>
           )
         }
-        sources={
-          detail.sources.length > 0 ? (
-            <>
-              {!isTransfer &&
-                !isIncome &&
-                tx.manual_override === 1 &&
-                detail.sources.length > 1 && (
-                  <Alert>
-                    <AlertDescription>
-                      This transaction has a locked amount (edited or combined).
-                      Splitting an email creates a separate transaction without
-                      reducing this transaction&apos;s amount — adjust the
-                      amount manually if needed.
-                    </AlertDescription>
-                  </Alert>
-                )}
-              <ul className="space-y-3">
-                {detail.sources.map((source) => (
-                  <li key={source.id}>
-                    <SourceEmail
-                      source={source}
-                      transactionId={tx.id}
-                      timezone={timezone}
-                      onSplit={
-                        !isTransfer && !isIncome && detail.sources.length > 1
-                          ? () =>
-                              splitMutation.mutate({
-                                transactionId: tx.id,
-                                emailId: source.email_id,
-                              })
-                          : undefined
-                      }
-                      splitDisabled={saveDisabled}
-                    />
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : undefined
-        }
+        sourceTab={{
+          count: detail.sources.length,
+          content:
+            detail.sources.length > 0 ? (
+              <>
+                {!isTransfer &&
+                  !isIncome &&
+                  tx.manual_override === 1 &&
+                  detail.sources.length > 1 && (
+                    <Alert>
+                      <AlertDescription>
+                        This transaction has a locked amount (edited or combined).
+                        Splitting an email creates a separate transaction without
+                        reducing this transaction&apos;s amount — adjust the
+                        amount manually if needed.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                <ul className="space-y-3">
+                  {detail.sources.map((source) => (
+                    <li key={source.id}>
+                      <SourceEmail
+                        source={source}
+                        transactionId={tx.id}
+                        timezone={timezone}
+                        onSplit={
+                          !isTransfer && !isIncome && detail.sources.length > 1
+                            ? () =>
+                                splitMutation.mutate({
+                                  transactionId: tx.id,
+                                  emailId: source.email_id,
+                                })
+                            : undefined
+                        }
+                        splitDisabled={saveDisabled}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : undefined,
+        }}
       />
     </div>
   )

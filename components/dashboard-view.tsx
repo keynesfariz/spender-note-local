@@ -5,7 +5,9 @@ import Link from "next/link"
 import { useId, useState } from "react"
 
 import { BreakdownPanels } from "@/components/breakdown-panels"
+import { LocaleSetupAlert } from "@/components/locale-setup-alert"
 import { MonthlySummary } from "@/components/monthly-summary"
+import { PageLayout } from "@/components/PageLayout"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
 import {
@@ -127,18 +129,11 @@ export function DashboardView() {
   const isConfigured = Boolean(summaryQuery.data?.configured)
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Monthly Spending
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Track spending across synced emails and manual entries.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
+    <PageLayout
+      title="Monthly Spending"
+      subtitle="Track spending across synced emails and manual entries."
+      actions={
+        <>
           <Button
             type="button"
             variant="outline"
@@ -209,9 +204,9 @@ export function DashboardView() {
           >
             View transactions
           </Link>
-        </div>
-      </div>
-
+        </>
+      }
+    >
       {isConfigured && (
         <section aria-label="Spending filters" className="flex flex-wrap gap-3">
           <ReportFilter
@@ -263,19 +258,11 @@ export function DashboardView() {
           <BreakdownPanels summary={summaryQuery.data} />
         </>
       ) : (
-        <Alert>
-          <AlertTitle>Finish initial setup</AlertTitle>
-          <AlertDescription className="mt-2 flex flex-wrap items-center justify-between gap-3">
-            <span>
-              Configure your country and currency in Settings to start tracking
-              monthly spending.
-            </span>
-            <Link href="/settings" className={buttonVariants({ size: "sm" })}>
-              Go to Settings
-            </Link>
-          </AlertDescription>
-        </Alert>
+        <LocaleSetupAlert>
+          Configure your country and currency in Settings to start tracking
+          monthly spending.
+        </LocaleSetupAlert>
       )}
-    </div>
+    </PageLayout>
   )
 }

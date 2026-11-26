@@ -12,7 +12,13 @@ export const monthlySummaryQuery = (
   { category, tag }: { category?: string; tag?: string } = {}
 ) =>
   queryOptions({
-    queryKey: ["spending", "summary", month ?? "current", category, tag] as const,
+    queryKey: [
+      "spending",
+      "summary",
+      month ?? "current",
+      category,
+      tag,
+    ] as const,
     queryFn: ({ signal }) => {
       const params = new URLSearchParams()
       if (month) params.set("month", month)

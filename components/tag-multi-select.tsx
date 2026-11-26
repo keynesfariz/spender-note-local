@@ -223,46 +223,6 @@ export function TagMultiSelect({
 
   return (
     <div className="space-y-2">
-      {totalSelectedCount > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
-          {selectedTags.map((tag) => (
-            <Badge key={tag.id} variant="secondary" className="gap-1 pr-1">
-              <span>{tag.name}</span>
-              <IconTooltip label="Remove tag">
-                <button
-                  type="button"
-                  disabled={disabled}
-                  aria-label={`Remove tag ${tag.name}`}
-                  onClick={() => toggleTag(tag)}
-                  className="rounded-xs p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-                >
-                  <XIcon className="size-3" />
-                </button>
-              </IconTooltip>
-            </Badge>
-          ))}
-          {activeDraftNames.map((name) => (
-            <Badge
-              key={`draft:${name.toLowerCase()}`}
-              variant="outline"
-              className="gap-1 border-dashed pr-1"
-            >
-              <span>{name}</span>
-              <span className="text-[10px] text-muted-foreground">New</span>
-              <button
-                type="button"
-                disabled={disabled}
-                aria-label={`Remove draft tag ${name}`}
-                onClick={() => toggleDraftTag(name)}
-                className="rounded-xs p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-              >
-                <XIcon className="size-3" />
-              </button>
-            </Badge>
-          ))}
-        </div>
-      ) : null}
-
       <Popover
         open={open}
         onOpenChange={(next) => {
@@ -402,6 +362,45 @@ export function TagMultiSelect({
           </div>
         </PopoverContent>
       </Popover>
+      {totalSelectedCount > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {selectedTags.map((tag) => (
+            <Badge key={tag.id} variant="secondary" className="gap-1 pr-1">
+              <span>{tag.name}</span>
+              <IconTooltip label="Remove tag">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  aria-label={`Remove tag ${tag.name}`}
+                  onClick={() => toggleTag(tag)}
+                  className="rounded-xs p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                >
+                  <XIcon className="size-3" />
+                </button>
+              </IconTooltip>
+            </Badge>
+          ))}
+          {activeDraftNames.map((name) => (
+            <Badge
+              key={`draft:${name.toLowerCase()}`}
+              variant="outline"
+              className="gap-1 border-dashed pr-1"
+            >
+              <span>{name}</span>
+              <span className="text-[10px] text-muted-foreground">New</span>
+              <button
+                type="button"
+                disabled={disabled}
+                aria-label={`Remove draft tag ${name}`}
+                onClick={() => toggleDraftTag(name)}
+                className="rounded-xs p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+              >
+                <XIcon className="size-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }

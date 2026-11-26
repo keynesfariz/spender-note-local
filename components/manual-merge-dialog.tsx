@@ -3,8 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useId, useMemo, useState, type SubmitEvent } from "react"
 
+import { CategoryField } from "@/components/category-field"
 import { DatePicker } from "@/components/date-picker"
-import { DynamicIcon } from "@/components/dynamic-icon"
 import {
   MagicEnrichButton,
   resolveMagicDraft,
@@ -44,11 +44,7 @@ import {
   type AccountOption,
   type TransactionListItem,
 } from "@/lib/api/types.generated"
-import {
-  DEFAULT_CATEGORY,
-  buildCategoryIconMap,
-  buildCategorySelectOptions,
-} from "@/lib/categories"
+import { DEFAULT_CATEGORY } from "@/lib/categories"
 import {
   dateTimeInputToUtcIso,
   formatMinorCurrency,
@@ -126,16 +122,6 @@ export function ManualMergeDialog({
     [transactions]
   )
   const sharedCurrency = transactions[0]?.currency ?? "USD"
-
-  const categoryIconMap = useMemo(
-    () => buildCategoryIconMap(catListQuery.data),
-    [catListQuery.data]
-  )
-
-  const categoryOptions = useMemo(
-    () => buildCategorySelectOptions(catListQuery.data, category),
-    [catListQuery.data, category]
-  )
 
   const primaryAccountId = sortedByOccurred[0]?.account_id ?? null
   const primaryAccountName = sortedByOccurred[0]?.account_name ?? null
@@ -478,35 +464,11 @@ export function ManualMergeDialog({
                   />
                 </Field>
 
-                <Field>
-                  <FieldLabel>Category</FieldLabel>
-                  <Select
-                    items={categoryOptions}
-                    value={category}
-                    onValueChange={(v) => setCategory(v ?? DEFAULT_CATEGORY)}
-                  >
-                    <SelectTrigger className="w-full" aria-label="Category">
-                      <DynamicIcon
-                        name={categoryIconMap.get(category)}
-                        className="size-4 text-muted-foreground"
-                      />
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {categoryOptions.map((opt) => (
-                        <SelectItem key={opt.value} value={opt.value}>
-                          <span className="flex items-center gap-2">
-                            <DynamicIcon
-                              name={categoryIconMap.get(opt.value)}
-                              className="size-4 text-muted-foreground"
-                            />
-                            <span>{opt.label}</span>
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
+                <CategoryField
+                  categories={catListQuery.data}
+                  value={category}
+                  onChange={setCategory}
+                />
 
                 <Field>
                   <FieldLabel>Account</FieldLabel>

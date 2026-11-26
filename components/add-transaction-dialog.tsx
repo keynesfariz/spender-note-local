@@ -1,8 +1,8 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { flushSync } from "react-dom"
 import { useId, useState, type SubmitEvent } from "react"
+import { flushSync } from "react-dom"
 
 import { CreateFormDrawer } from "@/components/detail-drawer-content"
 import {
@@ -10,6 +10,7 @@ import {
   TransactionFormFields,
   UNASSIGNED_ACCOUNT,
 } from "@/components/transaction-form"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Field, FieldLabel } from "@/components/ui/field"
 import {
   Select,
@@ -19,7 +20,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { accountsQuery } from "@/lib/api/accounts"
-import { Alert, AlertDescription } from "@/components/ui/alert"
 import { categoriesQuery } from "@/lib/api/categories"
 import { tagsQuery } from "@/lib/api/tags"
 import {
@@ -167,7 +167,6 @@ export function AddTransactionDialog({
         value={tab}
         onValueChange={setTab}
         note={{ value: note, onChange: setNote }}
-        sourceCount={0}
         details={
           <div className="space-y-4">
             <Field>

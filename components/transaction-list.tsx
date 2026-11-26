@@ -16,18 +16,14 @@ import { memo, useMemo } from "react"
 import { DynamicIcon } from "@/components/dynamic-icon"
 import { PaginationControls } from "@/components/pagination-controls"
 
+import { CategoryBadge } from "@/components/category-badge"
 import { DebouncedSearchInput } from "@/components/debounced-search-input"
+import { DestructiveConfirmationContent } from "@/components/destructive-confirmation-content"
 import { IconTooltip } from "@/components/icon-tooltip"
+import { ReviewedIcon } from "@/components/reviewed"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
@@ -279,6 +275,9 @@ export function TransactionList({
     return items
   }, [accounts, accountId, transactions])
 
+  const selectedTransactionNoun =
+    selectedTransactions.length === 1 ? "transaction" : "transactions"
+
   return (
     <Card>
       <CardHeader className="space-y-3">
@@ -512,53 +511,29 @@ export function TransactionList({
                   </span>
                 </AlertDialogTrigger>
               </IconTooltip>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    Delete {selectedTransactions.length}{" "}
-                    {selectedTransactions.length === 1
-                      ? "transaction"
-                      : "transactions"}
-                    ?
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This permanently deletes the selected{" "}
-                    {selectedTransactions.length === 1
-                      ? "transaction"
-                      : "transactions"}{" "}
-                    and marks any linked source emails as dismissed.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={isDeleting}>
-                    Cancel
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    variant="destructive"
-                    disabled={isDeleting}
-                    onClick={() =>
-                      onDeleteSelected(selectedTransactions.map((tx) => tx.id))
-                    }
-                  >
-                    {isDeleting ? "Deleting..." : "Delete forever"}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
+              <DestructiveConfirmationContent
+                title={`Delete ${selectedTransactions.length} ${selectedTransactionNoun}?`}
+                description={`This permanently deletes the selected ${selectedTransactionNoun} and marks any linked source emails as dismissed.`}
+                confirmLabel={isDeleting ? "Deleting..." : "Delete forever"}
+                confirmDisabled={isDeleting}
+                cancelDisabled={isDeleting}
+                onConfirm={() =>
+                  onDeleteSelected(selectedTransactions.map((tx) => tx.id))
+                }
+              />
             </AlertDialog>
           </div>
-          <div className="flex min-h-8 items-baseline gap-3 text-xs leading-4 text-muted-foreground sm:min-h-4">
-            <span
-              role="status"
-              className="shrink-0 font-medium text-foreground"
-            >
-              {selectedTransactions.length > 0
-                ? `${selectedTransactions.length} selected`
-                : null}
-            </span>
-            <span id="merge-eligibility-reason">
-              {selectedTransactions.length > 0 ? disabledHint : null}
-            </span>
-          </div>
+          {selectedTransactions.length > 0 ? (
+            <div className="flex items-baseline gap-3 text-xs leading-4 text-muted-foreground">
+              <span
+                role="status"
+                className="shrink-0 font-medium text-foreground"
+              >
+                {`${selectedTransactions.length} selected`}
+              </span>
+              <span id="merge-eligibility-reason">{disabledHint}</span>
+            </div>
+          ) : null}
         </div>
 
         {reviewErrorMessage && (
@@ -700,10 +675,7 @@ const TransactionRow = memo(function TransactionRow({
           </span>
           <span className="flex flex-wrap items-center gap-1.5 sm:col-start-1 sm:row-start-2">
             <Badge variant="outline">{kindLabel}</Badge>
-            <Badge variant="secondary" className="gap-1">
-              <DynamicIcon name={categoryIcon} className="size-3" />
-              {tx.category}
-            </Badge>
+            <CategoryBadge category={tx.category} icon={categoryIcon} />
             {(tx.tags ?? []).map((tag) => (
               <Badge
                 key={tag.id}
@@ -725,12 +697,7 @@ const TransactionRow = memo(function TransactionRow({
           </span>
         </Button>
         {tx.reviewed === 1 ? (
-          <IconTooltip label="Reviewed">
-            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-              <CheckCircle2Icon className="size-4" aria-hidden="true" />
-              <span className="sr-only">Reviewed</span>
-            </span>
-          </IconTooltip>
+          <ReviewedIcon />
         ) : (
           <IconTooltip label="Needs review · Mark reviewed">
             <Button

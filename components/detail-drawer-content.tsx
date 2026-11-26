@@ -44,7 +44,7 @@ export function DetailDrawerContent({
 
   return (
     <DrawerContent
-      className="h-dvh w-full max-w-2xl shadow-2xl data-[swipe-direction=right]:rounded-none data-[swipe-direction=right]:[--drawer-inset:0px] motion-reduce:transition-none"
+      className="h-dvh w-full max-w-lg shadow-2xl data-[swipe-direction=right]:rounded-none data-[swipe-direction=right]:[--drawer-inset:0px] motion-reduce:transition-none"
       initialFocus={initialFocus}
       finalFocus={finalFocus}
     >
@@ -114,7 +114,7 @@ export function CreateFormDrawer({
       <DetailDrawerContent
         {...content}
         footer={
-          <DrawerFooter className="flex-row flex-wrap justify-end border-t px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
+          <DrawerFooter className="flex-row flex-wrap justify-between border-t px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
             <DrawerClose render={<Button type="button" variant="outline" />}>
               Cancel
             </DrawerClose>

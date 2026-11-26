@@ -80,7 +80,9 @@ export function formatSignedMinor(
   return amountMinor > 0 ? `+${formatted}` : formatted
 }
 
-export function transactionKindLabel(kind: TransactionListItem["kind"]): string {
+export function transactionKindLabel(
+  kind: TransactionListItem["kind"]
+): string {
   if (kind === "transfer") return "Transfer"
   if (kind === "income") return "Income"
   return "Expense"
@@ -94,7 +96,11 @@ export function formatTransactionAmount({
   destination_currency,
 }: Pick<
   TransactionListItem,
-  "kind" | "amount_minor" | "currency" | "destination_amount_minor" | "destination_currency"
+  | "kind"
+  | "amount_minor"
+  | "currency"
+  | "destination_amount_minor"
+  | "destination_currency"
 >): string {
   const amount = formatMinorCurrency(amount_minor, currency)
   if (

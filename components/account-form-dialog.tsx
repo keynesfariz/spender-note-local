@@ -14,6 +14,7 @@ import {
 import { DatePicker } from "@/components/date-picker"
 import { CreateFormDrawer } from "@/components/detail-drawer-content"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Field,
@@ -584,9 +585,14 @@ export function AccountFormDialog({
         }}
         className="gap-4"
       >
-        <TabsList aria-label="Account form sections">
+        <TabsList aria-label="Account form sections" variant="line">
           <TabsTrigger value="details">Details</TabsTrigger>
-          <TabsTrigger value="identifiers">Identifiers</TabsTrigger>
+          <TabsTrigger value="identifiers">
+            <span>Identifiers</span>
+            <Badge variant="secondary" className="tabular-nums">
+              {identifiers.length}
+            </Badge>
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="details" keepMounted>
           {detailsFields}

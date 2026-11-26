@@ -5,6 +5,7 @@ import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
 
+import { PageLayout } from "@/components/PageLayout"
 import { LocaleSettingsTab } from "@/components/settings/locale-settings-tab"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -101,15 +102,11 @@ export function SettingsView({
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground">
-          Configure your locale, Gmail connection, trusted senders, triage
-          rules, and local LLM server.
-        </p>
-      </div>
-
+    <PageLayout
+      title="Settings"
+      subtitle="Configure your locale, Gmail connection, trusted senders, triage
+          rules, and local LLM server."
+    >
       {gmailParam === "connected" && (
         <Alert>
           <AlertDescription>Gmail connected successfully.</AlertDescription>
@@ -173,6 +170,6 @@ export function SettingsView({
           {activeTab === "llm" && <LlmSettingsTab settings={settings.data} />}
         </TabsContent>
       </Tabs>
-    </div>
+    </PageLayout>
   )
 }

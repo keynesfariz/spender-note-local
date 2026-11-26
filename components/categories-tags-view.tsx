@@ -24,6 +24,7 @@ import {
 
 import { CreateFormDrawer } from "@/components/detail-drawer-content"
 import { DynamicIcon } from "@/components/dynamic-icon"
+import { PageLayout } from "@/components/PageLayout"
 import { PaginationControls } from "@/components/pagination-controls"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -53,8 +54,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   categoriesQuery,
   createCategoryApi,
@@ -145,7 +146,7 @@ function CategoryIconPicker({
       {visibleIcons.length > 0 ? (
         <div
           ref={iconGrid}
-          className="grid max-h-52 grid-cols-6 gap-1.5 overflow-y-auto rounded-md border p-2 sm:grid-cols-8"
+          className="grid max-h-72 grid-cols-6 gap-1.5 overflow-y-auto rounded-md border p-2 sm:grid-cols-8"
           role="radiogroup"
           aria-label="Category icon"
         >
@@ -455,19 +456,12 @@ export function CategoriesTagsView() {
   )
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Categories &amp; Tags
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Manage transaction categories used by AI classification and manual
-            tags for custom filtering.
-          </p>
-        </div>
-
-        {tab === "categories" ? (
+    <PageLayout
+      title="Categories & Tags"
+      subtitle="Manage transaction categories used by AI classification and manual
+            tags for custom filtering."
+      actions={
+        tab === "categories" ? (
           <Button
             ref={newCategoryButton}
             type="button"
@@ -489,9 +483,9 @@ export function CategoriesTagsView() {
             <PlusIcon className="mr-1.5 size-4" />
             New tag
           </Button>
-        )}
-      </div>
-
+        )
+      }
+    >
       <Tabs
         className="gap-4"
         value={tab}
@@ -792,7 +786,7 @@ export function CategoriesTagsView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </PageLayout>
   )
 }
 

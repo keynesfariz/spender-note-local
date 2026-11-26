@@ -347,7 +347,7 @@ const TransferFields = memo(function TransferFields({
   )
 
   return (
-    <fieldset disabled={disabled} className="space-y-4 rounded-lg border p-4">
+    <fieldset disabled={disabled} className="space-y-4">
       {target.title && (
         <legend className="px-1 text-sm font-medium">{target.title}</legend>
       )}
@@ -595,9 +595,7 @@ function buildTransferItem(
       match_transaction_id: draft.matchId,
     }
   }
-  const from = accounts?.find(
-    (account) => account.id === draft.from
-  )
+  const from = accounts?.find((account) => account.id === draft.from)
   const to = accounts?.find((account) => account.id === draft.to)
   if (!from || !to || from.id === to.id)
     throw new Error("Choose two different accounts.")
@@ -606,8 +604,7 @@ function buildTransferItem(
     ...common,
     action: "record",
     id: editing ? tx.id : undefined,
-    request_id:
-      !editing && !emailIds?.length ? draft.requestId : undefined,
+    request_id: !editing && !emailIds?.length ? draft.requestId : undefined,
     account_id: from.id,
     destination_account_id: to.id,
     amount_minor: amount,
@@ -683,7 +680,13 @@ export function TransferFormDialog({
               evidenceIds.current.set(tx.id, emailIds)
             }
           }
-          return buildTransferItem(target, draft, accounts.data, emailIds, timezone)
+          return buildTransferItem(
+            target,
+            draft,
+            accounts.data,
+            emailIds,
+            timezone
+          )
         })
       )
       return saveTransfersApi(items)

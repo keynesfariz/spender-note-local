@@ -2,7 +2,9 @@
 
 import { DetailDrawerContent } from "@/components/detail-drawer-content"
 import { IconTooltip } from "@/components/icon-tooltip"
+import { LocaleSetupAlert } from "@/components/locale-setup-alert"
 import { TransferFormDialog } from "@/components/transfer-form-dialog"
+import { useHasOpened } from "@/hooks/use-has-opened"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   CalendarRangeIcon,
@@ -11,10 +13,9 @@ import {
   WalletIcon,
 } from "lucide-react"
 import dynamic from "next/dynamic"
-import Link from "next/link"
 import { useRef, useState } from "react"
-import { useHasOpened } from "@/hooks/use-has-opened"
 
+import { PageLayout } from "@/components/PageLayout"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -28,7 +29,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -258,17 +259,12 @@ export function AccountsView() {
   })
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
-          <p className="text-sm text-muted-foreground">
-            Manage credit cards, debit cards, and digital wallets and reconcile
-            their balances.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
+    <PageLayout
+      title="Accounts"
+      subtitle="Manage credit cards, debit cards, and digital wallets and reconcile
+            their balances."
+      actions={
+        <>
           <TransferFormDialog
             targets={[{}]}
             timezone={settings.data?.timezone}
@@ -290,21 +286,13 @@ export function AccountsView() {
           >
             Add account
           </Button>
-        </div>
-      </div>
-
+        </>
+      }
+    >
       {!settings.isPending && !hasCurrency && (
-        <Alert>
-          <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
-            <span>
-              Configure your country and currency in Settings before adding
-              accounts.
-            </span>
-            <Link href="/settings" className={buttonVariants({ size: "sm" })}>
-              Go to Settings
-            </Link>
-          </AlertDescription>
-        </Alert>
+        <LocaleSetupAlert showTitle={false}>
+          Configure your country and currency in Settings before adding accounts.
+        </LocaleSetupAlert>
       )}
 
       {provisionalCount > 0 && (
@@ -600,6 +588,6 @@ export function AccountsView() {
           allAccounts={accounts.data ?? []}
         />
       )}
-    </div>
+    </PageLayout>
   )
 }

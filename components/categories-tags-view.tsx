@@ -19,7 +19,7 @@ import {
   useRef,
   useState,
   type MouseEvent,
-  type SubmitEvent,
+  type RefObject,
 } from "react"
 
 import { CreateFormDrawer } from "@/components/detail-drawer-content"
@@ -197,8 +197,32 @@ function CategoryIconPicker({
   )
 }
 
-export function CategoriesTagsView() {
+type TaxonomyOperation =
+  | {
+      kind: "edit-category"
+      item: CategorySummary | null
+      trigger: HTMLButtonElement
+    }
+  | { kind: "edit-tag"; item: TagSummary | null; trigger: HTMLButtonElement }
+  | { kind: "delete-category"; item: CategorySummary }
+  | { kind: "delete-tag"; item: TagSummary }
+
+type EditorFocus = {
+  trigger: HTMLButtonElement
+  fallback: RefObject<HTMLButtonElement | null>
+}
+
+function useTaxonomyInvalidation(key: "categories" | "tags") {
   const queryClient = useQueryClient()
+  return () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: [key] }),
+      queryClient.invalidateQueries({ queryKey: ["transactions"] }),
+      queryClient.invalidateQueries({ queryKey: ["spending"] }),
+    ])
+}
+
+export function CategoriesTagsView() {
   const [tab, setTab] = useQueryState(
     "tab",
     parseAsStringLiteral(TAB_VALUES).withDefault("categories")
@@ -210,250 +234,34 @@ export function CategoriesTagsView() {
   const categories = catQuery.data ?? EMPTY_CATEGORIES
   const tags = tagQuery.data ?? EMPTY_TAGS
 
-  const categoryFormId = useId()
-  const categoryNameInput = useRef<HTMLInputElement>(null)
   const newCategoryButton = useRef<HTMLButtonElement>(null)
-  const categoryFormTrigger = useRef<HTMLButtonElement>(null)
-  const [categoryFormOpen, setCategoryFormOpen] = useState(false)
-  const [editingCategory, setEditingCategory] =
-    useState<CategorySummary | null>(null)
-  const [catName, setCatName] = useState("")
-  const [catIcon, setCatIcon] = useState("Tag")
-  const [catFormError, setCatFormError] = useState<string | null>(null)
-
-  const [deletingCategory, setDeletingCategory] =
-    useState<CategorySummary | null>(null)
-  const [replacementCategory, setReplacementCategory] =
-    useState(DEFAULT_CATEGORY)
-  const [deleteCatError, setDeleteCatError] = useState<string | null>(null)
-
-  const tagFormId = useId()
-  const tagNameInput = useRef<HTMLInputElement>(null)
   const newTagButton = useRef<HTMLButtonElement>(null)
-  const tagFormTrigger = useRef<HTMLButtonElement>(null)
-  const [tagFormOpen, setTagFormOpen] = useState(false)
-  const [editingTag, setEditingTag] = useState<TagSummary | null>(null)
-  const [tagName, setTagName] = useState("")
-  const [tagFormError, setTagFormError] = useState<string | null>(null)
-
-  const [deletingTag, setDeletingTag] = useState<TagSummary | null>(null)
-  const [deleteTagError, setDeleteTagError] = useState<string | null>(null)
-
-  const invalidateAfterCategoryChange = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["categories"] }),
-      queryClient.invalidateQueries({ queryKey: ["transactions"] }),
-      queryClient.invalidateQueries({ queryKey: ["spending"] }),
-    ])
-  }
-
-  const invalidateAfterTagChange = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["tags"] }),
-      queryClient.invalidateQueries({ queryKey: ["transactions"] }),
-      queryClient.invalidateQueries({ queryKey: ["spending"] }),
-    ])
-  }
-
-  const saveCategoryMutation = useMutation({
-    mutationFn: (
-      input:
-        | { name: string; icon: string }
-        | { id: string; name: string; icon?: string }
-    ) => ("id" in input ? updateCategoryApi(input) : createCategoryApi(input)),
-    onSuccess: invalidateAfterCategoryChange,
-  })
-
-  const deleteCategoryMutation = useMutation({
-    mutationFn: deleteCategoryApi,
-    onSuccess: async () => {
-      await invalidateAfterCategoryChange()
-      setDeletingCategory(null)
-      setDeleteCatError(null)
-    },
-    onError: (err) => {
-      setDeleteCatError(getErrorMessage(err, "Failed to delete category."))
-    },
-  })
-
-  const saveTagMutation = useMutation({
-    mutationFn: async (input: { id?: string; name: string }) => {
-      if (input.id) {
-        return updateTagApi({ id: input.id, name: input.name })
-      }
-      return createTagApi({ name: input.name })
-    },
-    onSuccess: invalidateAfterTagChange,
-  })
-
-  const deleteTagMutation = useMutation({
-    mutationFn: deleteTagApi,
-    onSuccess: async () => {
-      await invalidateAfterTagChange()
-      setDeletingTag(null)
-      setDeleteTagError(null)
-    },
-    onError: (err) => {
-      setDeleteTagError(getErrorMessage(err, "Failed to delete tag."))
-    },
-  })
-
-  const resetCategoryForm = saveCategoryMutation.reset
+  const [operation, setOperation] = useState<
+    (TaxonomyOperation & { key: number }) | null
+  >(null)
+  const openOperation = useCallback((next: TaxonomyOperation) => {
+    setOperation((previous) => ({ ...next, key: (previous?.key ?? 0) + 1 }))
+  }, [])
   const openCategoryForm = useCallback(
-    (category: CategorySummary | null, trigger: HTMLButtonElement) => {
-      categoryFormTrigger.current = trigger
-      setEditingCategory(category)
-      setCatName(category?.name ?? "")
-      setCatIcon(category?.icon || "Tag")
-      setCatFormError(null)
-      resetCategoryForm()
-      setCategoryFormOpen(true)
-    },
-    [resetCategoryForm]
+    (item: CategorySummary | null, trigger: HTMLButtonElement) =>
+      openOperation({ kind: "edit-category", item, trigger }),
+    [openOperation]
   )
-
-  const resetDeleteCategory = deleteCategoryMutation.reset
-  const openDeleteCategory = useCallback(
-    (cat: CategorySummary) => {
-      setDeletingCategory(cat)
-      setReplacementCategory(DEFAULT_CATEGORY)
-      setDeleteCatError(null)
-      resetDeleteCategory()
-    },
-    [resetDeleteCategory]
-  )
-
-  const resetTagForm = saveTagMutation.reset
   const openTagForm = useCallback(
-    (tag: TagSummary | null, trigger: HTMLButtonElement) => {
-      tagFormTrigger.current = trigger
-      setEditingTag(tag)
-      setTagName(tag?.name ?? "")
-      setTagFormError(null)
-      resetTagForm()
-      setTagFormOpen(true)
-    },
-    [resetTagForm]
+    (item: TagSummary | null, trigger: HTMLButtonElement) =>
+      openOperation({ kind: "edit-tag", item, trigger }),
+    [openOperation]
   )
-
+  const openDeleteCategory = useCallback(
+    (item: CategorySummary) => openOperation({ kind: "delete-category", item }),
+    [openOperation]
+  )
+  const openDeleteTag = useCallback(
+    (item: TagSummary) => openOperation({ kind: "delete-tag", item }),
+    [openOperation]
+  )
   const openCreateTag = (event: MouseEvent<HTMLButtonElement>) =>
     openTagForm(null, event.currentTarget)
-
-  const resetDeleteTag = deleteTagMutation.reset
-  const openDeleteTag = useCallback(
-    (tag: TagSummary) => {
-      setDeletingTag(tag)
-      setDeleteTagError(null)
-      resetDeleteTag()
-    },
-    [resetDeleteTag]
-  )
-
-  const handleCategorySubmit = (e: SubmitEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    const trimmed = catName.trim()
-    if (!trimmed) {
-      setCatFormError("Category name is required.")
-      return
-    }
-    setCatFormError(null)
-    saveCategoryMutation.mutate(
-      editingCategory
-        ? {
-            id: editingCategory.id,
-            name: trimmed,
-            icon: catIcon === editingCategory.icon ? undefined : catIcon,
-          }
-        : { name: trimmed, icon: catIcon },
-      {
-        onSuccess: () => setCategoryFormOpen(false),
-        onError: (err) => {
-          setCatFormError(getErrorMessage(err, "Failed to save category."))
-        },
-      }
-    )
-  }
-
-  const handleTagSubmit = (e: SubmitEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    const trimmed = tagName.trim()
-    if (!trimmed) {
-      setTagFormError("Tag name is required.")
-      return
-    }
-    setTagFormError(null)
-    saveTagMutation.mutate(
-      { id: editingTag?.id, name: trimmed },
-      {
-        onSuccess: () => setTagFormOpen(false),
-        onError: (err) => {
-          setTagFormError(getErrorMessage(err, "Failed to save tag."))
-        },
-      }
-    )
-  }
-
-  const replacementItems = useMemo(() => {
-    const items = categories.flatMap((cat) =>
-      cat.id === deletingCategory?.id
-        ? []
-        : [{ value: cat.name, label: cat.name }]
-    )
-    if (!items.some((item) => item.value === DEFAULT_CATEGORY)) {
-      items.push({ value: DEFAULT_CATEGORY, label: DEFAULT_CATEGORY })
-    }
-    if (
-      replacementCategory &&
-      !items.some((item) => item.value === replacementCategory)
-    ) {
-      items.push({ value: replacementCategory, label: replacementCategory })
-    }
-    return items
-  }, [categories, deletingCategory, replacementCategory])
-
-  const categoryFields = (
-    <>
-      {catFormError ? (
-        <Alert variant="destructive">
-          <AlertDescription>{catFormError}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      <Field>
-        <FieldLabel htmlFor={`${categoryFormId}-name`}>Name</FieldLabel>
-        <Input
-          ref={categoryNameInput}
-          id={`${categoryFormId}-name`}
-          value={catName}
-          onChange={(e) => setCatName(e.target.value)}
-          placeholder="e.g. Subscriptions"
-        />
-      </Field>
-
-      <CategoryIconPicker value={catIcon} onChange={setCatIcon} />
-    </>
-  )
-
-  const tagFields = (
-    <>
-      {tagFormError ? (
-        <Alert variant="destructive">
-          <AlertDescription>{tagFormError}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      <Field>
-        <FieldLabel htmlFor={`${tagFormId}-name`}>Tag name</FieldLabel>
-        <Input
-          ref={tagNameInput}
-          id={`${tagFormId}-name`}
-          value={tagName}
-          onChange={(e) => setTagName(e.target.value)}
-          placeholder="e.g. Reimbursable"
-        />
-      </Field>
-    </>
-  )
 
   return (
     <PageLayout
@@ -610,183 +418,350 @@ export function CategoriesTagsView() {
         </TabsContent>
       </Tabs>
 
-      <CreateFormDrawer
-        open={categoryFormOpen}
-        onOpenChange={setCategoryFormOpen}
-        title={editingCategory ? "Edit category" : "New category"}
-        description={
-          editingCategory
-            ? "Renaming updates existing transactions and email extractions using this category."
-            : "Create a category for organizing and auto-classifying expenses."
-        }
-        formId={categoryFormId}
-        onSubmit={handleCategorySubmit}
-        submitLabel={
-          saveCategoryMutation.isPending
-            ? "Saving…"
-            : editingCategory
-              ? "Save changes"
-              : "Create category"
-        }
-        submitDisabled={saveCategoryMutation.isPending}
-        initialFocus={categoryNameInput}
-        finalFocus={() => {
-          const opener = categoryFormTrigger.current
-          return opener?.isConnected ? opener : newCategoryButton.current
-        }}
-      >
-        {categoryFields}
-      </CreateFormDrawer>
+      {operation?.kind === "edit-category" && (
+        <CategoryEditor
+          key={operation.key}
+          category={operation.item}
+          trigger={operation.trigger}
+          fallback={newCategoryButton}
+        />
+      )}
+      {operation?.kind === "edit-tag" && (
+        <TagEditor
+          key={operation.key}
+          tag={operation.item}
+          trigger={operation.trigger}
+          fallback={newTagButton}
+        />
+      )}
+      {operation?.kind === "delete-category" && (
+        <DeleteCategoryDialog
+          key={operation.key}
+          category={operation.item}
+          categories={categories}
+        />
+      )}
+      {operation?.kind === "delete-tag" && (
+        <DeleteTagDialog key={operation.key} tag={operation.item} />
+      )}
+    </PageLayout>
+  )
+}
 
-      <Dialog
-        open={Boolean(deletingCategory)}
-        onOpenChange={(open) => {
-          if (!open) setDeletingCategory(null)
+function CategoryEditor({
+  category: editingCategory,
+  trigger,
+  fallback,
+}: EditorFocus & { category: CategorySummary | null }) {
+  const categoryFormId = useId()
+  const categoryNameInput = useRef<HTMLInputElement>(null)
+  const [open, setOpen] = useState(true)
+  const [catName, setCatName] = useState(editingCategory?.name ?? "")
+  const [catIcon, setCatIcon] = useState(editingCategory?.icon || "Tag")
+  const invalidate = useTaxonomyInvalidation("categories")
+  const saveCategoryMutation = useMutation({
+    mutationFn: async () => {
+      const name = catName.trim()
+      if (!name) throw new Error("Category name is required.")
+      return editingCategory
+        ? updateCategoryApi({
+            id: editingCategory.id,
+            name,
+            icon: catIcon === editingCategory.icon ? undefined : catIcon,
+          })
+        : createCategoryApi({ name, icon: catIcon })
+    },
+    onSuccess: async () => {
+      await invalidate()
+      setOpen(false)
+    },
+  })
+  const catFormError = saveCategoryMutation.error
+  return (
+    <CreateFormDrawer
+      open={open}
+      onOpenChange={setOpen}
+      title={editingCategory ? "Edit category" : "New category"}
+      description={
+        editingCategory
+          ? "Renaming updates existing transactions and email extractions using this category."
+          : "Create a category for organizing and auto-classifying expenses."
+      }
+      formId={categoryFormId}
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (!saveCategoryMutation.isPending) saveCategoryMutation.mutate()
+      }}
+      submitLabel={
+        saveCategoryMutation.isPending
+          ? "Saving…"
+          : editingCategory
+            ? "Save changes"
+            : "Create category"
+      }
+      submitDisabled={saveCategoryMutation.isPending}
+      initialFocus={categoryNameInput}
+      finalFocus={() => {
+        return trigger.isConnected ? trigger : fallback.current
+      }}
+    >
+      {catFormError ? (
+        <Alert variant="destructive">
+          <AlertDescription>
+            {getErrorMessage(catFormError, "Failed to save category.")}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      <Field>
+        <FieldLabel htmlFor={`${categoryFormId}-name`}>Name</FieldLabel>
+        <Input
+          ref={categoryNameInput}
+          id={`${categoryFormId}-name`}
+          value={catName}
+          onChange={(e) => setCatName(e.target.value)}
+          placeholder="e.g. Subscriptions"
+        />
+      </Field>
+
+      <CategoryIconPicker value={catIcon} onChange={setCatIcon} />
+    </CreateFormDrawer>
+  )
+}
+
+function TagEditor({
+  tag: editingTag,
+  trigger,
+  fallback,
+}: EditorFocus & { tag: TagSummary | null }) {
+  const tagFormId = useId()
+  const tagNameInput = useRef<HTMLInputElement>(null)
+  const [open, setOpen] = useState(true)
+  const [tagName, setTagName] = useState(editingTag?.name ?? "")
+  const invalidate = useTaxonomyInvalidation("tags")
+  const saveTagMutation = useMutation({
+    mutationFn: async () => {
+      const name = tagName.trim()
+      if (!name) throw new Error("Tag name is required.")
+      return editingTag
+        ? updateTagApi({ id: editingTag.id, name })
+        : createTagApi({ name })
+    },
+    onSuccess: async () => {
+      await invalidate()
+      setOpen(false)
+    },
+  })
+  const tagFormError = saveTagMutation.error
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent
+        initialFocus={tagNameInput}
+        finalFocus={() => {
+          return trigger.isConnected ? trigger : fallback.current
         }}
       >
-        <DialogContent>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (!saveTagMutation.isPending) saveTagMutation.mutate()
+          }}
+          className="space-y-4"
+        >
           <DialogHeader>
-            <DialogTitle>Delete category</DialogTitle>
+            <DialogTitle>{editingTag ? "Rename tag" : "New tag"}</DialogTitle>
             <DialogDescription>
-              {deletingCategory
-                ? deletingCategory.transaction_count > 0
-                  ? `"${deletingCategory.name}" has ${formatTxCount(deletingCategory.transaction_count)}. Choose a replacement category before deleting.`
-                  : `Delete "${deletingCategory.name}"? Any matching rules or records will fall back to the selected replacement category.`
-                : ""}
+              {editingTag
+                ? "Renaming updates this tag across all transactions using it."
+                : "Create a manual tag to group transactions across categories."}
             </DialogDescription>
           </DialogHeader>
 
-          {deleteCatError ? (
+          {tagFormError ? (
             <Alert variant="destructive">
-              <AlertDescription>{deleteCatError}</AlertDescription>
+              <AlertDescription>
+                {getErrorMessage(tagFormError, "Failed to save tag.")}
+              </AlertDescription>
             </Alert>
           ) : null}
 
           <Field>
-            <FieldLabel>Replacement category</FieldLabel>
-            <Select
-              items={replacementItems}
-              value={replacementCategory}
-              onValueChange={(v) =>
-                setReplacementCategory(v ?? DEFAULT_CATEGORY)
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {replacementItems.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <FieldLabel htmlFor={`${tagFormId}-name`}>Tag name</FieldLabel>
+            <Input
+              ref={tagNameInput}
+              id={`${tagFormId}-name`}
+              value={tagName}
+              onChange={(e) => setTagName(e.target.value)}
+              placeholder="e.g. Reimbursable"
+            />
           </Field>
 
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" />}>
               Cancel
             </DialogClose>
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={deleteCategoryMutation.isPending || !deletingCategory}
-              onClick={() => {
-                if (!deletingCategory) return
-                deleteCategoryMutation.mutate({
-                  id: deletingCategory.id,
-                  replaceWithCategory: replacementCategory,
-                })
-              }}
-            >
-              {deleteCategoryMutation.isPending
-                ? "Deleting…"
-                : "Delete category"}
+            <Button type="submit" disabled={saveTagMutation.isPending}>
+              {saveTagMutation.isPending
+                ? "Saving…"
+                : editingTag
+                  ? "Save changes"
+                  : "Create tag"}
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
-      <Dialog open={tagFormOpen} onOpenChange={setTagFormOpen}>
-        <DialogContent
-          initialFocus={tagNameInput}
-          finalFocus={() => {
-            const opener = tagFormTrigger.current
-            return opener?.isConnected ? opener : newTagButton.current
-          }}
-        >
-          <form onSubmit={handleTagSubmit} className="space-y-4">
-            <DialogHeader>
-              <DialogTitle>{editingTag ? "Rename tag" : "New tag"}</DialogTitle>
-              <DialogDescription>
-                {editingTag
-                  ? "Renaming updates this tag across all transactions using it."
-                  : "Create a manual tag to group transactions across categories."}
-              </DialogDescription>
-            </DialogHeader>
+function DeleteCategoryDialog({
+  category: deletingCategory,
+  categories,
+}: {
+  category: CategorySummary
+  categories: CategorySummary[]
+}) {
+  const [open, setOpen] = useState(true)
+  const [replacementCategory, setReplacementCategory] =
+    useState(DEFAULT_CATEGORY)
+  const invalidate = useTaxonomyInvalidation("categories")
+  const deleteCategoryMutation = useMutation({
+    mutationFn: deleteCategoryApi,
+    onSuccess: async () => {
+      await invalidate()
+      setOpen(false)
+    },
+  })
+  const deleteCatError = deleteCategoryMutation.error
+  const replacementItems = useMemo(() => {
+    const items = categories.flatMap((cat) =>
+      cat.id === deletingCategory.id
+        ? []
+        : [{ value: cat.name, label: cat.name }]
+    )
+    if (!items.some((item) => item.value === DEFAULT_CATEGORY)) {
+      items.push({ value: DEFAULT_CATEGORY, label: DEFAULT_CATEGORY })
+    }
+    if (
+      replacementCategory &&
+      !items.some((item) => item.value === replacementCategory)
+    ) {
+      items.push({ value: replacementCategory, label: replacementCategory })
+    }
+    return items
+  }, [categories, deletingCategory, replacementCategory])
 
-            {tagFields}
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete category</DialogTitle>
+          <DialogDescription>
+            {deletingCategory.transaction_count > 0
+              ? `"${deletingCategory.name}" has ${formatTxCount(deletingCategory.transaction_count)}. Choose a replacement category before deleting.`
+              : `Delete "${deletingCategory.name}"? Any matching rules or records will fall back to the selected replacement category.`}
+          </DialogDescription>
+        </DialogHeader>
 
-            <DialogFooter>
-              <DialogClose render={<Button type="button" variant="outline" />}>
-                Cancel
-              </DialogClose>
-              <Button type="submit" disabled={saveTagMutation.isPending}>
-                {saveTagMutation.isPending
-                  ? "Saving…"
-                  : editingTag
-                    ? "Save changes"
-                    : "Create tag"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+        {deleteCatError ? (
+          <Alert variant="destructive">
+            <AlertDescription>
+              {getErrorMessage(deleteCatError, "Failed to delete category.")}
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
-      <Dialog
-        open={Boolean(deletingTag)}
-        onOpenChange={(open) => {
-          if (!open) setDeletingTag(null)
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete tag</DialogTitle>
-            <DialogDescription>
-              {deletingTag
-                ? deletingTag.transaction_count > 0
-                  ? `Delete tag "${deletingTag.name}"? It will be removed from ${formatTxCount(deletingTag.transaction_count)}, and those transactions will remain intact.`
-                  : `Delete tag "${deletingTag.name}"?`
-                : ""}
-            </DialogDescription>
-          </DialogHeader>
+        <Field>
+          <FieldLabel>Replacement category</FieldLabel>
+          <Select
+            items={replacementItems}
+            value={replacementCategory}
+            onValueChange={(v) => setReplacementCategory(v ?? DEFAULT_CATEGORY)}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {replacementItems.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
 
-          {deleteTagError ? (
-            <Alert variant="destructive">
-              <AlertDescription>{deleteTagError}</AlertDescription>
-            </Alert>
-          ) : null}
+        <DialogFooter>
+          <DialogClose render={<Button type="button" variant="outline" />}>
+            Cancel
+          </DialogClose>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={deleteCategoryMutation.isPending}
+            onClick={() => {
+              deleteCategoryMutation.mutate({
+                id: deletingCategory.id,
+                replaceWithCategory: replacementCategory,
+              })
+            }}
+          >
+            {deleteCategoryMutation.isPending ? "Deleting…" : "Delete category"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
-          <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" />}>
-              Cancel
-            </DialogClose>
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={deleteTagMutation.isPending || !deletingTag}
-              onClick={() => {
-                if (!deletingTag) return
-                deleteTagMutation.mutate(deletingTag.id)
-              }}
-            >
-              {deleteTagMutation.isPending ? "Deleting…" : "Delete tag"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </PageLayout>
+function DeleteTagDialog({ tag: deletingTag }: { tag: TagSummary }) {
+  const [open, setOpen] = useState(true)
+  const invalidate = useTaxonomyInvalidation("tags")
+  const deleteTagMutation = useMutation({
+    mutationFn: deleteTagApi,
+    onSuccess: async () => {
+      await invalidate()
+      setOpen(false)
+    },
+  })
+  const deleteTagError = deleteTagMutation.error
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete tag</DialogTitle>
+          <DialogDescription>
+            {deletingTag.transaction_count > 0
+              ? `Delete tag "${deletingTag.name}"? It will be removed from ${formatTxCount(deletingTag.transaction_count)}, and those transactions will remain intact.`
+              : `Delete tag "${deletingTag.name}"?`}
+          </DialogDescription>
+        </DialogHeader>
+
+        {deleteTagError ? (
+          <Alert variant="destructive">
+            <AlertDescription>
+              {getErrorMessage(deleteTagError, "Failed to delete tag.")}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        <DialogFooter>
+          <DialogClose render={<Button type="button" variant="outline" />}>
+            Cancel
+          </DialogClose>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={deleteTagMutation.isPending}
+            onClick={() => {
+              deleteTagMutation.mutate(deletingTag.id)
+            }}
+          >
+            {deleteTagMutation.isPending ? "Deleting…" : "Delete tag"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

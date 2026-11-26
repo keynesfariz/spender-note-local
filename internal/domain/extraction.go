@@ -12,14 +12,14 @@ import (
 )
 
 type ExtractedTransactionInput struct {
-	EmailID           string
-	EmailKind         string
-	AmountMinor       int64
-	Currency          string
-	OccurredAtUtc     string
-	MerchantRaw       string
-	Category          string
-	CardLast4         *string
+	EmailID       string
+	EmailKind     string
+	AmountMinor   int64
+	Currency      string
+	OccurredAtUtc string
+	MerchantRaw   string
+	Category      string
+
 	ReferenceCode     *string
 	ResolvedAccountID *string
 	NowUtc            string
@@ -44,26 +44,23 @@ func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc s
 	}
 
 	type sourceExt struct {
-		EmailID          string  `gorm:"column:email_id"`
-		Role             string  `gorm:"column:role"`
-		AmountMinor      *int64  `gorm:"column:amount_minor"`
-		Currency         *string `gorm:"column:currency"`
-		OccurredAtUtc    *string `gorm:"column:occurred_at_utc"`
-		MerchantRaw      *string `gorm:"column:merchant_raw"`
-		Category         *string `gorm:"column:category"`
-		CardLast4        *string `gorm:"column:card_last4"`
-		BankAccountHint  *string `gorm:"column:bank_account_hint"`
-		PaymentMethodRaw *string `gorm:"column:payment_method_raw"`
-		LlmAccountID     *string `gorm:"column:llm_account_id"`
-		SenderID         *string `gorm:"column:sender_id"`
+		Role          string  `gorm:"column:role"`
+		AmountMinor   *int64  `gorm:"column:amount_minor"`
+		Currency      *string `gorm:"column:currency"`
+		OccurredAtUtc *string `gorm:"column:occurred_at_utc"`
+		MerchantRaw   *string `gorm:"column:merchant_raw"`
+		Category      *string `gorm:"column:category"`
+
+		LlmAccountID *string `gorm:"column:llm_account_id"`
+		SenderID     *string `gorm:"column:sender_id"`
 	}
 	var sources []sourceExt
 	if err := tx.Raw(`
 		SELECT
-			ts.email_id, ts.role,
+			ts.role,
 			ee.amount_minor, ee.currency, ee.occurred_at_utc,
-			ee.merchant_raw, ee.category, ee.card_last4,
-			ee.bank_account_hint, ee.payment_method_raw, ee.llm_account_id,
+			ee.merchant_raw, ee.category,
+			ee.llm_account_id,
 			re.sender_id
 		FROM transaction_sources ts
 		JOIN raw_emails re ON re.id = ts.email_id
@@ -106,26 +103,14 @@ func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc s
 
 	var accountID *string
 	if cardCharge != nil {
-		accountID = MatchAccountForExtraction(tx, MatchAccountParams{
-			SenderID:        cardCharge.SenderID,
-			CardLast4:       cardCharge.CardLast4,
-			BankAccountHint: cardCharge.BankAccountHint,
-			PaymentMethod:   cardCharge.PaymentMethodRaw,
-			LlmAccountID:    cardCharge.LlmAccountID,
-		})
+		accountID = MatchAccountForExtraction(tx, cardCharge.SenderID, cardCharge.LlmAccountID)
 	}
 	if accountID == nil {
 		for i := range sources {
 			if cardCharge != nil && &sources[i] == cardCharge {
 				continue
 			}
-			accountID = MatchAccountForExtraction(tx, MatchAccountParams{
-				SenderID:        sources[i].SenderID,
-				CardLast4:       sources[i].CardLast4,
-				BankAccountHint: sources[i].BankAccountHint,
-				PaymentMethod:   sources[i].PaymentMethodRaw,
-				LlmAccountID:    sources[i].LlmAccountID,
-			})
+			accountID = MatchAccountForExtraction(tx, sources[i].SenderID, sources[i].LlmAccountID)
 			if accountID != nil {
 				break
 			}
@@ -158,7 +143,7 @@ func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc s
 
 // ResolveEffectiveEmailRole resolves transaction source roles (`card_charge` or
 // `receipt`) consistently across sync admission, Ghost Row promotion, and Settings recovery.
-func ResolveEffectiveEmailRole(senderRoleHint *string, emailKind string, cardLast4, bankAccountHint *string) string {
+func ResolveEffectiveEmailRole(senderRoleHint *string, emailKind string, bankAccountHint *string) string {
 	if senderRoleHint != nil {
 		hint := strings.TrimSpace(*senderRoleHint)
 		if hint == "card_charge" || hint == "receipt" {
@@ -168,8 +153,7 @@ func ResolveEffectiveEmailRole(senderRoleHint *string, emailKind string, cardLas
 	if emailKind == "card_charge" || emailKind == "receipt" {
 		return emailKind
 	}
-	if (cardLast4 != nil && strings.TrimSpace(*cardLast4) != "") ||
-		(bankAccountHint != nil && strings.TrimSpace(*bankAccountHint) != "") {
+	if bankAccountHint != nil && strings.TrimSpace(*bankAccountHint) != "" {
 		return "card_charge"
 	}
 	return "receipt"
@@ -205,19 +189,16 @@ func SaveExtractedTransactionInTx(tx *gorm.DB, input ExtractedTransactionInput) 
 	if err := tx.Exec(`
 		INSERT OR IGNORE INTO email_extractions (
 			id, email_id, email_kind, amount_minor, currency, occurred_at_utc,
-			merchant_raw, category, card_last4, reference_code,
+			merchant_raw, category, reference_code,
 			extraction_model, raw_llm_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sync', '{}')`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'sync', '{}')`,
 		uuid.NewString(), input.EmailID, input.EmailKind, input.AmountMinor, input.Currency,
-		input.OccurredAtUtc, merchantRawPtr, category.Name, input.CardLast4, input.ReferenceCode,
+		input.OccurredAtUtc, merchantRawPtr, category.Name, input.ReferenceCode,
 	).Error; err != nil {
 		return "", err
 	}
 
 	resolvedAccount := input.ResolvedAccountID
-	if resolvedAccount == nil {
-		resolvedAccount = MatchAccountForExtraction(tx, MatchAccountParams{CardLast4: input.CardLast4})
-	}
 
 	merchant := "Unknown Merchant"
 	if merchantRawPtr != nil {
@@ -286,21 +267,19 @@ func SplitTransactionSource(gdb *gorm.DB, transactionID, emailID string) (string
 		}
 
 		type extInfo struct {
-			AmountMinor      *int64  `gorm:"column:amount_minor"`
-			Currency         *string `gorm:"column:currency"`
-			OccurredAtUtc    *string `gorm:"column:occurred_at_utc"`
-			MerchantRaw      *string `gorm:"column:merchant_raw"`
-			Category         *string `gorm:"column:category"`
-			CardLast4        *string `gorm:"column:card_last4"`
-			BankAccountHint  *string `gorm:"column:bank_account_hint"`
-			PaymentMethodRaw *string `gorm:"column:payment_method_raw"`
-			LlmAccountID     *string `gorm:"column:llm_account_id"`
-			SenderID         *string `gorm:"column:sender_id"`
+			AmountMinor   *int64  `gorm:"column:amount_minor"`
+			Currency      *string `gorm:"column:currency"`
+			OccurredAtUtc *string `gorm:"column:occurred_at_utc"`
+			MerchantRaw   *string `gorm:"column:merchant_raw"`
+			Category      *string `gorm:"column:category"`
+
+			LlmAccountID *string `gorm:"column:llm_account_id"`
+			SenderID     *string `gorm:"column:sender_id"`
 		}
 		var ext extInfo
 		if err := tx.Raw(`
 			SELECT ee.amount_minor, ee.currency, ee.occurred_at_utc, ee.merchant_raw,
-			       ee.category, ee.card_last4, ee.bank_account_hint, ee.payment_method_raw,
+			       ee.category, ee.bank_account_hint, ee.payment_method_raw,
 			       ee.llm_account_id, re.sender_id
 			FROM raw_emails re
 			LEFT JOIN email_extractions ee ON ee.email_id = re.id
@@ -309,13 +288,7 @@ func SplitTransactionSource(gdb *gorm.DB, transactionID, emailID string) (string
 		}
 
 		newTxID = uuid.NewString()
-		acctID := MatchAccountForExtraction(tx, MatchAccountParams{
-			SenderID:        ext.SenderID,
-			CardLast4:       ext.CardLast4,
-			BankAccountHint: ext.BankAccountHint,
-			PaymentMethod:   ext.PaymentMethodRaw,
-			LlmAccountID:    ext.LlmAccountID,
-		})
+		acctID := MatchAccountForExtraction(tx, ext.SenderID, ext.LlmAccountID)
 
 		amountMinor := int64(1)
 		if ext.AmountMinor != nil {

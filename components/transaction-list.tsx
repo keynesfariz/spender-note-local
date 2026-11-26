@@ -22,10 +22,7 @@ import { DestructiveConfirmationContent } from "@/components/destructive-confirm
 import { IconTooltip } from "@/components/icon-tooltip"
 import { ReviewedIcon } from "@/components/reviewed"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import {
-  AlertDialog,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
+import { AlertDialog, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
@@ -648,7 +645,7 @@ const TransactionRow = memo(function TransactionRow({
           variant="ghost"
           aria-label={`Inspect ${kindLabel.toLowerCase()} ${title} (${formattedAmount})${tx.manual_override === 1 ? ", edited" : ""}`}
           onClick={() => onSelectTransaction(tx.id)}
-          className="grid h-auto min-w-0 flex-1 grid-cols-1 items-start gap-x-4 gap-y-2 px-2 text-left font-normal whitespace-normal hover:bg-transparent sm:grid-cols-[minmax(0,1fr)_auto] dark:hover:bg-transparent"
+          className="grid h-auto min-w-0 flex-1 grid-cols-1 items-center gap-x-4 gap-y-2 px-2 text-left font-normal whitespace-normal hover:bg-transparent sm:grid-cols-[minmax(0,1fr)_auto] dark:hover:bg-transparent"
         >
           <span className="min-w-0 space-y-1">
             <span className="flex items-center gap-2">

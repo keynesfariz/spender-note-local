@@ -35,7 +35,6 @@ export const createAccountApi = (input: {
   type: AccountType
   initial_balance_minor: number
   initial_balance_as_of_utc?: string
-  last4?: string | null
   statement_day?: number | null
   identifiers?: AccountIdentifierInput[]
 }) =>
@@ -50,7 +49,6 @@ export const updateAccountApi = (input: {
   type?: AccountType
   initial_balance_minor?: number | null
   initial_balance_as_of_utc?: string
-  last4?: string | null
   statement_day?: number | null
   identifiers?: AccountIdentifierInput[]
 }) => {

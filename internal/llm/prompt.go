@@ -25,6 +25,7 @@ type ExtractInput struct {
 	UserCurrency       *string
 	Categories         []string
 	Accounts           []AccountContext
+	DefaultAccountID   *string
 }
 
 func resolveTimezoneOffsetString(tz string, referenceUtc string) string {
@@ -92,10 +93,9 @@ func BuildExtractionPrompt(input ExtractInput) (systemPrompt string, userPrompt 
 	sysLines = append(sysLines, countryAndTzRules...)
 	sysLines = append(sysLines,
 		fmt.Sprintf("- Choose category strictly from: %s whenever any positive amount is present (or null only when no positive amount exists).", strings.Join(validCategories, ", ")),
-		"- Return card_last4 as 4 digits if present, otherwise null.",
 		`- Return payment_method as the raw payment method or wallet name shown in the email (e.g. "Apple Pay", "PayPal") if present, otherwise null.`,
 		`- Return bank_account_hint as the bank account number or masked suffix (e.g. "****5678") if present, otherwise null.`,
-		"- If Known-Accounts are provided and the email clearly identifies one of them, return its id in matched_account_id; otherwise return null.",
+		"- If Sender-Default-Account-ID is provided, return that ID in matched_account_id. Otherwise rank Known-Accounts using their labels and identifiers against the email. Return the best account ID when reasonably confident (around 70% or higher); otherwise return null.",
 		`- Return account_type_guess as "credit_card", "debit_card", or "digital_wallet" if the email indicates the payment account type, otherwise null.`,
 		"- Return reference_code if present, otherwise null.",
 	)
@@ -111,6 +111,9 @@ func BuildExtractionPrompt(input ExtractInput) (systemPrompt string, userPrompt 
 	userLines = append(userLines, fmt.Sprintf("User-Timezone: %s", input.UserTimezone))
 	if input.UserCurrency != nil && strings.TrimSpace(*input.UserCurrency) != "" {
 		userLines = append(userLines, fmt.Sprintf("Default-Currency: %s", strings.TrimSpace(*input.UserCurrency)))
+	}
+	if input.DefaultAccountID != nil {
+		userLines = append(userLines, "Sender-Default-Account-ID: "+*input.DefaultAccountID)
 	}
 	if len(input.Accounts) > 0 {
 		userLines = append(userLines, "Known-Accounts:")
@@ -167,7 +170,6 @@ func BuildExtractionJSONSchema(categories []string, accountIDs []string) map[str
 			"category": map[string]any{
 				"enum": catEnum,
 			},
-			"card_last4":         nullableString,
 			"payment_method":     nullableString,
 			"bank_account_hint":  nullableString,
 			"matched_account_id": matchedAccountSchema,
@@ -185,7 +187,6 @@ func BuildExtractionJSONSchema(categories []string, accountIDs []string) map[str
 			"timezone_offset",
 			"merchant",
 			"category",
-			"card_last4",
 			"payment_method",
 			"bank_account_hint",
 			"matched_account_id",

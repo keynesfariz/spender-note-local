@@ -33,7 +33,6 @@ CREATE TABLE accounts (
   currency TEXT NOT NULL CHECK (length(currency) = 3),
   initial_balance_minor INTEGER,
   initial_balance_as_of_utc TEXT NOT NULL CHECK (length(initial_balance_as_of_utc) = 20 AND initial_balance_as_of_utc LIKE '%Z'),
-  last4 TEXT CHECK (last4 IS NULL OR (length(last4) = 4 AND last4 GLOB '[0-9][0-9][0-9][0-9]')),
   statement_day INTEGER CHECK (statement_day IS NULL OR (statement_day >= 1 AND statement_day <= 31)),
   status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('provisional', 'confirmed')),
   created_at_utc TEXT NOT NULL CHECK (length(created_at_utc) = 20 AND created_at_utc LIKE '%Z')
@@ -42,18 +41,10 @@ CREATE TABLE accounts (
 CREATE TABLE account_identifiers (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL CHECK (kind IN ('card_last4', 'bank_account', 'alias')),
   value TEXT NOT NULL CHECK (length(trim(value)) > 0),
-  normalized_value TEXT NOT NULL CHECK (length(normalized_value) > 0),
   created_at_utc TEXT NOT NULL CHECK (length(created_at_utc) = 20 AND created_at_utc LIKE '%Z'),
-  UNIQUE (account_id, kind, normalized_value)
+  UNIQUE (account_id, value)
 ) STRICT;
-
-CREATE INDEX idx_account_identifiers_kind_norm
-  ON account_identifiers(kind, normalized_value);
-
-CREATE INDEX idx_account_identifiers_account
-  ON account_identifiers(account_id);
 
 CREATE TABLE account_reconciliations (
   id TEXT PRIMARY KEY,
@@ -144,7 +135,6 @@ CREATE TABLE email_extractions (
   occurred_at_utc TEXT,
   merchant_raw TEXT,
   category TEXT,
-  card_last4 TEXT,
   payment_method_raw TEXT,
   bank_account_hint TEXT,
   llm_account_id TEXT,
@@ -187,7 +177,29 @@ CREATE TABLE transactions (
   reviewed INTEGER NOT NULL DEFAULT 1 CHECK (reviewed IN (0, 1)),
   note TEXT,
   created_at_utc TEXT NOT NULL CHECK (length(created_at_utc) = 20 AND created_at_utc LIKE '%Z'),
-  updated_at_utc TEXT NOT NULL CHECK (length(updated_at_utc) = 20 AND updated_at_utc LIKE '%Z')
+  updated_at_utc TEXT NOT NULL CHECK (length(updated_at_utc) = 20 AND updated_at_utc LIKE '%Z'),
+  kind TEXT NOT NULL DEFAULT 'expense'
+  CHECK (kind IN ('expense', 'income', 'transfer')),
+  destination_account_id TEXT REFERENCES accounts(id) ON DELETE RESTRICT,
+  destination_amount_minor INTEGER,
+  destination_currency TEXT,
+  source_posted_at_utc TEXT
+  CHECK (source_posted_at_utc IS NULL OR (kind = 'transfer' AND length(source_posted_at_utc) = 20 AND source_posted_at_utc LIKE '%Z')),
+  destination_posted_at_utc TEXT CHECK (
+  (destination_posted_at_utc IS NULL OR (kind = 'transfer' AND length(destination_posted_at_utc) = 20 AND destination_posted_at_utc LIKE '%Z'))
+  AND (
+    (kind = 'transfer' AND account_id IS NOT NULL AND destination_account_id IS NOT NULL
+      AND account_id <> destination_account_id
+      AND destination_amount_minor IS NOT NULL AND destination_amount_minor > 0
+      AND destination_currency IS NOT NULL AND length(destination_currency) = 3
+      AND (currency <> destination_currency OR amount_minor = destination_amount_minor))
+    OR (kind IN ('expense', 'income') AND destination_account_id IS NULL
+      AND destination_amount_minor IS NULL AND destination_currency IS NULL
+      AND (kind <> 'income' OR account_id IS NOT NULL))
+  )
+),
+  ambiguous_source_amount INTEGER NOT NULL DEFAULT 0
+  CHECK (ambiguous_source_amount IN (0, 1))
 ) STRICT;
 
 CREATE INDEX idx_transactions_occurred
@@ -196,6 +208,15 @@ CREATE INDEX idx_transactions_account_occurred
   ON transactions(account_id, occurred_at_utc);
 CREATE INDEX idx_transactions_occurred_reviewed
   ON transactions(occurred_at_utc DESC, reviewed);
+
+CREATE INDEX idx_transactions_destination_account ON transactions(destination_account_id)
+  WHERE destination_account_id IS NOT NULL;
+
+CREATE TABLE transfer_requests (
+  id TEXT PRIMARY KEY,
+  fingerprint TEXT NOT NULL,
+  transaction_id TEXT REFERENCES transactions(id) ON DELETE SET NULL
+) STRICT;
 
 CREATE TABLE transaction_sources (
   id TEXT PRIMARY KEY,

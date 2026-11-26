@@ -168,7 +168,7 @@ const triageCandidateColumns = `
 	re.id AS email_id, re.sender_id, s.role_hint AS sender_role_hint,
 	re.from_address, re.subject, re.cleaned_text, re.received_at_utc,
 	re.status AS raw_status, ee.email_kind, ee.amount_minor, ee.currency,
-	ee.occurred_at_utc, ee.merchant_raw, ee.category, ee.card_last4,
+	ee.occurred_at_utc, ee.merchant_raw, ee.category,
 	ee.payment_method_raw, ee.bank_account_hint, ee.llm_account_id,
 	ee.account_type_guess, ee.reference_code, ee.extraction_model,
 	ee.triage_signature_key, ee.triage_subject_pattern, ee.triage_body_cue,
@@ -184,13 +184,6 @@ func strPtrOrNil(s string) *string {
 
 const maxGhostRowsPerPage = 100
 
-type ghostListQueryResult struct {
-	Items              []GhostRowItem
-	GhostInRangeCount  int64
-	TotalGhostCount    int64
-	GhostRowsTruncated bool
-}
-
 const validTriageDraftSQL = `(ee.amount_minor IS NOT NULL AND ee.amount_minor > 0
 	AND ee.currency IS NOT NULL AND LENGTH(TRIM(ee.currency)) = 3)`
 
@@ -202,104 +195,17 @@ const eligibleGhostBase = `
 		  AND COALESCE(ee.extraction_model, '') != 'rule:billing_statement'
 		  AND ` + validTriageDraftSQL
 
-func queryGhostRowsForTransactions(
-	gdb *gorm.DB,
-	params ListTransactionsParams,
-	appCurrency string,
-	rangeStartUtc string,
-	rangeEndUtc string,
-	totalTxCount int64,
-	offset int,
-	pageRowsCount int,
-	prevPageOldestUtc string,
-	currPageOldestUtc string,
-) (*ghostListQueryResult, error) {
-	const dateBounds = "COALESCE(ee.occurred_at_utc, re.received_at_utc) >= ? AND COALESCE(ee.occurred_at_utc, re.received_at_utc) < ?"
-	inRangeCount := "COUNT(*)"
-	var conds []string
-	var args []any
-	if rangeStartUtc != "" && rangeEndUtc != "" {
-		inRangeCount += " FILTER (WHERE " + dateBounds + ")"
-		conds = append(conds, dateBounds)
-		args = append(args, rangeStartUtc, rangeEndUtc)
-	}
-
-	var counts struct {
-		Total   int64
-		InRange int64
-	}
-	if err := gdb.Raw(`SELECT COUNT(*) AS total, `+inRangeCount+` AS in_range `+eligibleGhostBase, args...).Scan(&counts).Error; err != nil {
-		return nil, err
-	}
-
-	result := &ghostListQueryResult{
-		Items:             []GhostRowItem{},
-		GhostInRangeCount: counts.InRange,
-		TotalGhostCount:   counts.Total,
-	}
-	showSkipped := params.ShowSkipped == nil || *params.ShowSkipped
-	outsideLedgerPage := (totalTxCount > 0 && pageRowsCount == 0) || (totalTxCount == 0 && params.Page > 1)
-	if !showSkipped || strings.TrimSpace(params.Tag) != "" || outsideLedgerPage {
-		return result, nil
-	}
-
-	if params.Category != "" {
-		conds = append(conds, "ee.category = ?")
-		args = append(args, params.Category)
-	}
-	if q := strings.TrimSpace(params.Search); q != "" {
-		like := "%" + strings.ToLower(q) + "%"
-		conds = append(conds, `(
-			LOWER(COALESCE(ee.merchant_raw, '')) LIKE ?
-			OR LOWER(re.subject) LIKE ?
-			OR LOWER(re.from_address) LIKE ?
-			OR LOWER(COALESCE(ee.payment_method_raw, '')) LIKE ?
-		)`)
-		args = append(args, like, like, like, like)
-	}
-
-	if totalTxCount > 0 {
-		if params.Page > 1 && prevPageOldestUtc != "" {
-			conds = append(conds, "COALESCE(ee.occurred_at_utc, re.received_at_utc) < ?")
-			args = append(args, prevPageOldestUtc)
-		}
-		isLastPage := int64(offset+pageRowsCount) >= totalTxCount
-		if !isLastPage && currPageOldestUtc != "" {
-			conds = append(conds, "COALESCE(ee.occurred_at_utc, re.received_at_utc) >= ?")
-			args = append(args, currPageOldestUtc)
-		}
-	}
-
-	extraWhere := ""
-	if len(conds) > 0 {
-		extraWhere = " AND " + strings.Join(conds, " AND ")
-	}
-
-	rawRows, err := readGhostRows(gdb, extraWhere, args, 0, 0)
-	if err != nil {
-		return nil, err
-	}
-	out, truncated, err := mapGhostRows(gdb, rawRows, params.AccountID, appCurrency)
-	if err != nil {
-		return nil, err
-	}
-	result.Items = out
-	result.GhostRowsTruncated = truncated
-	return result, nil
-}
-
 type rawGhostRow struct {
-	EmailID              string  `gorm:"column:email_id"`
-	SenderID             *string `gorm:"column:sender_id"`
-	FromAddress          string  `gorm:"column:from_address"`
-	Subject              string  `gorm:"column:subject"`
-	AmountMinor          int64   `gorm:"column:amount_minor"`
-	Currency             string  `gorm:"column:currency"`
-	OccurredAtUtc        string  `gorm:"column:effective_occurred_at_utc"`
-	MerchantRaw          *string `gorm:"column:merchant_raw"`
-	Category             *string `gorm:"column:category"`
-	CardLast4            *string `gorm:"column:card_last4"`
-	BankAccountHint      *string `gorm:"column:bank_account_hint"`
+	EmailID       string  `gorm:"column:email_id"`
+	SenderID      *string `gorm:"column:sender_id"`
+	FromAddress   string  `gorm:"column:from_address"`
+	Subject       string  `gorm:"column:subject"`
+	AmountMinor   int64   `gorm:"column:amount_minor"`
+	Currency      string  `gorm:"column:currency"`
+	OccurredAtUtc string  `gorm:"column:effective_occurred_at_utc"`
+	MerchantRaw   *string `gorm:"column:merchant_raw"`
+	Category      *string `gorm:"column:category"`
+
 	PaymentMethodRaw     *string `gorm:"column:payment_method_raw"`
 	LlmAccountID         *string `gorm:"column:llm_account_id"`
 	TriageSignatureKey   string  `gorm:"column:triage_signature_key"`
@@ -307,13 +213,7 @@ type rawGhostRow struct {
 	TriageBodyCue        string  `gorm:"column:triage_body_cue"`
 }
 
-func readGhostRows(gdb *gorm.DB, extraWhere string, args []any, limit, offset int) ([]rawGhostRow, error) {
-	pageClause := ""
-	if limit > 0 {
-		pageClause = " LIMIT ? OFFSET ?"
-		args = append(args, limit, offset)
-	}
-
+func readGhostRows(gdb *gorm.DB, limit, offset int) ([]rawGhostRow, error) {
 	var rawRows []rawGhostRow
 	if err := gdb.Raw(`
 		SELECT
@@ -326,16 +226,15 @@ func readGhostRows(gdb *gorm.DB, extraWhere string, args []any, limit, offset in
 			COALESCE(ee.occurred_at_utc, re.received_at_utc) AS effective_occurred_at_utc,
 			NULLIF(TRIM(COALESCE(ee.merchant_raw, '')), '') AS merchant_raw,
 			ee.category,
-			ee.card_last4,
-			ee.bank_account_hint,
+
 			ee.payment_method_raw,
 			ee.llm_account_id,
 			COALESCE(ee.triage_signature_key, '') AS triage_signature_key,
 			COALESCE(ee.triage_subject_pattern, '') AS triage_subject_pattern,
 			COALESCE(ee.triage_body_cue, '') AS triage_body_cue
-		`+eligibleGhostBase+extraWhere+`
-		ORDER BY effective_occurred_at_utc DESC, re.internal_date_ms DESC, re.id DESC`+pageClause,
-		args...,
+		`+eligibleGhostBase+`
+		ORDER BY effective_occurred_at_utc DESC, re.internal_date_ms DESC, re.id DESC LIMIT ? OFFSET ?`,
+		limit, offset,
 	).Scan(&rawRows).Error; err != nil {
 		return nil, err
 	}
@@ -343,9 +242,9 @@ func readGhostRows(gdb *gorm.DB, extraWhere string, args []any, limit, offset in
 	return rawRows, nil
 }
 
-func mapGhostRows(gdb *gorm.DB, rawRows []rawGhostRow, accountFilter, appCurrency string) ([]GhostRowItem, bool, error) {
+func mapGhostRows(gdb *gorm.DB, rawRows []rawGhostRow, appCurrency string) ([]GhostRowItem, error) {
 	if len(rawRows) == 0 {
-		return []GhostRowItem{}, false, nil
+		return []GhostRowItem{}, nil
 	}
 
 	type acctNameRow struct {
@@ -354,7 +253,7 @@ func mapGhostRows(gdb *gorm.DB, rawRows []rawGhostRow, accountFilter, appCurrenc
 	}
 	var acctRows []acctNameRow
 	if err := gdb.Raw(`SELECT id, name FROM accounts`).Scan(&acctRows).Error; err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	acctNameByID := make(map[string]string, len(acctRows))
 	for _, a := range acctRows {
@@ -362,29 +261,8 @@ func mapGhostRows(gdb *gorm.DB, rawRows []rawGhostRow, accountFilter, appCurrenc
 	}
 
 	out := make([]GhostRowItem, 0, len(rawRows))
-	truncated := false
 	for _, r := range rawRows {
-		resolvedAcctID := MatchAccountForExtraction(gdb, MatchAccountParams{
-			SenderID:        r.SenderID,
-			CardLast4:       r.CardLast4,
-			BankAccountHint: r.BankAccountHint,
-			PaymentMethod:   r.PaymentMethodRaw,
-			LlmAccountID:    r.LlmAccountID,
-		})
-		if accountFilter != "" && accountFilter != "all" {
-			if accountFilter == "unassigned" {
-				if resolvedAcctID != nil {
-					continue
-				}
-			} else if resolvedAcctID == nil || *resolvedAcctID != accountFilter {
-				continue
-			}
-		}
-
-		if len(out) >= maxGhostRowsPerPage {
-			truncated = true
-			break
-		}
+		resolvedAcctID := MatchAccountForExtraction(gdb, r.SenderID, r.LlmAccountID)
 
 		var resolvedAcctName *string
 		if resolvedAcctID != nil {
@@ -414,7 +292,7 @@ func mapGhostRows(gdb *gorm.DB, rawRows []rawGhostRow, accountFilter, appCurrenc
 		})
 	}
 
-	return out, truncated, nil
+	return out, nil
 }
 
 type PaginatedSkippedTransactionsResponse struct {
@@ -451,13 +329,13 @@ func ListSkippedTransactions(gdb *gorm.DB, page, pageSize int) (*PaginatedSkippe
 			return nil
 		}
 		var err error
-		rows, err = readGhostRows(tx, "", nil, pageSize, (page-1)*pageSize)
+		rows, err = readGhostRows(tx, pageSize, (page-1)*pageSize)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	result.Items, _, err = mapGhostRows(gdb, rows, "", *currency)
+	result.Items, err = mapGhostRows(gdb, rows, *currency)
 	if err != nil {
 		return nil, err
 	}
@@ -465,21 +343,21 @@ func ListSkippedTransactions(gdb *gorm.DB, page, pageSize int) (*PaginatedSkippe
 }
 
 type triageCandidateRow struct {
-	EmailID              string  `gorm:"column:email_id"`
-	SenderID             *string `gorm:"column:sender_id"`
-	SenderRoleHint       *string `gorm:"column:sender_role_hint"`
-	FromAddress          string  `gorm:"column:from_address"`
-	Subject              string  `gorm:"column:subject"`
-	CleanedText          string  `gorm:"column:cleaned_text"`
-	ReceivedAtUtc        string  `gorm:"column:received_at_utc"`
-	RawStatus            string  `gorm:"column:raw_status"`
-	EmailKind            string  `gorm:"column:email_kind"`
-	AmountMinor          *int64  `gorm:"column:amount_minor"`
-	Currency             *string `gorm:"column:currency"`
-	OccurredAtUtc        *string `gorm:"column:occurred_at_utc"`
-	MerchantRaw          *string `gorm:"column:merchant_raw"`
-	Category             *string `gorm:"column:category"`
-	CardLast4            *string `gorm:"column:card_last4"`
+	EmailID        string  `gorm:"column:email_id"`
+	SenderID       *string `gorm:"column:sender_id"`
+	SenderRoleHint *string `gorm:"column:sender_role_hint"`
+	FromAddress    string  `gorm:"column:from_address"`
+	Subject        string  `gorm:"column:subject"`
+	CleanedText    string  `gorm:"column:cleaned_text"`
+	ReceivedAtUtc  string  `gorm:"column:received_at_utc"`
+	RawStatus      string  `gorm:"column:raw_status"`
+	EmailKind      string  `gorm:"column:email_kind"`
+	AmountMinor    *int64  `gorm:"column:amount_minor"`
+	Currency       *string `gorm:"column:currency"`
+	OccurredAtUtc  *string `gorm:"column:occurred_at_utc"`
+	MerchantRaw    *string `gorm:"column:merchant_raw"`
+	Category       *string `gorm:"column:category"`
+
 	PaymentMethodRaw     *string `gorm:"column:payment_method_raw"`
 	BankAccountHint      *string `gorm:"column:bank_account_hint"`
 	LlmAccountID         *string `gorm:"column:llm_account_id"`
@@ -510,7 +388,6 @@ func admitPromotedTransactionInTx(
 	occurredAt string,
 	merchant string,
 	category string,
-	cardLast4 *string,
 	bankHint *string,
 	pmRaw *string,
 	llmAcctID *string,
@@ -518,17 +395,11 @@ func admitPromotedTransactionInTx(
 	refCode *string,
 	nowUtc string,
 ) (txID string, createdProvAccountID *string, err error) {
-	acctID := MatchAccountForExtraction(tx, MatchAccountParams{
-		SenderID:        senderID,
-		CardLast4:       cardLast4,
-		BankAccountHint: bankHint,
-		PaymentMethod:   pmRaw,
-		LlmAccountID:    llmAcctID,
-	})
+	acctID := MatchAccountForExtraction(tx, senderID, llmAcctID)
 	if acctID == nil {
 		prov, provErr := CreateProvisionalAccountForExtractionInTx(tx, ProvisionalAccountParams{
-			FromAddress:      fromAddress,
-			CardLast4:        cardLast4,
+			FromAddress: fromAddress,
+
 			BankAccountHint:  bankHint,
 			PaymentMethod:    pmRaw,
 			AccountTypeGuess: acctTypeGuess,
@@ -545,14 +416,14 @@ func admitPromotedTransactionInTx(
 	}
 
 	txID, err = SaveExtractedTransactionInTx(tx, ExtractedTransactionInput{
-		EmailID:           emailID,
-		EmailKind:         effectiveRole,
-		AmountMinor:       amountMinor,
-		Currency:          currency,
-		OccurredAtUtc:     occurredAt,
-		MerchantRaw:       merchant,
-		Category:          category,
-		CardLast4:         cardLast4,
+		EmailID:       emailID,
+		EmailKind:     effectiveRole,
+		AmountMinor:   amountMinor,
+		Currency:      currency,
+		OccurredAtUtc: occurredAt,
+		MerchantRaw:   merchant,
+		Category:      category,
+
 		ReferenceCode:     refCode,
 		ResolvedAccountID: acctID,
 		NowUtc:            nowUtc,
@@ -740,12 +611,12 @@ func ApplyTriageVerdict(gdb *gorm.DB, input ApplyTriageVerdictInput) (*TriageVer
 				rawCat = *sib.Category
 			}
 			category := ResolveKnownCategory(tx, rawCat)
-			effectiveRole := ResolveEffectiveEmailRole(sib.SenderRoleHint, sib.EmailKind, sib.CardLast4, sib.BankAccountHint)
+			effectiveRole := ResolveEffectiveEmailRole(sib.SenderRoleHint, sib.EmailKind, sib.BankAccountHint)
 
 			txID, createdProvID, saveErr := admitPromotedTransactionInTx(
 				tx, sib.EmailID, sib.SenderID, sib.FromAddress, effectiveRole,
 				*sib.AmountMinor, currency, occurredAt, merchant, category,
-				sib.CardLast4, sib.BankAccountHint, sib.PaymentMethodRaw, sib.LlmAccountID, sib.AccountTypeGuess, sib.ReferenceCode, nowUtc,
+				sib.BankAccountHint, sib.PaymentMethodRaw, sib.LlmAccountID, sib.AccountTypeGuess, sib.ReferenceCode, nowUtc,
 			)
 			if saveErr != nil {
 				return saveErr
@@ -1402,6 +1273,7 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 			UserCurrency:       settings.Currency,
 			Categories:         catNames,
 			Accounts:           llmAccounts,
+			DefaultAccountID:   SenderDefaultAccountID(gdb, target.SenderID),
 		})
 		if err != nil {
 			return nil, err
@@ -1432,7 +1304,7 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 
 		var amountMinor int64
 		var currency, occurredAt, merchant, category, rawKind string
-		var cardLast4, bankHint, pmRaw, llmAcctID, acctTypeGuess, refCode *string
+		var bankHint, pmRaw, llmAcctID, acctTypeGuess, refCode *string
 
 		if usedLlm {
 			amountMinor = extracted.AmountMinor
@@ -1441,7 +1313,7 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 			merchant = extracted.MerchantRaw
 			category = ResolveKnownCategory(tx, extracted.Category)
 			rawKind = extracted.EmailKind
-			cardLast4 = extracted.CardLast4
+
 			bankHint = extracted.BankAccountHint
 			pmRaw = extracted.PaymentMethodRaw
 			llmAcctID = extracted.MatchedAccountID
@@ -1463,7 +1335,7 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 			}
 			category = ResolveKnownCategory(tx, rawCat)
 			rawKind = curRow.EmailKind
-			cardLast4 = curRow.CardLast4
+
 			bankHint = curRow.BankAccountHint
 			pmRaw = curRow.PaymentMethodRaw
 			llmAcctID = curRow.LlmAccountID
@@ -1477,7 +1349,7 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 		if merchant == "" {
 			merchant = "Unknown Merchant"
 		}
-		effectiveRole := ResolveEffectiveEmailRole(curRow.SenderRoleHint, rawKind, cardLast4, bankHint)
+		effectiveRole := ResolveEffectiveEmailRole(curRow.SenderRoleHint, rawKind, bankHint)
 
 		if usedLlm {
 			var merchantRaw *string
@@ -1487,15 +1359,15 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 			sig := DeriveEmailTemplateSignature(curRow.FromAddress, curRow.Subject, curRow.CleanedText)
 			promoted := "promoted"
 			if err := db.ReplaceEmailExtraction(tx, db.EmailExtraction{
-				ID:                   uuid.NewString(),
-				EmailID:              emailID,
-				EmailKind:            effectiveRole,
-				AmountMinor:          &amountMinor,
-				Currency:             &currency,
-				OccurredAtUtc:        &occurredAt,
-				MerchantRaw:          merchantRaw,
-				Category:             &category,
-				CardLast4:            cardLast4,
+				ID:            uuid.NewString(),
+				EmailID:       emailID,
+				EmailKind:     effectiveRole,
+				AmountMinor:   &amountMinor,
+				Currency:      &currency,
+				OccurredAtUtc: &occurredAt,
+				MerchantRaw:   merchantRaw,
+				Category:      &category,
+
 				PaymentMethodRaw:     pmRaw,
 				BankAccountHint:      bankHint,
 				LlmAccountID:         llmAcctID,
@@ -1523,7 +1395,7 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 		txID, _, saveErr = admitPromotedTransactionInTx(
 			tx, emailID, curRow.SenderID, curRow.FromAddress, effectiveRole,
 			amountMinor, currency, occurredAt, merchant, category,
-			cardLast4, bankHint, pmRaw, llmAcctID, acctTypeGuess, refCode, nowUtc,
+			bankHint, pmRaw, llmAcctID, acctTypeGuess, refCode, nowUtc,
 		)
 		return saveErr
 	})

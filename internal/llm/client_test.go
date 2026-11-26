@@ -82,7 +82,7 @@ func TestClient_ExtractTransaction_JsonSchemaAndCachePrompt(t *testing.T) {
 			"choices": []map[string]any{
 				{
 					"message": map[string]any{
-						"content": `<think>reasoning</think>{"email_kind":"card_charge","amount_decimal":"12.50","currency":"USD","transaction_date":"2026-11-22","transaction_time":"14:30","timezone_offset":"-05:00","merchant":"Coffee Shop","category":"Dining Out","card_last4":"1234","payment_method":"Visa","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"credit_card","reference_code":"REF-1"}`,
+						"content": `<think>reasoning</think>{"email_kind":"card_charge","amount_decimal":"12.50","currency":"USD","transaction_date":"2026-11-22","transaction_time":"14:30","timezone_offset":"-05:00","merchant":"Coffee Shop","category":"Dining Out","payment_method":"Visa","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"credit_card","reference_code":"REF-1"}`,
 					},
 				},
 			},
@@ -132,7 +132,7 @@ func TestClient_ExtractTransaction_FallsBackToJsonObjectOn400(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"card_last4":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
+				{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
 			},
 		})
 	}))

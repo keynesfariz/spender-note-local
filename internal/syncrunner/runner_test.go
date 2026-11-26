@@ -432,7 +432,7 @@ func TestRunExtractionWorker_ForwardsCountryPromptRulesByActiveCountry(t *testin
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"choices": []map[string]any{
-						{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"card_last4":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
+						{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
 					},
 				})
 			}))
@@ -615,7 +615,6 @@ func TestFullSync_PipelinesFetchAndExtractWithProvisionalAccountPropagation(t *t
 	gdb.Exec(`UPDATE gmail_oauth SET status = 'connected' WHERE id = 1`)
 
 	firstExtracted := make(chan struct{})
-	releaseSecondFetch := make(chan struct{})
 	var secondSawProvisional atomic.Bool
 	var extractCalls atomic.Int32
 
@@ -631,19 +630,29 @@ func TestFullSync_PipelinesFetchAndExtractWithProvisionalAccountPropagation(t *t
 			} `json:"messages"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		matchedAccountID := "null"
 		n := extractCalls.Add(1)
 		if n == 1 {
 			close(firstExtracted)
 		} else if n == 2 {
+			var account db.Account
+			if err := gdb.Take(&account, "status = ?", "provisional").Error; err != nil {
+				t.Errorf("load provisional account for second extraction: %v", err)
+				http.Error(w, "missing provisional account", http.StatusInternalServerError)
+				return
+			}
 			for _, m := range body.Messages {
-				if m.Role == "user" && strings.Contains(m.Content, "Known-Accounts:") && strings.Contains(m.Content, "4321") {
+				if m.Role == "user" && strings.Contains(m.Content, account.ID) && strings.Contains(m.Content, "NewBank Card") {
 					secondSawProvisional.Store(true)
+					encodedID, _ := json.Marshal(account.ID)
+					matchedAccountID = string(encodedID)
+					break
 				}
 			}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"email_kind":"card_charge","amount_decimal":"50000","currency":"IDR","transaction_date":"2026-11-22","transaction_time":"12:00:00","timezone_offset":"+07:00","merchant":"Cafe","category":"Dining Out","card_last4":"4321","payment_method":"NewBank Card","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"credit_card","reference_code":null}`}},
+				{"message": map[string]any{"content": `{"email_kind":"card_charge","amount_decimal":"50000","currency":"IDR","transaction_date":"2026-11-22","transaction_time":"12:00:00","timezone_offset":"+07:00","merchant":"Cafe","category":"Dining Out","payment_method":"NewBank Card","bank_account_hint":null,"matched_account_id":` + matchedAccountID + `,"account_type_guess":"credit_card","reference_code":null}`}},
 			},
 		})
 	}))
@@ -675,7 +684,6 @@ func TestFullSync_PipelinesFetchAndExtractWithProvisionalAccountPropagation(t *t
 		case <-time.After(3 * time.Second):
 			t.Errorf("timed out waiting for extraction to overlap with fetching")
 		}
-		close(releaseSecondFetch)
 		msg2 := gmail.FetchedMessage{
 			GmailMessageID: "g2",
 			FromAddress:    "alerts@newbank.com",
@@ -697,10 +705,24 @@ func TestFullSync_PipelinesFetchAndExtractWithProvisionalAccountPropagation(t *t
 	if !secondSawProvisional.Load() {
 		t.Fatalf("expected email #2 to see provisional account created by email #1")
 	}
-	var acctCount int64
-	gdb.Model(&db.Account{}).Count(&acctCount)
-	if acctCount != 1 {
-		t.Fatalf("expected exactly 1 provisional account (no duplicate), got %d", acctCount)
+	var accounts []db.Account
+	if err := gdb.Find(&accounts).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 || accounts[0].Status != "provisional" {
+		t.Fatalf("expected exactly one provisional account, got %+v", accounts)
+	}
+	var transactions []db.Transaction
+	if err := gdb.Find(&transactions).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(transactions) != 2 {
+		t.Fatalf("expected two imported transactions, got %d", len(transactions))
+	}
+	for _, transaction := range transactions {
+		if transaction.AccountID == nil || *transaction.AccountID != accounts[0].ID {
+			t.Errorf("transaction %s does not use provisional account %s", transaction.ID, accounts[0].ID)
+		}
 	}
 	var run db.SyncRun
 	gdb.First(&run, "id = ?", runID)
@@ -733,7 +755,7 @@ func TestFullSync_MidRunLlmDropPreservesPendingAndRetryFinishesWithoutGmail(t *t
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"email_kind":"receipt","amount_decimal":"25000","currency":"IDR","transaction_date":"2026-11-22","transaction_time":"12:00:00","timezone_offset":"+07:00","merchant":"Shop","category":"Shopping","card_last4":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
+				{"message": map[string]any{"content": `{"email_kind":"receipt","amount_decimal":"25000","currency":"IDR","transaction_date":"2026-11-22","transaction_time":"12:00:00","timezone_offset":"+07:00","merchant":"Shop","category":"Shopping","payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
 			},
 		})
 	}))
@@ -924,7 +946,7 @@ func TestRunExtractionWorker_UsesCustomCategoriesFromDatabase(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"email_kind":"receipt","amount_decimal":"120000","currency":"IDR","transaction_date":"2026-11-22","transaction_time":"11:00:00","timezone_offset":"+07:00","merchant":"Pet Kingdom","category":"Pet Supplies","card_last4":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
+				{"message": map[string]any{"content": `{"email_kind":"receipt","amount_decimal":"120000","currency":"IDR","transaction_date":"2026-11-22","transaction_time":"11:00:00","timezone_offset":"+07:00","merchant":"Pet Kingdom","category":"Pet Supplies","payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
 			},
 		})
 	}))
@@ -1055,25 +1077,25 @@ func TestRunExtractionWorker_LearnedPoliciesPrecedenceGhostStateAndRace(t *testi
 		case strings.Contains(userPrompt, "email-admit-null"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{
-					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"card_last4":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
+					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
 				},
 			})
 		case strings.Contains(userPrompt, "email-admit-ok"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{
-					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"5000","currency":"IDR","transaction_date":"2026-11-23","transaction_time":"20:14:00","timezone_offset":"+07:00","merchant":"","category":"Transport","card_last4":"6039","payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"credit_card","reference_code":null}`}},
+					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"5000","currency":"IDR","transaction_date":"2026-11-23","transaction_time":"20:14:00","timezone_offset":"+07:00","merchant":"","category":"Transport","payment_method":"GrabPay","bank_account_hint":"****6039","matched_account_id":null,"account_type_guess":"credit_card","reference_code":null}`}},
 				},
 			})
 		case strings.Contains(userPrompt, "email-ghost"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{
-					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"100000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"11:34:40","timezone_offset":"+07:00","merchant":null,"category":null,"card_last4":null,"payment_method":"Bank Transfer","bank_account_hint":"****9988","matched_account_id":null,"account_type_guess":"debit_card","reference_code":null}`}},
+					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"100000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"11:34:40","timezone_offset":"+07:00","merchant":null,"category":null,"payment_method":"Bank Transfer","bank_account_hint":"****9988","matched_account_id":null,"account_type_guess":"debit_card","reference_code":null}`}},
 				},
 			})
 		case strings.Contains(userPrompt, "email-zero"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{
-					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"card_last4":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
+					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
 				},
 			})
 		case strings.Contains(userPrompt, "email-race"):
@@ -1081,7 +1103,7 @@ func TestRunExtractionWorker_LearnedPoliciesPrecedenceGhostStateAndRace(t *testi
 			<-releaseMidFlight
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{
-					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"75000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"12:00:00","timezone_offset":"+07:00","merchant":"Race Merchant","category":"Shopping","card_last4":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
+					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"75000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"12:00:00","timezone_offset":"+07:00","merchant":"Race Merchant","category":"Shopping","payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
 				},
 			})
 		}
@@ -1096,7 +1118,7 @@ func TestRunExtractionWorker_LearnedPoliciesPrecedenceGhostStateAndRace(t *testi
 		},
 		{
 			ID: "email-admit-ok", GmailMessageID: "gm-2", SenderID: &sender.ID, FromAddress: "no-reply@grab.com",
-			Subject: "Your Grab E-Receipt", CleanedText: "Grab Tips E-Receipt\nGrabFood\nemail-admit-ok\nRp 5000",
+			Subject: "Your Grab E-Receipt", CleanedText: "Grab Tips E-Receipt\nGrabFood\nemail-admit-ok\nRp 5000\nCard 6039",
 			InternalDateMs: 1795400002000, ReceivedAtUtc: "2026-11-24T01:00:02Z", Status: "pending",
 		},
 		{

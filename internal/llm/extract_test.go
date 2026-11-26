@@ -50,7 +50,6 @@ func TestNormalizeExtractedResult_IDRZeroDecimalRecovery(t *testing.T) {
 		"timezone_offset": null,
 		"merchant": "Tokopedia",
 		"category": "Shopping",
-		"card_last4": "xxxx-9876",
 		"payment_method": "BCA",
 		"bank_account_hint": null,
 		"matched_account_id": null,
@@ -62,7 +61,7 @@ func TestNormalizeExtractedResult_IDRZeroDecimalRecovery(t *testing.T) {
 	}
 	cur := "IDR"
 	res, err := NormalizeExtractedResult(raw, cleaned, ExtractInput{
-		CleanedText:   "Pembayaran sebesar Rp 125.000 berhasil di Tokopedia",
+		CleanedText:   "Pembayaran sebesar Rp 125.000 berhasil di Tokopedia dengan kartu 9876",
 		ReceivedAtUtc: "2026-11-22T03:20:00Z",
 		UserTimezone:  "Asia/Jakarta",
 		UserCurrency:  &cur,
@@ -75,9 +74,6 @@ func TestNormalizeExtractedResult_IDRZeroDecimalRecovery(t *testing.T) {
 	}
 	if res.OccurredAtUtc != "2026-11-22T03:15:00Z" {
 		t.Fatalf("expected Asia/Jakarta 10:15 -> 03:15Z, got %s", res.OccurredAtUtc)
-	}
-	if res.CardLast4 == nil || *res.CardLast4 != "9876" {
-		t.Fatalf("expected card_last4=9876, got %v", res.CardLast4)
 	}
 }
 
@@ -109,7 +105,6 @@ func TestParseAndValidateExtraction_RejectsUnknownCategory(t *testing.T) {
 		"timezone_offset": null,
 		"merchant": "Store",
 		"category": "NotACategory",
-		"card_last4": null,
 		"payment_method": null,
 		"bank_account_hint": null,
 		"matched_account_id": null,
@@ -325,7 +320,6 @@ func TestNormalizeExtractedResult_NonTransactionDraftPreservationAndZeroFallback
 		"timezone_offset": null,
 		"merchant": "   ",
 		"category": "Transportation",
-		"card_last4": "xxxx-6039",
 		"payment_method": "GrabPay",
 		"bank_account_hint": "****1234",
 		"matched_account_id": null,
@@ -336,7 +330,7 @@ func TestNormalizeExtractedResult_NonTransactionDraftPreservationAndZeroFallback
 		t.Fatalf("parse failed: %v", err)
 	}
 	res, err := NormalizeExtractedResult(raw, cleaned, ExtractInput{
-		CleanedText:   "Grab Tips RP 5000",
+		CleanedText:   "Grab Tips RP 5000 with card 6039",
 		ReceivedAtUtc: "2026-11-23T14:00:00Z",
 		UserTimezone:  "Asia/Jakarta",
 		UserCurrency:  &cur,
@@ -351,11 +345,10 @@ func TestNormalizeExtractedResult_NonTransactionDraftPreservationAndZeroFallback
 	if res.MerchantRaw != "" {
 		t.Fatalf("expected blank MerchantRaw stored empty (for NULL) instead of synthetic fallback, got %q", res.MerchantRaw)
 	}
-	if res.Category != "Transportation" || res.CardLast4 == nil || *res.CardLast4 != "6039" || res.AccountTypeGuess == nil || *res.AccountTypeGuess != "digital_wallet" {
-		t.Fatalf("expected draft category/card/account_type preserved, got %+v", res)
+	if res.Category != "Transportation" || res.AccountTypeGuess == nil || *res.AccountTypeGuess != "digital_wallet" {
+		t.Fatalf("expected draft category/account_type preserved, got %+v", res)
 	}
 
-	// Non-transaction with null amount or invalid currency must return AmountMinor=0 with nil error.
 	for _, tc := range []struct {
 		name string
 		raw  *RawExtraction

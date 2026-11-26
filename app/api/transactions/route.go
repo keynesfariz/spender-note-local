@@ -18,11 +18,6 @@ func GET(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	pageSize, _ := strconv.Atoi(q.Get("pageSize"))
-	var showSkippedPtr *bool
-	if rawShowSkipped := q.Get("showSkipped"); rawShowSkipped == "false" || rawShowSkipped == "0" {
-		v := false
-		showSkippedPtr = &v
-	}
 	res, err := domain.ListTransactions(gdb.WithContext(r.Context()), domain.ListTransactionsParams{
 		LedgerRange:    q.Get("ledgerRange"),
 		Month:          q.Get("month"),
@@ -34,7 +29,6 @@ func GET(w http.ResponseWriter, r *http.Request) {
 		Kind:           q.Get("kind"),
 		Search:         q.Get("search"),
 		UnreviewedOnly: q.Get("unreviewedOnly") == "true" || q.Get("unreviewedOnly") == "1",
-		ShowSkipped:    showSkippedPtr,
 		Page:           page,
 		PageSize:       pageSize,
 	})

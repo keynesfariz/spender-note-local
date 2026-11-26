@@ -30,9 +30,6 @@ func PATCH(w http.ResponseWriter, r *http.Request) {
 	if _, ok := rawMap["initial_balance_minor"]; ok {
 		patch.HasInitialBalance = true
 	}
-	if _, ok := rawMap["last4"]; ok {
-		patch.HasLast4 = true
-	}
 	if _, ok := rawMap["statement_day"]; ok {
 		patch.HasStatementDay = true
 	}

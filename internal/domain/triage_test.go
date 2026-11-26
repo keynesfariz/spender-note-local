@@ -59,7 +59,7 @@ func seedSkippedEmail(t *testing.T, gdb *gorm.DB, id string, senderID *string, f
 		t.Fatal(err)
 	}
 	draft, err := llm.NormalizeExtractedResult(&raw, rawJSON, llm.ExtractInput{
-		ReceivedAtUtc: receivedUtc, UserTimezone: "Asia/Jakarta", Categories: categories,
+		ReceivedAtUtc: receivedUtc, UserTimezone: "Asia/Jakarta", Categories: categories, Subject: subject, CleanedText: body,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,6 @@ func seedSkippedEmail(t *testing.T, gdb *gorm.DB, id string, senderID *string, f
 		extraction.MerchantRaw = strPtrOrNil(draft.MerchantRaw)
 		extraction.Category = &draft.Category
 		extraction.PaymentMethodRaw = draft.PaymentMethodRaw
-		extraction.CardLast4 = draft.CardLast4
 		extraction.AccountTypeGuess = draft.AccountTypeGuess
 		extraction.TriageState = &ghost
 	}
@@ -260,8 +259,10 @@ func TestApplyAndUndoTriageVerdict_PromoteRippleDisplayNameCursorUndoAndConflict
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listAfterPromote.TotalCount != 3 || len(listAfterPromote.GhostRows) != 1 || listAfterPromote.GhostRows[0].EmailID != "bca-transfer" {
-		t.Fatalf("expected 3 imported + 1 remaining bca-transfer ghost, got total=%d ghosts=%+v", listAfterPromote.TotalCount, listAfterPromote.GhostRows)
+	remaining, err := ListSkippedTransactions(gdb, 1, 25)
+	if err != nil || listAfterPromote.TotalCount != 3 || listAfterPromote.TotalGhostCount != 1 ||
+		len(remaining.Items) != 1 || remaining.Items[0].EmailID != "bca-transfer" {
+		t.Fatalf("expected three transactions and one skipped email: %+v, %+v, %v", listAfterPromote, remaining, err)
 	}
 	for _, item := range listAfterPromote.Items {
 		if item.Reviewed != 0 {
@@ -269,7 +270,6 @@ func TestApplyAndUndoTriageVerdict_PromoteRippleDisplayNameCursorUndoAndConflict
 		}
 	}
 
-	// Undo immediately restores policy + all 3 Ghost Rows.
 	undoRes, err := UndoTriageVerdict(gdb, TriageUndoInput{UndoPayload: verdict.UndoPayload})
 	if err != nil {
 		t.Fatalf("UndoTriageVerdict: %v", err)
@@ -283,7 +283,6 @@ func TestApplyAndUndoTriageVerdict_PromoteRippleDisplayNameCursorUndoAndConflict
 		t.Fatalf("expected created policy removed on undo, found %d", polCount)
 	}
 
-	// Null-merchant Ghost Row promotion uses subject fallback without LLM.
 	transferVerdict, err := ApplyTriageVerdict(gdb, ApplyTriageVerdictInput{
 		EmailID: "bca-transfer",
 		Action:  "promote",
@@ -297,7 +296,6 @@ func TestApplyAndUndoTriageVerdict_PromoteRippleDisplayNameCursorUndoAndConflict
 		t.Fatalf("expected subject fallback title & unreviewed, got %+v", promotedTransfer)
 	}
 
-	// Edited promoted tx blocks Undo with 409 ConflictError.
 	newMerch := "Edited Merchant"
 	if _, err := UpdateTransaction(gdb, promotedTransfer.ID, UpdateTransactionInput{Merchant: &newMerch}); err != nil {
 		t.Fatal(err)
@@ -315,8 +313,8 @@ func TestUndoTriageVerdict_ProtectsDefaultAccountAndIgnoreRecoveryConflicts(t *t
 
 	seedSkippedEmail(
 		t, gdb, "prov-ghost", &sender.ID, "wallet@pay.example", "Wallet Payment",
-		"Paid IDR 25000", 1795520000000, "2026-11-24T10:00:00Z", "qwen",
-		`{"email_kind":"non_transaction","amount_decimal":"25000","currency":"IDR","card_last4":"7788","account_type_guess":"credit_card","merchant":"Cafe"}`,
+		"Paid IDR 25000 with card 7788", 1795520000000, "2026-11-24T10:00:00Z", "qwen",
+		`{"email_kind":"non_transaction","amount_decimal":"25000","currency":"IDR","payment_method":"Example Card","account_type_guess":"credit_card","merchant":"Cafe"}`,
 	)
 
 	v, err := ApplyTriageVerdict(gdb, ApplyTriageVerdictInput{EmailID: "prov-ghost", Action: "promote"})
@@ -328,7 +326,6 @@ func TestUndoTriageVerdict_ProtectsDefaultAccountAndIgnoreRecoveryConflicts(t *t
 	}
 	provID := v.UndoPayload.CreatedProvisionalAccountIDs[0]
 
-	// Point sender default_account_id to provisional account; Undo must keep it intact!
 	if err := gdb.Model(&db.Sender{}).Where("id = ?", sender.ID).Update("default_account_id", provID).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +338,6 @@ func TestUndoTriageVerdict_ProtectsDefaultAccountAndIgnoreRecoveryConflicts(t *t
 		t.Fatalf("expected provisional account referenced by sender.default_account_id to stay intact, got count=%d", acctCnt)
 	}
 
-	// Clear sender default_account_id and repeat promote+undo -> now unreferenced provisional account IS deleted.
 	_ = gdb.Model(&db.Sender{}).Where("id = ?", sender.ID).Update("default_account_id", nil).Error
 	_ = gdb.Where("id = ?", provID).Delete(&db.Account{}).Error
 	v2, err := ApplyTriageVerdict(gdb, ApplyTriageVerdictInput{EmailID: "prov-ghost", Action: "promote"})
@@ -357,7 +353,6 @@ func TestUndoTriageVerdict_ProtectsDefaultAccountAndIgnoreRecoveryConflicts(t *t
 		t.Fatalf("expected unreferenced provisional account deleted on undo, got count=%d", acctCnt)
 	}
 
-	// Ignore verdict followed by Settings promotion of that ignored email must trigger ConflictError on Undo.
 	ignoreVerdict, err := ApplyTriageVerdict(gdb, ApplyTriageVerdictInput{EmailID: "prov-ghost", Action: "ignore"})
 	if err != nil {
 		t.Fatal(err)
@@ -377,7 +372,6 @@ func TestSettingsPolicyRecoveryAndDeletionIndependence(t *testing.T) {
 	grab := seedSenderWithCursor(t, gdb, "s-grab", "no-reply@grab.com", 1795500000000, "auto")
 	jenius := seedSenderWithCursor(t, gdb, "s-jenius", "jenius_noreply@smbci.com", 1795500000000, "auto")
 
-	// Seed 1 post-LLM voucher (ignored via ghost verdict) and 1 pre-LLM policy:ignore voucher.
 	seedSkippedEmail(
 		t, gdb, "vouch-post", &grab.ID, "no-reply@grab.com", "Ride Cover Plus: Here's your Rp11.000 voucher.",
 		"Ride Cover\nRp 11.000 voucher", 1795490000000, "2026-11-24T03:00:00Z", "qwen",
@@ -418,12 +412,12 @@ func TestSettingsPolicyRecoveryAndDeletionIndependence(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if forceNullAmount.Load() {
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"choices": []map[string]any{{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"card_last4":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}}},
+				"choices": []map[string]any{{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}}},
 			})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"25000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"12:00:00","timezone_offset":"+07:00","merchant":"Grab Voucher","category":"Other","card_last4":null,"payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}}},
+			"choices": []map[string]any{{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"25000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"12:00:00","timezone_offset":"+07:00","merchant":"Grab Voucher","category":"Other","payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}}},
 		})
 	}))
 	defer srv.Close()
@@ -432,7 +426,6 @@ func TestSettingsPolicyRecoveryAndDeletionIndependence(t *testing.T) {
 		"llm_model":    "qwen2.5",
 	}).Error
 
-	// Promote pre-LLM row even while Always ignore policy stays intact; LLM returns non_transaction + 25000 -> force-admitted!
 	promRes, err := PromoteIgnoredEmail(gdb, context.Background(), "vouch-pre")
 	if err != nil {
 		t.Fatalf("PromoteIgnoredEmail pre-LLM: %v", err)
@@ -444,14 +437,12 @@ func TestSettingsPolicyRecoveryAndDeletionIndependence(t *testing.T) {
 		t.Fatalf("expected 1 LLM call for pre-LLM promote, got %d", llmCalls.Load())
 	}
 
-	// Re-promoting same already-promoted email returns 409 ConflictError.
 	_, dupErr := PromoteIgnoredEmail(gdb, context.Background(), "vouch-pre")
 	var ce *ConflictError
 	if !errors.As(dupErr, &ce) {
 		t.Fatalf("expected ConflictError on duplicate promote, got %T: %v", dupErr, dupErr)
 	}
 
-	// Delete ignore rule: post-LLM ignored row returns to Ghost Rows while pre-LLM row stays in Settings if newly seeded.
 	delRes, err := DeleteTriagePolicy(gdb, policies[0].ID)
 	if err != nil {
 		t.Fatal(err)
@@ -460,7 +451,6 @@ func TestSettingsPolicyRecoveryAndDeletionIndependence(t *testing.T) {
 		t.Fatalf("expected 1 restored ghost row from deleting ignore rule, got %d", delRes.RestoredGhostCount)
 	}
 
-	// Pre-LLM row where LLM yields no positive amount returns 422 UnprocessableError.
 	if err := gdb.Create(&db.RawEmail{
 		ID: "pre-zero", GmailMessageID: "gm-pre-zero", SenderID: &grab.ID,
 		FromAddress: "no-reply@grab.com", Subject: "Ride Cover",
@@ -485,7 +475,6 @@ func TestSettingsPolicyRecoveryAndDeletionIndependence(t *testing.T) {
 		t.Fatalf("expected availableSenders to contain no-reply@grab.com, got %v", ignoredPage.AvailableSenders)
 	}
 
-	// DeleteTransaction marks email dismissed, creates zero ignore policies, and excludes from ghost/ignored queries.
 	if err := gdb.Create(&db.RawEmail{
 		ID: "1e4bfdde-38a8-4ae3-aa41-492c5bfb7706", GmailMessageID: "gm-jenius-cancel", SenderID: &jenius.ID,
 		FromAddress: "jenius_noreply@smbci.com", Subject: "Credit Card Transaction Notification",
@@ -615,9 +604,25 @@ func TestListSkippedTransactions_IndependentPagination(t *testing.T) {
 		t.Fatalf("oversized request should return an empty page with a bounded size: %+v, %v", largePage, err)
 	}
 
-	hide := false
-	ledger, err := ListTransactions(gdb, ListTransactionsParams{ShowSkipped: &hide})
-	if err != nil || ledger.TotalCount != 0 || ledger.TotalGhostCount != 5 || len(ledger.GhostRows) != 0 {
+	ledger, err := ListTransactions(gdb, ListTransactionsParams{})
+	if err != nil || ledger.TotalCount != 0 || ledger.TotalGhostCount != 5 {
 		t.Fatalf("ledger should show neither ghost rows nor ghost spending: %+v, %v", ledger, err)
+	}
+}
+
+func TestMatchAccountForExtraction_PrefersSenderDefault(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	sender := seedSenderWithCursor(t, gdb, "sender", "bank@example.com", 0, "auto")
+	defaultID := seedTestAccount(t, gdb, "bca", "BCA Debit", "IDR")
+	modelID := seedTestAccount(t, gdb, "jenius", "Jenius CC", "IDR")
+
+	if got := MatchAccountForExtraction(gdb, &sender.ID, &modelID); got == nil || *got != modelID {
+		t.Fatalf("expected model selection without a default, got %v", got)
+	}
+	if err := gdb.Model(&sender).Update("default_account_id", defaultID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got := MatchAccountForExtraction(gdb, &sender.ID, &modelID); got == nil || *got != defaultID {
+		t.Fatalf("expected sender default despite conflicting model selection, got %v", got)
 	}
 }

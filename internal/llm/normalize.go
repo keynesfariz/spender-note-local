@@ -49,7 +49,6 @@ type RawExtraction struct {
 	TimezoneOffset   *string `json:"timezone_offset"`
 	Merchant         *string `json:"merchant"`
 	Category         *string `json:"category"`
-	CardLast4        *string `json:"card_last4"`
 	PaymentMethod    *string `json:"payment_method"`
 	BankAccountHint  *string `json:"bank_account_hint"`
 	MatchedAccountID *string `json:"matched_account_id"`
@@ -64,7 +63,6 @@ type ExtractResult struct {
 	OccurredAtUtc    string
 	MerchantRaw      string
 	Category         string
-	CardLast4        *string
 	PaymentMethodRaw *string
 	BankAccountHint  *string
 	MatchedAccountID *string
@@ -297,17 +295,6 @@ func ParseRawExtractedDateTimeToUtc(txDate, txTime, tzOffset *string, userTimezo
 	return fallback
 }
 
-func normalizeCardLast4(raw *string) *string {
-	if raw == nil {
-		return nil
-	}
-	digits := nonDigitRe.ReplaceAllString(*raw, "")
-	if len(digits) != 4 {
-		return nil
-	}
-	return &digits
-}
-
 func trimNonEmpty(raw *string) *string {
 	if raw == nil {
 		return nil
@@ -386,7 +373,6 @@ func NormalizeExtractedResult(raw *RawExtraction, rawJSON string, input ExtractI
 			OccurredAtUtc:    occurredAtUtc,
 			MerchantRaw:      merchantRaw,
 			Category:         category,
-			CardLast4:        normalizeCardLast4(raw.CardLast4),
 			PaymentMethodRaw: trimNonEmpty(raw.PaymentMethod),
 			BankAccountHint:  trimNonEmpty(raw.BankAccountHint),
 			MatchedAccountID: trimNonEmpty(raw.MatchedAccountID),
@@ -435,7 +421,6 @@ func NormalizeExtractedResult(raw *RawExtraction, rawJSON string, input ExtractI
 		OccurredAtUtc:    occurredAtUtc,
 		MerchantRaw:      merchantRaw,
 		Category:         category,
-		CardLast4:        normalizeCardLast4(raw.CardLast4),
 		PaymentMethodRaw: trimNonEmpty(raw.PaymentMethod),
 		BankAccountHint:  trimNonEmpty(raw.BankAccountHint),
 		MatchedAccountID: trimNonEmpty(raw.MatchedAccountID),

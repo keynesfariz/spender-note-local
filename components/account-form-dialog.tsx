@@ -34,7 +34,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { createAccountApi, updateAccountApi } from "@/lib/api/accounts"
 import {
   type AccountIdentifierInput,
-  type AccountIdentifierKind,
   type AccountSummary,
   type AccountType,
 } from "@/lib/api/types.generated"
@@ -48,17 +47,10 @@ import {
 
 interface IdentifierDraft {
   key: string
-  kind: AccountIdentifierKind
   value: string
 }
 
 type AccountTab = "details" | "identifiers"
-
-const IDENTIFIER_PLACEHOLDERS: Record<AccountIdentifierKind, string> = {
-  card_last4: "1234",
-  bank_account: "e.g. 1234-5678",
-  alias: "e.g. GoPay Coins",
-}
 
 const ACCOUNT_TYPE_OPTIONS: ReadonlyArray<{
   value: AccountType
@@ -67,15 +59,6 @@ const ACCOUNT_TYPE_OPTIONS: ReadonlyArray<{
   { value: "credit_card", label: "Credit Card" },
   { value: "debit_card", label: "Debit Card" },
   { value: "digital_wallet", label: "Digital Wallet" },
-]
-
-const IDENTIFIER_KIND_OPTIONS: ReadonlyArray<{
-  value: AccountIdentifierKind
-  label: string
-}> = [
-  { value: "card_last4", label: "Card last 4" },
-  { value: "bank_account", label: "Bank account" },
-  { value: "alias", label: "Alias / Wallet" },
 ]
 
 export function AccountFormDialog({
@@ -149,22 +132,12 @@ export function AccountFormDialog({
           ? String(account.statement_day)
           : ""
       )
-      const existing = account.identifiers ?? []
-      if (existing.length > 0) {
-        setIdentifiers(
-          existing.map((id) => ({ key: id.id, kind: id.kind, value: id.value }))
-        )
-      } else if (account.last4) {
-        setIdentifiers([
-          {
-            key: "legacy-last4",
-            kind: "card_last4",
-            value: account.last4,
-          },
-        ])
-      } else {
-        setIdentifiers([])
-      }
+      setIdentifiers(
+        (account.identifiers ?? []).map((id) => ({
+          key: id.id,
+          value: id.value,
+        }))
+      )
     } else {
       setName("")
       setType("credit_card")
@@ -249,12 +222,9 @@ export function AccountFormDialog({
 
   const identifierValueId = (key: string) => `${formId}-identifier-${key}`
 
-  function updateIdentifier(
-    key: string,
-    changes: Partial<Pick<IdentifierDraft, "kind" | "value">>
-  ) {
+  function updateIdentifier(key: string, value: string) {
     setIdentifiers((rows) =>
-      rows.map((row) => (row.key === key ? { ...row, ...changes } : row))
+      rows.map((row) => (row.key === key ? { ...row, value } : row))
     )
   }
 
@@ -273,26 +243,7 @@ export function AccountFormDialog({
     for (const row of identifiers) {
       const trimmed = row.value.trim()
       if (!trimmed) continue
-      if (row.kind === "card_last4" && !/^\d{4}$/.test(trimmed)) {
-        showFieldError(
-          "identifiers",
-          identifierValueId(row.key),
-          "Card last 4 digits must be exactly 4 numeric digits."
-        )
-        return
-      }
-      if (
-        row.kind === "bank_account" &&
-        trimmed.replace(/\D/g, "").length < 4
-      ) {
-        showFieldError(
-          "identifiers",
-          identifierValueId(row.key),
-          "Bank account number must contain at least 4 digits."
-        )
-        return
-      }
-      cleanedIdentifiers.push({ kind: row.kind, value: trimmed })
+      cleanedIdentifiers.push({ value: trimmed })
     }
 
     let initialBalanceMinor: number | null
@@ -475,7 +426,6 @@ export function AccountFormDialog({
               ...prev,
               {
                 key: crypto.randomUUID(),
-                kind: type === "digital_wallet" ? "alias" : "card_last4",
                 value: "",
               },
             ])
@@ -494,39 +444,18 @@ export function AccountFormDialog({
         return (
           <div key={row.key} className="space-y-2">
             <div className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:border-0 sm:p-0">
+              <label className="sr-only" htmlFor={valueId}>
+                Identifier value
+              </label>
               <Input
                 id={valueId}
                 type="text"
-                aria-label="Identifier value"
                 value={row.value}
-                onChange={(e) =>
-                  updateIdentifier(row.key, { value: e.target.value })
-                }
-                placeholder={IDENTIFIER_PLACEHOLDERS[row.kind]}
+                onChange={(e) => updateIdentifier(row.key, e.target.value)}
+                placeholder="e.g. 1234 or GoPay Coins"
                 className="sm:flex-1"
                 {...invalidFieldProps(valueId)}
               />
-              <Select
-                items={IDENTIFIER_KIND_OPTIONS}
-                value={row.kind}
-                onValueChange={(kind) => {
-                  if (kind) updateIdentifier(row.key, { kind })
-                }}
-              >
-                <SelectTrigger
-                  className="w-full sm:w-36"
-                  aria-label="Identifier type"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {IDENTIFIER_KIND_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
               <Button
                 type="button"
                 variant="ghost"

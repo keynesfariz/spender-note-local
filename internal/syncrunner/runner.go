@@ -702,6 +702,7 @@ func runExtractionWorker(
 			UserCurrency:       &userCurrency,
 			Categories:         categoryNames,
 			Accounts:           accountContexts,
+			DefaultAccountID:   domain.SenderDefaultAccountID(gdb, email.SenderID),
 		})
 		if runCtx.Err() != nil {
 			return nil
@@ -737,11 +738,11 @@ func runExtractionWorker(
 
 			shouldAdmit := liveAction != "ignore" && (extracted.EmailKind != "non_transaction" || liveAction == "admit")
 			extraction := db.EmailExtraction{
-				ID:                   uuid.NewString(),
-				EmailID:              email.ID,
-				EmailKind:            "non_transaction",
-				MerchantRaw:          merchantRaw,
-				CardLast4:            extracted.CardLast4,
+				ID:          uuid.NewString(),
+				EmailID:     email.ID,
+				EmailKind:   "non_transaction",
+				MerchantRaw: merchantRaw,
+
 				PaymentMethodRaw:     extracted.PaymentMethodRaw,
 				BankAccountHint:      extracted.BankAccountHint,
 				LlmAccountID:         extracted.MatchedAccountID,
@@ -762,7 +763,7 @@ func runExtractionWorker(
 			}
 			switch {
 			case shouldAdmit:
-				extraction.EmailKind = domain.ResolveEffectiveEmailRole(email.RoleHint, extracted.EmailKind, extracted.CardLast4, extracted.BankAccountHint)
+				extraction.EmailKind = domain.ResolveEffectiveEmailRole(email.RoleHint, extracted.EmailKind, extracted.BankAccountHint)
 			case liveAction == "ignore":
 				ignored := "ignored"
 				extraction.TriageState = &ignored
@@ -784,20 +785,14 @@ func runExtractionWorker(
 				return tx.Exec(`UPDATE sync_runs SET skipped_count = skipped_count + 1 WHERE id = ?`, runID).Error
 			}
 
-			accountID := domain.MatchAccountForExtraction(tx, domain.MatchAccountParams{
-				SenderID:        email.SenderID,
-				CardLast4:       extracted.CardLast4,
-				BankAccountHint: extracted.BankAccountHint,
-				PaymentMethod:   extracted.PaymentMethodRaw,
-				LlmAccountID:    extracted.MatchedAccountID,
-			})
+			accountID := domain.MatchAccountForExtraction(tx, email.SenderID, extracted.MatchedAccountID)
 
 			provisionalCreated := 0
 			if accountID == nil {
 				cur := extracted.Currency
 				prov, provErr := domain.CreateProvisionalAccountForExtractionInTx(tx, domain.ProvisionalAccountParams{
-					FromAddress:      email.FromAddress,
-					CardLast4:        extracted.CardLast4,
+					FromAddress: email.FromAddress,
+
 					BankAccountHint:  extracted.BankAccountHint,
 					PaymentMethod:    extracted.PaymentMethodRaw,
 					AccountTypeGuess: extracted.AccountTypeGuess,
@@ -820,14 +815,14 @@ func runExtractionWorker(
 			}
 
 			if _, err := domain.SaveExtractedTransactionInTx(tx, domain.ExtractedTransactionInput{
-				EmailID:           email.ID,
-				EmailKind:         extraction.EmailKind,
-				AmountMinor:       extracted.AmountMinor,
-				Currency:          extracted.Currency,
-				OccurredAtUtc:     extracted.OccurredAtUtc,
-				MerchantRaw:       txMerchant,
-				Category:          canonicalCategory,
-				CardLast4:         extracted.CardLast4,
+				EmailID:       email.ID,
+				EmailKind:     extraction.EmailKind,
+				AmountMinor:   extracted.AmountMinor,
+				Currency:      extracted.Currency,
+				OccurredAtUtc: extracted.OccurredAtUtc,
+				MerchantRaw:   txMerchant,
+				Category:      canonicalCategory,
+
 				ReferenceCode:     extracted.ReferenceCode,
 				ResolvedAccountID: accountID,
 			}); err != nil {

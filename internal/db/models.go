@@ -40,27 +40,24 @@ type OAuthState struct {
 func (OAuthState) TableName() string { return "oauth_states" }
 
 type Account struct {
-	ID                    string  `gorm:"column:id;primaryKey" json:"id"`
-	Name                  string  `gorm:"column:name;not null" json:"name"`
-	Type                  string  `gorm:"column:type;not null" json:"type"`
-	Currency              string  `gorm:"column:currency;not null" json:"currency"`
-	InitialBalanceMinor   *int64  `gorm:"column:initial_balance_minor" json:"initial_balance_minor"`
-	InitialBalanceAsOfUtc string  `gorm:"column:initial_balance_as_of_utc;not null" json:"initial_balance_as_of_utc"`
-	Last4                 *string `gorm:"column:last4" json:"last4"`
-	StatementDay          *int    `gorm:"column:statement_day" json:"statement_day"`
-	Status                string  `gorm:"column:status;not null;default:confirmed" json:"status"`
-	CreatedAtUtc          string  `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
+	ID                    string `gorm:"column:id;primaryKey" json:"id"`
+	Name                  string `gorm:"column:name;not null" json:"name"`
+	Type                  string `gorm:"column:type;not null" json:"type"`
+	Currency              string `gorm:"column:currency;not null" json:"currency"`
+	InitialBalanceMinor   *int64 `gorm:"column:initial_balance_minor" json:"initial_balance_minor"`
+	InitialBalanceAsOfUtc string `gorm:"column:initial_balance_as_of_utc;not null" json:"initial_balance_as_of_utc"`
+	StatementDay          *int   `gorm:"column:statement_day" json:"statement_day"`
+	Status                string `gorm:"column:status;not null;default:confirmed" json:"status"`
+	CreatedAtUtc          string `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
 }
 
 func (Account) TableName() string { return "accounts" }
 
 type AccountIdentifier struct {
-	ID              string `gorm:"column:id;primaryKey" json:"id"`
-	AccountID       string `gorm:"column:account_id;not null" json:"account_id"`
-	Kind            string `gorm:"column:kind;not null" json:"kind"`
-	Value           string `gorm:"column:value;not null" json:"value"`
-	NormalizedValue string `gorm:"column:normalized_value;not null" json:"normalized_value"`
-	CreatedAtUtc    string `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
+	ID           string `gorm:"column:id;primaryKey" json:"id"`
+	AccountID    string `gorm:"column:account_id;not null" json:"account_id"`
+	Value        string `gorm:"column:value;not null" json:"value"`
+	CreatedAtUtc string `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
 }
 
 func (AccountIdentifier) TableName() string { return "account_identifiers" }
@@ -136,7 +133,6 @@ type EmailExtraction struct {
 	OccurredAtUtc        *string `gorm:"column:occurred_at_utc" json:"occurred_at_utc"`
 	MerchantRaw          *string `gorm:"column:merchant_raw" json:"merchant_raw"`
 	Category             *string `gorm:"column:category" json:"category"`
-	CardLast4            *string `gorm:"column:card_last4" json:"card_last4"`
 	PaymentMethodRaw     *string `gorm:"column:payment_method_raw" json:"payment_method_raw"`
 	BankAccountHint      *string `gorm:"column:bank_account_hint" json:"bank_account_hint"`
 	LlmAccountID         *string `gorm:"column:llm_account_id" json:"llm_account_id"`

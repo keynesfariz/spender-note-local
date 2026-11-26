@@ -353,7 +353,6 @@ type ListTransactionsParams struct {
 	Kind           string
 	Search         string
 	UnreviewedOnly bool
-	ShowSkipped    *bool
 	Page           int
 	PageSize       int
 }
@@ -375,10 +374,7 @@ type PaginatedTransactionsResponse struct {
 	PageSize               int                   `json:"pageSize"`
 	TotalInRangeCount      int64                 `json:"totalInRangeCount"`
 	UnreviewedInRangeCount int64                 `json:"unreviewedInRangeCount"`
-	GhostRows              []GhostRowItem        `json:"ghostRows"`
-	GhostInRangeCount      int64                 `json:"ghostInRangeCount"`
 	TotalGhostCount        int64                 `json:"totalGhostCount"`
-	GhostRowsTruncated     bool                  `json:"ghostRowsTruncated"`
 }
 
 func ListTransactions(gdb *gorm.DB, params ListTransactionsParams) (*PaginatedTransactionsResponse, error) {
@@ -408,11 +404,10 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 	}
 	if tzPtr == nil || *tzPtr == "" || curPtr == nil || *curPtr == "" {
 		return &PaginatedTransactionsResponse{
-			Ledger:    ledger,
-			Items:     []TransactionListItem{},
-			GhostRows: []GhostRowItem{},
-			Page:      page,
-			PageSize:  pageSize,
+			Ledger:   ledger,
+			Items:    []TransactionListItem{},
+			Page:     page,
+			PageSize: pageSize,
 		}, nil
 	}
 	tz := *tzPtr
@@ -441,14 +436,12 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 
 	var rangeConds []string
 	var rangeArgs []any
-	var rangeStartUtc, rangeEndUtc string
 
 	if strings.TrimSpace(params.StartDate) != "" || strings.TrimSpace(params.EndDate) != "" {
 		startUtc, endUtc, err := GetDateRangeUtcBounds(params.StartDate, params.EndDate, tz)
 		if err != nil {
 			return nil, err
 		}
-		rangeStartUtc, rangeEndUtc = startUtc, endUtc
 		rangeConds = append(rangeConds, "t.occurred_at_utc >= ? AND t.occurred_at_utc < ?")
 		rangeArgs = append(rangeArgs, startUtc, endUtc)
 	} else if strings.TrimSpace(params.Month) != "" {
@@ -456,7 +449,6 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 		if err != nil {
 			return nil, err
 		}
-		rangeStartUtc, rangeEndUtc = startUtc, endUtc
 		rangeConds = append(rangeConds, "t.occurred_at_utc >= ? AND t.occurred_at_utc < ?")
 		rangeArgs = append(rangeArgs, startUtc, endUtc)
 	}
@@ -473,8 +465,6 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 			conds = append(conds, "t.kind = ?")
 			args = append(args, params.Kind)
 			if params.Kind != "expense" {
-				showSkipped := false
-				params.ShowSkipped = &showSkipped
 			}
 		default:
 			return nil, errors.New("Invalid transaction kind.")
@@ -619,28 +609,8 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 		}
 		out = append(out, r.listItem(pmByTx[r.ID], tags, roles, r.Currency != currency))
 	}
-	prevPageOldestUtc := ""
-	if (params.ShowSkipped == nil || *params.ShowSkipped) && page > 1 && totalCount > 0 && len(rows) > 0 {
-		prevArgs := append(append([]any{}, args...), offset-1)
-		_ = gdb.Raw(`
-			SELECT t.occurred_at_utc
-			FROM transactions t
-			`+whereClause+`
-			ORDER BY t.occurred_at_utc DESC, t.created_at_utc DESC, t.id DESC
-			LIMIT 1 OFFSET ?`,
-			prevArgs...,
-		).Scan(&prevPageOldestUtc).Error
-	}
-	currPageOldestUtc := ""
-	if len(rows) > 0 {
-		currPageOldestUtc = rows[len(rows)-1].OccurredAtUtc
-	}
-
-	ghostRes, err := queryGhostRowsForTransactions(
-		gdb, params, currency, rangeStartUtc, rangeEndUtc,
-		totalCount, offset, len(rows), prevPageOldestUtc, currPageOldestUtc,
-	)
-	if err != nil {
+	var skippedCount int64
+	if err := gdb.Raw(`SELECT COUNT(*) ` + eligibleGhostBase).Scan(&skippedCount).Error; err != nil {
 		return nil, err
 	}
 
@@ -652,10 +622,7 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 		PageSize:               pageSize,
 		TotalInRangeCount:      rangeStats.TotalInRange,
 		UnreviewedInRangeCount: rangeStats.UnreviewedInRange,
-		GhostRows:              ghostRes.Items,
-		GhostInRangeCount:      ghostRes.GhostInRangeCount,
-		TotalGhostCount:        ghostRes.TotalGhostCount,
-		GhostRowsTruncated:     ghostRes.GhostRowsTruncated,
+		TotalGhostCount:        skippedCount,
 	}, nil
 }
 

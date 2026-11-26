@@ -291,7 +291,8 @@ export function AccountsView() {
     >
       {!settings.isPending && !hasCurrency && (
         <LocaleSetupAlert showTitle={false}>
-          Configure your country and currency in Settings before adding accounts.
+          Configure your country and currency in Settings before adding
+          accounts.
         </LocaleSetupAlert>
       )}
 
@@ -363,23 +364,15 @@ export function AccountsView() {
                     {account.status === "provisional" && (
                       <Badge variant="outline">Provisional</Badge>
                     )}
-                    {(account.identifiers ?? []).length > 0
-                      ? account.identifiers.map((ident) => (
-                          <Badge
-                            key={ident.id}
-                            variant="outline"
-                            className="font-mono"
-                          >
-                            {ident.kind === "card_last4"
-                              ? `•••• ${ident.value}`
-                              : ident.value}
-                          </Badge>
-                        ))
-                      : account.last4 && (
-                          <Badge variant="outline" className="font-mono">
-                            •••• {account.last4}
-                          </Badge>
-                        )}
+                    {(account.identifiers ?? []).map((ident) => (
+                      <Badge
+                        key={ident.id}
+                        variant="outline"
+                        className="font-mono"
+                      >
+                        {ident.value}
+                      </Badge>
+                    ))}
                     {account.uncounted_foreign_count > 0 && (
                       <Badge variant="outline">
                         {account.uncounted_foreign_count} foreign{" "}

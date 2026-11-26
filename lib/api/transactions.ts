@@ -36,7 +36,6 @@ export const TRANSACTIONS_PAGE_SIZE = 25
 
 export const DEFAULT_LEDGER_PARAMS = {
   ledgerRange: "dates",
-  showSkipped: false,
   page: 1,
   pageSize: TRANSACTIONS_PAGE_SIZE,
 } as const
@@ -52,7 +51,6 @@ export const transactionsQuery = (params?: {
   kind?: "expense" | "income" | "transfer"
   search?: string
   unreviewedOnly?: boolean
-  showSkipped?: boolean
   page?: number
   pageSize?: number
 }) =>
@@ -70,7 +68,6 @@ export const transactionsQuery = (params?: {
       if (params?.kind) sp.set("kind", params.kind)
       if (params?.search) sp.set("search", params.search)
       if (params?.unreviewedOnly) sp.set("unreviewedOnly", "true")
-      if (params?.showSkipped === false) sp.set("showSkipped", "false")
       if (params?.page) sp.set("page", String(params.page))
       if (params?.pageSize) sp.set("pageSize", String(params.pageSize))
       const qs = sp.toString()

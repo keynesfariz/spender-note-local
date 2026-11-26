@@ -215,9 +215,9 @@ func TestTriageIntegration_PromoteRippleAndUndo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTransactions: %v", err)
 	}
-	if listBefore.TotalCount != 0 || len(listBefore.GhostRows) != 5 || listBefore.GhostInRangeCount != 5 || listBefore.TotalGhostCount != 5 {
-		t.Fatalf("expected 0 txs and 5 ghost rows, got total=%d ghosts=%d inRange=%d totalGhost=%d",
-			listBefore.TotalCount, len(listBefore.GhostRows), listBefore.GhostInRangeCount, listBefore.TotalGhostCount)
+	skippedBefore, err := domain.ListSkippedTransactions(gdb, 1, 25)
+	if err != nil || listBefore.TotalCount != 0 || listBefore.TotalGhostCount != 5 || len(skippedBefore.Items) != 5 {
+		t.Fatalf("expected zero transactions and five skipped emails: %+v, %+v, %v", listBefore, skippedBefore, err)
 	}
 	summaryBefore, err := domain.GetMonthlySpendingSummary(gdb, "2026-11")
 	if err != nil || summaryBefore.TotalSpentMinor != 0 {
@@ -228,7 +228,6 @@ func TestTriageIntegration_PromoteRippleAndUndo(t *testing.T) {
 		t.Fatalf("expected BCA balance untouched at 5000000, got %+v err=%v", accountsBefore, err)
 	}
 
-	// Promote one BCA QRIS Ghost Row with zero LLM server needed.
 	verdict, err := domain.ApplyTriageVerdict(gdb, domain.ApplyTriageVerdictInput{
 		EmailID:   "5ac46a86-0d1e-4f29-99ef-cc8f9882cace",
 		Action:    "promote",
@@ -254,12 +253,16 @@ func TestTriageIntegration_PromoteRippleAndUndo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listAfterPromote.TotalCount != 2 || len(listAfterPromote.GhostRows) != 3 {
+	remaining, err := domain.ListSkippedTransactions(gdb, 1, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listAfterPromote.TotalCount != 2 || len(remaining.Items) != 3 {
 		t.Fatalf("expected 2 imported transactions and 3 remaining ghost rows (including BCA transfer), got txs=%d ghosts=%d",
-			listAfterPromote.TotalCount, len(listAfterPromote.GhostRows))
+			listAfterPromote.TotalCount, len(remaining.Items))
 	}
 	hasTransferGhost := false
-	for _, g := range listAfterPromote.GhostRows {
+	for _, g := range remaining.Items {
 		if g.EmailID == "01b8eb35-fb08-421f-b683-f735db694b6c" {
 			hasTransferGhost = true
 		}
@@ -273,7 +276,6 @@ func TestTriageIntegration_PromoteRippleAndUndo(t *testing.T) {
 		}
 	}
 
-	// Undo restores both QRIS emails to ghost state and removes the learned policy.
 	undoRes, err := domain.UndoTriageVerdict(gdb, domain.TriageUndoInput{UndoPayload: verdict.UndoPayload})
 	if err != nil {
 		t.Fatalf("UndoTriageVerdict: %v", err)
@@ -286,8 +288,8 @@ func TestTriageIntegration_PromoteRippleAndUndo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listAfterUndo.TotalCount != 0 || len(listAfterUndo.GhostRows) != 5 {
-		t.Fatalf("expected 0 transactions and 5 ghost rows after undo, got txs=%d ghosts=%d", listAfterUndo.TotalCount, len(listAfterUndo.GhostRows))
+	if listAfterUndo.TotalCount != 0 || listAfterUndo.TotalGhostCount != 5 {
+		t.Fatalf("expected 0 transactions and 5 ghost rows after undo, got txs=%d ghosts=%d", listAfterUndo.TotalCount, listAfterUndo.TotalGhostCount)
 	}
 	var polCount int64
 	gdb.Model(&db.SenderTriagePolicy{}).Count(&polCount)
@@ -317,14 +319,14 @@ func TestTriageIntegration_LearnedAdmitForUnknownBankFormat(t *testing.T) {
 		if strings.Contains(userPrompt, "Jordan") {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{
-					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"15.50","currency":"USD","transaction_date":"2026-11-24","transaction_time":"14:00:00","timezone_offset":"+00:00","merchant":"Jordan","category":"Other","card_last4":null,"payment_method":"Zelle","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"debit_card","reference_code":null}`}},
+					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"15.50","currency":"USD","transaction_date":"2026-11-24","transaction_time":"14:00:00","timezone_offset":"+00:00","merchant":"Jordan","category":"Other","payment_method":"Zelle","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"debit_card","reference_code":null}`}},
 				},
 			})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"card_last4":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
+				{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":null,"currency":null,"transaction_date":null,"transaction_time":null,"timezone_offset":null,"merchant":null,"category":null,"payment_method":null,"bank_account_hint":null,"matched_account_id":null,"account_type_guess":null,"reference_code":null}`}},
 			},
 		})
 	}))
@@ -333,7 +335,6 @@ func TestTriageIntegration_LearnedAdmitForUnknownBankFormat(t *testing.T) {
 	configureIntegrationSettings(t, gdb, "America/New_York", "USD", srv.URL+"/v1")
 	sender := seedSender(t, gdb, "s-intl", "alerts@intlbank.example", nil)
 
-	// Seed initial Ghost Row ("You sent $42.00 via Zelle to Alex") and promote it.
 	if err := gdb.Create(&db.RawEmail{
 		ID: "zelle-alex", GmailMessageID: "gm-zelle-alex", SenderID: &sender.ID,
 		FromAddress: "Alerts <alerts@intlbank.example>", Subject: "You sent $42.00 via Zelle to Alex",
@@ -359,7 +360,6 @@ func TestTriageIntegration_LearnedAdmitForUnknownBankFormat(t *testing.T) {
 		t.Fatalf("promote Zelle Ghost Row: %v", err)
 	}
 
-	// Subsequent sync receives a new Zelle alert and an unrelated security alert.
 	for _, em := range []db.RawEmail{
 		{
 			ID: "zelle-jordan", GmailMessageID: "gm-zelle-jordan", SenderID: &sender.ID,
@@ -386,8 +386,8 @@ func TestTriageIntegration_LearnedAdmitForUnknownBankFormat(t *testing.T) {
 	if res.TotalCount != 2 {
 		t.Fatalf("expected both Zelle alerts (Alex + Jordan) imported, got %d (%+v)", res.TotalCount, res.Items)
 	}
-	if len(res.GhostRows) != 0 {
-		t.Fatalf("expected security alert not to surface as ghost row, got %+v", res.GhostRows)
+	if res.TotalGhostCount != 0 {
+		t.Fatalf("expected security alert not to surface as ghost row, got %d", res.TotalGhostCount)
 	}
 	var secExt db.EmailExtraction
 	if err := gdb.First(&secExt, "email_id = ?", "intl-sec").Error; err != nil || secExt.TriageState != nil {
@@ -423,19 +423,19 @@ func TestTriageIntegration_IgnorePreLlmSkipSettingsDeleteAndRecover(t *testing.T
 		case strings.Contains(userPrompt, "voucher"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{
-					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"25000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"13:00:00","timezone_offset":"+07:00","merchant":"Grab Compensation","category":"Other","card_last4":null,"payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"digital_wallet","reference_code":null}`}},
+					{"message": map[string]any{"content": `{"email_kind":"non_transaction","amount_decimal":"25000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"13:00:00","timezone_offset":"+07:00","merchant":"Grab Compensation","category":"Other","payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"digital_wallet","reference_code":null}`}},
 				},
 			})
 		case strings.Contains(userPrompt, "Grab Tips"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{
-					{"message": map[string]any{"content": `{"email_kind":"receipt","amount_decimal":"5000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"13:05:00","timezone_offset":"+07:00","merchant":"Grab Driver Tip","category":"Transport","card_last4":null,"payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"digital_wallet","reference_code":null}`}},
+					{"message": map[string]any{"content": `{"email_kind":"receipt","amount_decimal":"5000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"13:05:00","timezone_offset":"+07:00","merchant":"Grab Driver Tip","category":"Transport","payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"digital_wallet","reference_code":null}`}},
 				},
 			})
 		default:
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{
-					{"message": map[string]any{"content": `{"email_kind":"receipt","amount_decimal":"65000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"13:02:00","timezone_offset":"+07:00","merchant":"GrabFood Kitchen","category":"Dining Out","card_last4":null,"payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"digital_wallet","reference_code":null}`}},
+					{"message": map[string]any{"content": `{"email_kind":"receipt","amount_decimal":"65000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"13:02:00","timezone_offset":"+07:00","merchant":"GrabFood Kitchen","category":"Dining Out","payment_method":"GrabPay","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"digital_wallet","reference_code":null}`}},
 				},
 			})
 		}
@@ -446,7 +446,6 @@ func TestTriageIntegration_IgnorePreLlmSkipSettingsDeleteAndRecover(t *testing.T
 	grabCursor := int64(1795400000000)
 	sender := seedSender(t, gdb, "s-grab", "no-reply@grab.com", &grabCursor)
 
-	// Seed initial post-LLM Ghost Row compensation voucher and ignore it.
 	voucherSubj1 := "Ride Cover Plus: Sorry for the long wait. Here's your Rp11.000 voucher."
 	voucherBody1 := "Ride Cover\nHi Nagib Fariz,\nEnjoy this compensation voucher."
 	sigVoucher := domain.DeriveEmailTemplateSignature("no-reply@grab.com", voucherSubj1, voucherBody1)
@@ -475,7 +474,6 @@ func TestTriageIntegration_IgnorePreLlmSkipSettingsDeleteAndRecover(t *testing.T
 		t.Fatalf("ignore initial voucher: %v", err)
 	}
 
-	// Next sync receives: another Ride Cover voucher, a GrabFood receipt, and a Grab Tips receipt.
 	for _, em := range []db.RawEmail{
 		{
 			ID: "grab-voucher-2", GmailMessageID: "gm-gv-2", SenderID: &sender.ID,
@@ -525,7 +523,6 @@ func TestTriageIntegration_IgnorePreLlmSkipSettingsDeleteAndRecover(t *testing.T
 		t.Fatalf("expected pre-LLM policy:ignore extraction state, got %+v", extPreSkip)
 	}
 
-	// Deleting ignore rule in Settings returns post-LLM voucher to Ghost Rows while keeping pre-LLM voucher in ListIgnoredEmails.
 	delRes, err := domain.DeleteTriagePolicy(gdb, ignoreVerdict.Policy.ID)
 	if err != nil {
 		t.Fatalf("DeleteTriagePolicy: %v", err)
@@ -542,7 +539,6 @@ func TestTriageIntegration_IgnorePreLlmSkipSettingsDeleteAndRecover(t *testing.T
 		t.Fatalf("expected only pre-LLM grab-voucher-2 in ListIgnoredEmails, got %+v", ignoredList)
 	}
 
-	// Recover pre-LLM skipped voucher via on-demand PromoteIgnoredEmail (mock LLM emits non_transaction + amount > 0).
 	promoted, err := domain.PromoteIgnoredEmail(gdb, context.Background(), "grab-voucher-2")
 	if err != nil {
 		t.Fatalf("PromoteIgnoredEmail: %v", err)
@@ -557,7 +553,6 @@ func TestTriageIntegration_IgnorePreLlmSkipSettingsDeleteAndRecover(t *testing.T
 		t.Fatalf("Grab sync cursor must stay invariant at %d, got %v", grabCursor, grabAfter.LastInternalDateMs)
 	}
 
-	// Future matching voucher now reaches the LLM again because the ignore policy was deleted.
 	if err := gdb.Create(&db.RawEmail{
 		ID: "grab-voucher-3", GmailMessageID: "gm-gv-3", SenderID: &sender.ID,
 		FromAddress:    "no-reply@grab.com",
@@ -585,7 +580,7 @@ func TestTriageIntegration_DeleteTransactionDoesNotCreateIgnorePolicy(t *testing
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"email_kind":"card_charge","amount_decimal":"85000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"16:00:00","timezone_offset":"+07:00","merchant":"Tiket Store","category":"Shopping","card_last4":"6039","payment_method":"Jenius Credit Card","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"credit_card","reference_code":null}`}},
+				{"message": map[string]any{"content": `{"email_kind":"card_charge","amount_decimal":"85000","currency":"IDR","transaction_date":"2026-11-24","transaction_time":"16:00:00","timezone_offset":"+07:00","merchant":"Tiket Store","category":"Shopping","payment_method":"Jenius Credit Card","bank_account_hint":null,"matched_account_id":null,"account_type_guess":"credit_card","reference_code":null}`}},
 			},
 		})
 	}))
@@ -629,7 +624,6 @@ func TestTriageIntegration_DeleteTransactionDoesNotCreateIgnorePolicy(t *testing
 		t.Fatalf("expected deleted transaction absent from ignored emails, got %+v err=%v", ignored, err)
 	}
 
-	// Second Jenius charge imports normally.
 	if err := gdb.Create(&db.RawEmail{
 		ID: "jenius-charge-2", GmailMessageID: "gm-jc-2", SenderID: &sender.ID,
 		FromAddress: "jenius_noreply@smbci.com", Subject: "Credit Card Transaction Notification",
@@ -641,9 +635,12 @@ func TestTriageIntegration_DeleteTransactionDoesNotCreateIgnorePolicy(t *testing
 	runIntegrationExtractionWorker(t, gdb, "Asia/Jakarta", "IDR", srv.URL+"/v1")
 
 	list2, err := domain.ListTransactions(gdb, domain.ListTransactionsParams{Month: "2026-11", Page: 1, PageSize: 25})
-	if err != nil || list2.TotalCount != 1 || len(list2.GhostRows) != 0 {
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list2.TotalCount != 1 || list2.TotalGhostCount != 0 {
 		t.Fatalf("expected subsequent Jenius charge imported cleanly and dismissed charge hidden, got txs=%d ghosts=%d err=%v",
-			list2.TotalCount, len(list2.GhostRows), err)
+			list2.TotalCount, list2.TotalGhostCount, err)
 	}
 }
 
@@ -664,7 +661,6 @@ func TestTriageIntegration_HistoricalGhostPromotionPreservesReconciledBalance(t 
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	// Reconcile balance at 900,000 IDR on 2026-11-24T00:00:00Z.
 	if err := gdb.Create(&db.AccountReconciliation{
 		ID:                   "rec-anchor",
 		AccountID:            acctID,
@@ -676,7 +672,6 @@ func TestTriageIntegration_HistoricalGhostPromotionPreservesReconciledBalance(t 
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	// Post-reconciliation spend of 10,000 IDR brings current computed balance to 890,000 IDR.
 	if err := gdb.Create(&db.Transaction{
 		ID:            "tx-post-rec",
 		SourceType:    "manual",

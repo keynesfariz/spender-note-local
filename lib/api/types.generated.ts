@@ -2,20 +2,16 @@
 // Run `bun run generate:types` to regenerate.
 
 export type AccountType = "credit_card" | "debit_card" | "digital_wallet"
-export type AccountIdentifierKind = "card_last4" | "bank_account" | "alias"
 export type AccountStatus = "provisional" | "confirmed"
 
 export interface AccountIdentifierInput {
-  kind: AccountIdentifierKind
   value: string
 }
 
 export interface AccountIdentifierRow {
   id: string
   account_id: string
-  kind: AccountIdentifierKind
   value: string
-  normalized_value: string
   created_at_utc: string
 }
 
@@ -51,7 +47,6 @@ export interface AccountSummary {
   currency: string
   initial_balance_minor: number | null
   initial_balance_as_of_utc: string
-  last4: string | null
   statement_day: number | null
   status: AccountStatus
   created_at_utc: string
@@ -278,10 +273,7 @@ export interface PaginatedTransactionsResponse {
   pageSize: number
   totalInRangeCount: number
   unreviewedInRangeCount: number
-  ghostRows: GhostRowItem[]
-  ghostInRangeCount: number
   totalGhostCount: number
-  ghostRowsTruncated: boolean
 }
 
 export interface ApplyTriageVerdictInput {

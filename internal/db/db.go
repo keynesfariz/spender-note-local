@@ -20,7 +20,7 @@ import (
 )
 
 const DefaultLlmBaseURL = "http://localhost:9931/v1"
-const baselineVersion = 7
+const baselineVersion = 1
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS

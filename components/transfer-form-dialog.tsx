@@ -207,7 +207,6 @@ function TransferMatchPicker({
     ...transactionsQuery({
       kind: "transfer",
       ledgerRange: "all",
-      showSkipped: false,
       page: matchPage,
     }),
     enabled: active,

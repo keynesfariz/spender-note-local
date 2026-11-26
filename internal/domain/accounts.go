@@ -14,15 +14,11 @@ import (
 )
 
 var (
-	fourDigitsRe  = regexp.MustCompile(`^\d{4}$`)
-	nonDigitsRe   = regexp.MustCompile(`\D`)
-	multiSpaceRe  = regexp.MustCompile(`\s+`)
 	displayNameRe = regexp.MustCompile(`^"?([^"<]+?)"?\s*<[^>]+>$`)
 	angleEmailRe  = regexp.MustCompile(`<([^>]+)>`)
 )
 
 type AccountIdentifierInput struct {
-	Kind  string `json:"kind"`
 	Value string `json:"value"`
 }
 
@@ -68,10 +64,6 @@ func isValidAccountType(t string) bool {
 	return t == "credit_card" || t == "debit_card" || t == "digital_wallet"
 }
 
-func isValidIdentifierKind(k string) bool {
-	return k == "card_last4" || k == "bank_account" || k == "alias"
-}
-
 func AssertAccountExists(gdb *gorm.DB, accountID string, message string) error {
 	if message == "" {
 		message = "Selected account does not exist."
@@ -84,49 +76,6 @@ func AssertAccountExists(gdb *gorm.DB, accountID string, message string) error {
 		return errors.New(message)
 	}
 	return nil
-}
-
-func normalizeAliasText(raw string) string {
-	return multiSpaceRe.ReplaceAllString(strings.ToLower(strings.TrimSpace(raw)), " ")
-}
-
-func normalizeIdentifierValue(kind, rawValue string) (string, string, error) {
-	value := strings.TrimSpace(rawValue)
-	if value == "" {
-		return "", "", errors.New("Identifier value is required.")
-	}
-	switch kind {
-	case "card_last4":
-		if !fourDigitsRe.MatchString(value) {
-			return "", "", errors.New("Card last 4 digits must be exactly 4 numeric digits.")
-		}
-		return value, value, nil
-	case "bank_account":
-		digits := nonDigitsRe.ReplaceAllString(value, "")
-		if len(digits) < 4 {
-			return "", "", errors.New("Bank account number must contain at least 4 digits.")
-		}
-		return value, digits, nil
-	case "alias":
-		return value, normalizeAliasText(value), nil
-	default:
-		return "", "", fmt.Errorf("Invalid identifier kind: %s", kind)
-	}
-}
-
-func validateLast4(last4 *string) (*string, error) {
-	if last4 == nil {
-		return nil, nil
-	}
-	trimmed := strings.TrimSpace(*last4)
-	if trimmed == "" {
-		return nil, nil
-	}
-	_, norm, err := normalizeIdentifierValue("card_last4", trimmed)
-	if err != nil {
-		return nil, err
-	}
-	return &norm, nil
 }
 
 func validateStatementDay(accountType string, statementDay *int) (*int, error) {
@@ -151,51 +100,27 @@ func listIdentifiersForAccount(gdb *gorm.DB, accountID string) ([]db.AccountIden
 	return rows, nil
 }
 
-func replaceAccountIdentifiers(tx *gorm.DB, accountID string, identifiers []AccountIdentifierInput, createdAtUtc string) (*string, error) {
-	seen := map[string]struct{}{}
-	type normRow struct {
-		kind, value, normalized string
+func replaceAccountIdentifiers(tx *gorm.DB, accountID string, identifiers []AccountIdentifierInput, createdAtUtc string) error {
+	if err := tx.Where("account_id = ?", accountID).Delete(&db.AccountIdentifier{}).Error; err != nil {
+		return err
 	}
-	var normalizedRows []normRow
+	seen := map[string]struct{}{}
 	for _, item := range identifiers {
-		if !isValidIdentifierKind(item.Kind) {
-			return nil, fmt.Errorf("Invalid identifier kind: %s", item.Kind)
+		value := strings.TrimSpace(item.Value)
+		if value == "" {
+			return errors.New("Identifier value is required.")
 		}
-		val, norm, err := normalizeIdentifierValue(item.Kind, item.Value)
-		if err != nil {
-			return nil, err
-		}
-		key := item.Kind + ":" + norm
-		if _, ok := seen[key]; ok {
+		if _, ok := seen[value]; ok {
 			continue
 		}
-		seen[key] = struct{}{}
-		normalizedRows = append(normalizedRows, normRow{item.Kind, val, norm})
-	}
-
-	if err := tx.Where("account_id = ?", accountID).Delete(&db.AccountIdentifier{}).Error; err != nil {
-		return nil, err
-	}
-
-	var firstLast4 *string
-	for _, row := range normalizedRows {
-		ident := db.AccountIdentifier{
-			ID:              uuid.NewString(),
-			AccountID:       accountID,
-			Kind:            row.kind,
-			Value:           row.value,
-			NormalizedValue: row.normalized,
-			CreatedAtUtc:    createdAtUtc,
-		}
-		if err := tx.Create(&ident).Error; err != nil {
-			return nil, err
-		}
-		if row.kind == "card_last4" && firstLast4 == nil {
-			v := row.normalized
-			firstLast4 = &v
+		seen[value] = struct{}{}
+		if err := tx.Create(&db.AccountIdentifier{
+			ID: uuid.NewString(), AccountID: accountID, Value: value, CreatedAtUtc: createdAtUtc,
+		}).Error; err != nil {
+			return err
 		}
 	}
-	return firstLast4, nil
+	return nil
 }
 
 func getConfiguredAppCurrency(gdb *gorm.DB) (string, error) {
@@ -277,7 +202,6 @@ type CreateAccountInput struct {
 	Type                  string                   `json:"type"`
 	InitialBalanceMinor   int64                    `json:"initial_balance_minor"`
 	InitialBalanceAsOfUtc *string                  `json:"initial_balance_as_of_utc"`
-	Last4                 *string                  `json:"last4"`
 	StatementDay          *int                     `json:"statement_day"`
 	Identifiers           []AccountIdentifierInput `json:"identifiers"`
 	HasIdentifiers        bool                     `json:"-"`
@@ -304,10 +228,6 @@ func CreateAccount(gdb *gorm.DB, input CreateAccountInput) (*AccountSummary, err
 		return nil, errors.New("Initial balance timestamp must be a valid UTC ISO-8601 string.")
 	}
 
-	fallbackLast4, err := validateLast4(input.Last4)
-	if err != nil {
-		return nil, err
-	}
 	statementDay, err := validateStatementDay(input.Type, input.StatementDay)
 	if err != nil {
 		return nil, err
@@ -326,7 +246,6 @@ func CreateAccount(gdb *gorm.DB, input CreateAccountInput) (*AccountSummary, err
 			Currency:              currency,
 			InitialBalanceMinor:   &initBal,
 			InitialBalanceAsOfUtc: asOfUtc,
-			Last4:                 fallbackLast4,
 			StatementDay:          statementDay,
 			Status:                "confirmed",
 			CreatedAtUtc:          createdAt,
@@ -336,16 +255,7 @@ func CreateAccount(gdb *gorm.DB, input CreateAccountInput) (*AccountSummary, err
 		}
 
 		if input.HasIdentifiers {
-			syncedLast4, err := replaceAccountIdentifiers(tx, id, input.Identifiers, createdAt)
-			if err != nil {
-				return err
-			}
-			if err := tx.Model(&db.Account{}).Where("id = ?", id).Update("last4", syncedLast4).Error; err != nil {
-				return err
-			}
-			acct.Last4 = syncedLast4
-		} else if fallbackLast4 != nil {
-			if _, err := replaceAccountIdentifiers(tx, id, []AccountIdentifierInput{{Kind: "card_last4", Value: *fallbackLast4}}, createdAt); err != nil {
+			if err := replaceAccountIdentifiers(tx, id, input.Identifiers, createdAt); err != nil {
 				return err
 			}
 		}
@@ -370,8 +280,6 @@ type UpdateAccountInput struct {
 	HasInitialBalance     bool                     `json:"-"`
 	InitialBalanceMinor   *int64                   `json:"initial_balance_minor"`
 	InitialBalanceAsOfUtc *string                  `json:"initial_balance_as_of_utc"`
-	HasLast4              bool                     `json:"-"`
-	Last4                 *string                  `json:"last4"`
 	HasStatementDay       bool                     `json:"-"`
 	StatementDay          *int                     `json:"statement_day"`
 	HasIdentifiers        bool                     `json:"-"`
@@ -427,35 +335,8 @@ func UpdateAccount(gdb *gorm.DB, id string, patch UpdateAccountInput) (*AccountS
 			return errors.New("Initial balance timestamp must be a valid UTC ISO-8601 string.")
 		}
 
-		last4 := current.Last4
-		if patch.HasLast4 {
-			last4, err = validateLast4(patch.Last4)
-			if err != nil {
-				return err
-			}
-		}
-
 		if patch.HasIdentifiers {
-			last4, err = replaceAccountIdentifiers(tx, id, patch.Identifiers, NowUtcIsoSeconds())
-			if err != nil {
-				return err
-			}
-		} else if patch.HasLast4 {
-			existing, err := listIdentifiersForAccount(tx, id)
-			if err != nil {
-				return err
-			}
-			var nextList []AccountIdentifierInput
-			if last4 != nil {
-				nextList = append(nextList, AccountIdentifierInput{Kind: "card_last4", Value: *last4})
-			}
-			for _, r := range existing {
-				if r.Kind != "card_last4" {
-					nextList = append(nextList, AccountIdentifierInput{Kind: r.Kind, Value: r.Value})
-				}
-			}
-			last4, err = replaceAccountIdentifiers(tx, id, nextList, NowUtcIsoSeconds())
-			if err != nil {
+			if err := replaceAccountIdentifiers(tx, id, patch.Identifiers, NowUtcIsoSeconds()); err != nil {
 				return err
 			}
 		}
@@ -476,7 +357,6 @@ func UpdateAccount(gdb *gorm.DB, id string, patch UpdateAccountInput) (*AccountS
 			"type":                      nextType,
 			"initial_balance_minor":     initBal,
 			"initial_balance_as_of_utc": asOfUtc,
-			"last4":                     last4,
 			"statement_day":             statementDay,
 			"status":                    "confirmed",
 		}).Error; err != nil {

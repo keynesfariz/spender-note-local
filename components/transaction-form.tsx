@@ -1,4 +1,5 @@
-import { useId, useMemo, type ComponentProps } from "react"
+import { CheckLine, MailIcon } from "lucide-react"
+import { useId, useMemo, type ComponentProps, type ReactNode } from "react"
 
 import { DatePicker } from "@/components/date-picker"
 import { DynamicIcon } from "@/components/dynamic-icon"
@@ -12,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import type { AccountOption, CategorySummary } from "@/lib/api/types.generated"
 import {
@@ -24,7 +26,7 @@ export const UNASSIGNED_ACCOUNT = "__unassigned__"
 
 type TransactionFormFieldsProps = {
   description: {
-    kind: "merchant" | "remark"
+    required?: boolean
     value: string
     onChange: (value: string) => void
     placeholder: string
@@ -52,7 +54,6 @@ type TransactionFormFieldsProps = {
   dateAriaLabel?: string
   time?: ComponentProps<typeof DatePicker>["time"]
   inert?: boolean
-  note?: ComponentProps<typeof TransactionNoteField>
 }
 
 export function TransactionFormFields({
@@ -77,7 +78,6 @@ export function TransactionFormFields({
   dateAriaLabel = dateLabel,
   time,
   inert,
-  note,
 }: TransactionFormFieldsProps) {
   const amountId = useId()
   const descriptionId = useId()
@@ -106,16 +106,13 @@ export function TransactionFormFields({
     }
     return items
   }, [accounts, accountId, missingAccountLabel])
-  const isMerchant = description.kind === "merchant"
   const descriptionField = (
     <Field>
-      <FieldLabel htmlFor={descriptionId}>
-        {isMerchant ? "Merchant" : "Remark"}
-      </FieldLabel>
+      <FieldLabel htmlFor={descriptionId}>Remark</FieldLabel>
       <Input
         id={descriptionId}
         type="text"
-        required={isMerchant}
+        required={description.required}
         value={description.value}
         placeholder={description.placeholder}
         onChange={(event) => description.onChange(event.target.value)}
@@ -125,7 +122,7 @@ export function TransactionFormFields({
 
   return (
     <div className="grid gap-4 sm:grid-cols-2" inert={inert}>
-      {!isMerchant && descriptionField}
+      {descriptionField}
       <Field>
         <FieldLabel htmlFor={amountId}>Amount ({currency})</FieldLabel>
         <Input
@@ -138,7 +135,6 @@ export function TransactionFormFields({
           onChange={(event) => onAmountChange(event.target.value)}
         />
       </Field>
-      {isMerchant && descriptionField}
 
       <Field>
         <FieldLabel>Category</FieldLabel>
@@ -213,21 +209,17 @@ export function TransactionFormFields({
           disabled={inert}
         />
       </Field>
-
-      {note && <TransactionNoteField {...note} />}
     </div>
   )
 }
 
-export function TransactionNoteField({
+function TransactionNoteField({
   value,
   onChange,
-  multiline = false,
   disabled,
 }: {
   value: string
   onChange: (value: string) => void
-  multiline?: boolean
   disabled?: boolean
 }) {
   const id = useId()
@@ -235,25 +227,61 @@ export function TransactionNoteField({
   return (
     <Field>
       <FieldLabel htmlFor={id}>Note</FieldLabel>
-      {multiline ? (
-        <Textarea
-          id={id}
-          rows={8}
-          className="min-h-40"
-          disabled={disabled}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      ) : (
-        <Input
-          id={id}
-          type="text"
-          placeholder="Optional note"
-          disabled={disabled}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      )}
+      <Textarea
+        id={id}
+        rows={8}
+        className="min-h-40"
+        disabled={disabled}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
     </Field>
+  )
+}
+
+export function TransactionForm({
+  details,
+  note,
+  noteActions,
+  sourceCount,
+  sources,
+  ...tabs
+}: {
+  details: ReactNode
+  note: ComponentProps<typeof TransactionNoteField>
+  noteActions?: ReactNode
+  sourceCount: number
+  sources?: ReactNode
+} & Pick<ComponentProps<typeof Tabs>, "value" | "onValueChange">) {
+  return (
+    <Tabs className="gap-4" defaultValue="details" {...tabs}>
+      <TabsList
+        className="max-w-full overflow-x-auto"
+        aria-label="Transaction detail sections"
+      >
+        <TabsTrigger value="details">Details</TabsTrigger>
+        <TabsTrigger value="note">
+          <span>Note</span>
+          {note.value.trim() ? <CheckLine /> : null}
+        </TabsTrigger>
+        <TabsTrigger value="sources">
+          <MailIcon className="size-3.5" /> Source emails ({sourceCount})
+        </TabsTrigger>
+      </TabsList>
+      <TabsContent value="details" keepMounted>
+        {details}
+      </TabsContent>
+      <TabsContent value="note" className="space-y-6">
+        <TransactionNoteField {...note} />
+        {noteActions}
+      </TabsContent>
+      <TabsContent value="sources" className="space-y-3">
+        {sources ?? (
+          <p className="text-sm text-muted-foreground">
+            No source emails attached (manual transaction).
+          </p>
+        )}
+      </TabsContent>
+    </Tabs>
   )
 }

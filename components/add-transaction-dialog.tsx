@@ -1,13 +1,15 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { flushSync } from "react-dom"
 import { useId, useState, type SubmitEvent } from "react"
 
 import { CreateFormDrawer } from "@/components/detail-drawer-content"
 import {
+  TransactionForm,
   TransactionFormFields,
   UNASSIGNED_ACCOUNT,
-} from "@/components/transaction-form-fields"
+} from "@/components/transaction-form"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { categoriesQuery } from "@/lib/api/categories"
 import { tagsQuery } from "@/lib/api/tags"
@@ -18,8 +20,9 @@ import {
 import { type AccountOption } from "@/lib/api/types.generated"
 import { DEFAULT_CATEGORY } from "@/lib/categories"
 import {
-  dateInputToUtcIso,
+  dateTimeInputToUtcIso,
   getTodayDateString,
+  groupAmountInput,
   parseDecimalToMinorClient,
 } from "@/lib/format"
 
@@ -42,12 +45,14 @@ export function AddTransactionDialog({
   const tagListQuery = useQuery({ ...tagsQuery(), enabled: open })
 
   const [amount, setAmount] = useState("")
-  const [merchant, setMerchant] = useState("")
+  const [remark, setRemark] = useState("")
   const [category, setCategory] = useState<string>(DEFAULT_CATEGORY)
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [tagCreatePending, setTagCreatePending] = useState(false)
   const [accountId, setAccountId] = useState(UNASSIGNED_ACCOUNT)
   const [date, setDate] = useState("")
+  const [time, setTime] = useState("00:00")
+  const [tab, setTab] = useState("details")
   const [note, setNote] = useState("")
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -57,11 +62,13 @@ export function AddTransactionDialog({
     setTagCreatePending(false)
     if (open) {
       setAmount("")
-      setMerchant("")
+      setRemark("")
       setCategory(DEFAULT_CATEGORY)
       setSelectedTagIds([])
       setAccountId(UNASSIGNED_ACCOUNT)
       setDate(getTodayDateString(timezone))
+      setTime("00:00")
+      setTab("details")
       setNote("")
       setFormError(null)
     }
@@ -88,17 +95,18 @@ export function AddTransactionDialog({
     setFormError(null)
     try {
       const amountMinor = parseDecimalToMinorClient(amount, currency)
-      const occurredAtUtc = dateInputToUtcIso(date, timezone)
+      const occurredAtUtc = dateTimeInputToUtcIso(date, time, timezone)
       addMutation.mutate({
         amount_minor: amountMinor,
         occurred_at_utc: occurredAtUtc,
-        merchant: merchant.trim(),
+        merchant: remark.trim(),
         category,
         tag_ids: selectedTagIds,
         account_id: accountId !== UNASSIGNED_ACCOUNT ? accountId : null,
         note: note.trim() || null,
       })
     } catch (err) {
+      setTab("details")
       setFormError(err instanceof Error ? err.message : "Invalid input.")
     }
   }
@@ -111,6 +119,12 @@ export function AddTransactionDialog({
       description={`Record a cash or manual expense in ${currency}.`}
       formId={formId}
       onSubmit={handleSubmit}
+      onInvalid={() => {
+        if (tab !== "details") {
+          // Reveal the invalid input before the browser tries to focus it.
+          flushSync(() => setTab("details"))
+        }
+      }}
       submitLabel={addMutation.isPending ? "Adding..." : "Add transaction"}
       submitDisabled={submitDisabled}
     >
@@ -120,40 +134,51 @@ export function AddTransactionDialog({
         </Alert>
       )}
 
-      <TransactionFormFields
-        description={{
-          kind: "merchant",
-          value: merchant,
-          onChange: setMerchant,
-          placeholder: "Coffee Shop",
-        }}
-        currency={currency}
-        amount={amount}
-        onAmountChange={setAmount}
-        amountInputProps={{ placeholder: "0.00" }}
-        categories={catListQuery.data}
-        category={category}
-        onCategoryChange={setCategory}
-        tagPicker={
-          open
-            ? {
-                tags: tagListQuery.data ?? [],
-                selectedTagIds,
-                onChange: setSelectedTagIds,
-                onCreatePendingChange: setTagCreatePending,
-                disabled: addMutation.isPending,
-              }
-            : undefined
-        }
-        tagPickerKey={String(timezone)}
-        accounts={accounts}
-        accountId={accountId}
-        onAccountChange={setAccountId}
-        date={date}
-        onDateChange={setDate}
-        dateLabel="Date"
-        dateAriaLabel="Transaction date"
+      <TransactionForm
+        value={tab}
+        onValueChange={setTab}
         note={{ value: note, onChange: setNote }}
+        sourceCount={0}
+        details={
+          <TransactionFormFields
+            description={{
+              required: true,
+              value: remark,
+              onChange: setRemark,
+              placeholder: "Coffee Shop",
+            }}
+            currency={currency}
+            amount={amount}
+            onAmountChange={setAmount}
+            amountInputProps={{
+              onBlur: () => setAmount(groupAmountInput(amount)),
+              className: "tabular-nums",
+              placeholder: "0.00",
+            }}
+            categories={catListQuery.data}
+            category={category}
+            onCategoryChange={setCategory}
+            tagPicker={
+              open
+                ? {
+                    tags: tagListQuery.data ?? [],
+                    selectedTagIds,
+                    onChange: setSelectedTagIds,
+                    onCreatePendingChange: setTagCreatePending,
+                    disabled: addMutation.isPending,
+                  }
+                : undefined
+            }
+            tagPickerKey={String(timezone)}
+            accounts={accounts}
+            accountId={accountId}
+            onAccountChange={setAccountId}
+            date={date}
+            onDateChange={setDate}
+            dateLabel="Occurred date and time"
+            time={{ value: time, onChange: setTime }}
+          />
+        }
       />
     </CreateFormDrawer>
   )

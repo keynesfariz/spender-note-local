@@ -2,11 +2,9 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
-  CheckLine,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  MailIcon,
 } from "lucide-react"
 import {
   useCallback,
@@ -29,10 +27,10 @@ import {
   useMagicEnrich,
 } from "@/components/magic-enrich"
 import {
+  TransactionForm,
   TransactionFormFields,
-  TransactionNoteField,
   UNASSIGNED_ACCOUNT,
-} from "@/components/transaction-form-fields"
+} from "@/components/transaction-form"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -52,7 +50,6 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Drawer } from "@/components/ui/drawer"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { useTransactionReview } from "@/hooks/use-transaction-review"
 import { categoriesQuery } from "@/lib/api/categories"
 import { tagsQuery } from "@/lib/api/tags"
@@ -80,6 +77,7 @@ import {
   formatMinorCurrency,
   formatUtcInTimezone,
   minorToDecimalInput,
+  groupAmountInput,
   parseDecimalToMinorClient,
   utcToDateInputValue,
   utcToTimeInputValue,
@@ -96,12 +94,6 @@ type DraftField =
   | "date"
   | "note"
   | "conversion"
-
-function groupAmountInput(value: string): string {
-  const match = /^(-?\d+)(\.\d*)?$/.exec(value.trim())
-  if (!match) return value
-  return match[1].replace(/\B(?=(\d{3})+(?!\d))/g, ",") + (match[2] ?? "")
-}
 
 function SourceEmailBody({
   transactionId,
@@ -672,22 +664,15 @@ function InspectorForm({
         )}
       </div>
 
-      <Tabs className="gap-4" defaultValue="details">
-        <TabsList
-          className="max-w-full overflow-x-auto"
-          aria-label="Transaction detail sections"
-        >
-          <TabsTrigger value="details">Details</TabsTrigger>
-          <TabsTrigger value="note">
-            <span>Note</span>
-            {note.trim() ? <CheckLine /> : null}
-          </TabsTrigger>
-          <TabsTrigger value="sources">
-            <MailIcon className="size-3.5" /> Source emails (
-            {detail.sources.length})
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="details" keepMounted>
+      <TransactionForm
+        note={{
+          disabled: isEnriching || review.pending,
+          value: note,
+          onChange: (value) => editDraft("note", setNote, value),
+        }}
+        noteActions={reviewActions(detailFormId)}
+        sourceCount={detail.sources.length}
+        details={
           <form id={detailFormId} onSubmit={handleSave} className="space-y-4">
             {detail.sources.length >= 1 && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2">
@@ -709,7 +694,6 @@ function InspectorForm({
 
             <TransactionFormFields
               description={{
-                kind: "remark",
                 value: remark,
                 placeholder: tx.merchant,
                 onChange: (value) => {
@@ -825,56 +809,45 @@ function InspectorForm({
               {reviewActions()}
             </div>
           </form>
-        </TabsContent>
-        <TabsContent value="note" className="space-y-6">
-          <TransactionNoteField
-            multiline
-            disabled={isEnriching || review.pending}
-            value={note}
-            onChange={(value) => editDraft("note", setNote, value)}
-          />
-          {reviewActions(detailFormId)}
-        </TabsContent>
-        <TabsContent value="sources" className="space-y-3">
-          {tx.manual_override === 1 && detail.sources.length > 1 && (
-            <Alert>
-              <AlertDescription>
-                This transaction has a locked amount (edited or combined).
-                Splitting an email creates a separate transaction without
-                reducing this transaction&apos;s amount — adjust the amount
-                manually if needed.
-              </AlertDescription>
-            </Alert>
-          )}
-          {detail.sources.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No source emails attached (manual transaction).
-            </p>
-          ) : (
-            <ul className="space-y-3">
-              {detail.sources.map((source) => (
-                <li key={source.id}>
-                  <SourceEmail
-                    source={source}
-                    transactionId={tx.id}
-                    timezone={timezone}
-                    onSplit={
-                      detail.sources.length > 1
-                        ? () =>
-                            splitMutation.mutate({
-                              transactionId: tx.id,
-                              emailId: source.email_id,
-                            })
-                        : undefined
-                    }
-                    splitDisabled={saveDisabled}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
-        </TabsContent>
-      </Tabs>
+        }
+        sources={
+          detail.sources.length > 0 ? (
+            <>
+              {tx.manual_override === 1 && detail.sources.length > 1 && (
+                <Alert>
+                  <AlertDescription>
+                    This transaction has a locked amount (edited or combined).
+                    Splitting an email creates a separate transaction without
+                    reducing this transaction&apos;s amount — adjust the amount
+                    manually if needed.
+                  </AlertDescription>
+                </Alert>
+              )}
+              <ul className="space-y-3">
+                {detail.sources.map((source) => (
+                  <li key={source.id}>
+                    <SourceEmail
+                      source={source}
+                      transactionId={tx.id}
+                      timezone={timezone}
+                      onSplit={
+                        detail.sources.length > 1
+                          ? () =>
+                              splitMutation.mutate({
+                                transactionId: tx.id,
+                                emailId: source.email_id,
+                              })
+                          : undefined
+                      }
+                      splitDisabled={saveDisabled}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : undefined
+        }
+      />
     </div>
   )
 }

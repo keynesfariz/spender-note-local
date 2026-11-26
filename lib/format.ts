@@ -103,6 +103,12 @@ function normalizeDecimalAmountString(raw: string, exponent: number): string {
   return exponent === 0 ? trimmed.replace(/^(-?\d+)\.0+$/, "$1") : trimmed
 }
 
+export function groupAmountInput(value: string): string {
+  const match = /^(-?\d+)(\.\d*)?$/.exec(value.trim())
+  if (!match) return value
+  return match[1].replace(/\B(?=(\d{3})+(?!\d))/g, ",") + (match[2] ?? "")
+}
+
 export function parseDecimalToMinorClient(
   raw: string,
   currency: string

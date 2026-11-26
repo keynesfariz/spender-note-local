@@ -2,15 +2,15 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { MoonIcon, SunIcon, WalletIcon } from "lucide-react"
+import { useTheme } from "next-themes"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { useTheme } from "next-themes"
 import { useState, type ReactNode } from "react"
 
+import { IconTooltip } from "@/components/icon-tooltip"
 import { SyncToast } from "@/components/sync-toast"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { IconTooltip } from "@/components/icon-tooltip"
 import { accountsQuery } from "@/lib/api/accounts"
 import { categoriesQuery } from "@/lib/api/categories"
 import {
@@ -133,7 +133,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 type="button"
                 variant="outline"
                 size="icon"
-                className="size-10 rounded-full"
+                className="size-8 rounded-full"
                 onClick={() =>
                   setTheme(resolvedTheme === "dark" ? "light" : "dark")
                 }

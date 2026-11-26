@@ -323,8 +323,9 @@ func TestUpgradeTransactionKindsFromBaseline(t *testing.T) {
 	if _, err := conn.Exec(`
 		INSERT INTO raw_emails (id, gmail_message_id, from_address, subject, cleaned_text, internal_date_ms, received_at_utc, status)
 		  VALUES ('e', 'gmail-e', 'bank@example.test', 'Charge', 'Charge', 1, '2026-01-01T00:00:00Z', 'extracted');
-		INSERT INTO transactions (id, source_type, amount_minor, currency, occurred_at_utc, merchant, category_id, created_at_utc, updated_at_utc)
-		  VALUES ('original', 'gmail', 100, 'IDR', '2026-01-01T00:00:00Z', 'Charge', 'cat-other', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+			INSERT INTO transactions (id, source_type, amount_minor, currency, occurred_at_utc, merchant, category_id, created_at_utc, updated_at_utc, manual_override)
+			  VALUES ('original', 'gmail', 100, 'IDR', '2026-01-01T00:00:00Z', 'Charge', 'cat-other', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 0),
+			         ('override', 'gmail', 200, 'IDR', '2026-01-01T00:00:00Z', 'Overridden charge', 'cat-other', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1);
 		INSERT INTO transaction_sources (id, transaction_id, email_id, role, match_state)
 		  VALUES ('source', 'original', 'e', 'card_charge', 'single');
 		INSERT INTO tags (id, name, normalized_name, created_at_utc)
@@ -358,6 +359,15 @@ func TestUpgradeTransactionKindsFromBaseline(t *testing.T) {
 				`).Scan(&count).Error
 				if err == nil && count != 1 {
 					err = fmt.Errorf("migration retained %d complete legacy rows, want 1", count)
+				}
+				if err == nil {
+					var flags []int
+					err = gdb.Table("transactions").
+						Where("id IN ?", []string{"original", "override"}).
+						Order("id").Pluck("ambiguous_source_amount", &flags).Error
+					if err == nil && (len(flags) != 2 || flags[0] != 0 || flags[1] != 1) {
+						err = fmt.Errorf("migration ambiguity flags for ordinary and overridden expenses = %v, want [0 1]", flags)
+					}
 				}
 			}
 			errs <- err

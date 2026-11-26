@@ -19,11 +19,9 @@ type accountBalanceInfo struct {
 	LatestReconciliation   *db.AccountReconciliation
 }
 
-// Positive movements are outgoing and negative movements are incoming.
-// The account type determines whether the net increases assets or debt.
 const accountMovementsSQL = `
 	SELECT account_id, currency, kind,
-		CASE WHEN kind = 'income' THEN -amount_minor ELSE amount_minor END AS amount_minor,
+		CASE WHEN kind = 'income' THEN -amount_minor ELSE amount_minor END AS signed_outflow_minor,
 		COALESCE(source_posted_at_utc, occurred_at_utc) AS posted_at_utc
 	FROM transactions
 	WHERE account_id IS NOT NULL
@@ -51,13 +49,13 @@ func resolveAccountTimezone(gdb *gorm.DB, targetTimezone string) (string, error)
 	return tz, nil
 }
 
-func computeNetFlowAndBalance(accountType string, anchorBalance *int64, localTotal int64) (int64, *int64) {
+func computeNetFlowAndBalance(accountType string, anchorBalance *int64, netOutflow int64) (int64, *int64) {
 	var netFlow int64
-	if localTotal != 0 {
+	if netOutflow != 0 {
 		if accountType == "credit_card" {
-			netFlow = localTotal
+			netFlow = netOutflow
 		} else {
-			netFlow = -localTotal
+			netFlow = -netOutflow
 		}
 	}
 	var computed *int64
@@ -84,7 +82,7 @@ func computeAccountBalanceAsOf(gdb *gorm.DB, account db.Account, asOfUtc, nowUtc
 	var anchorBalance *int64
 	query := `
 		SELECT
-			COALESCE(SUM(CASE WHEN currency = ? THEN amount_minor ELSE 0 END), 0) AS local_total,
+			COALESCE(SUM(CASE WHEN currency = ? THEN signed_outflow_minor ELSE 0 END), 0) AS local_net_outflow,
 			COALESCE(SUM(CASE WHEN currency != ? THEN 1 ELSE 0 END), 0) AS foreign_cnt
 		FROM (` + accountMovementsSQL + `)
 		WHERE account_id = ? AND posted_at_utc <= ?`
@@ -101,8 +99,8 @@ func computeAccountBalanceAsOf(gdb *gorm.DB, account db.Account, asOfUtc, nowUtc
 	}
 
 	var agg struct {
-		LocalTotal int64 `gorm:"column:local_total"`
-		ForeignCnt int64 `gorm:"column:foreign_cnt"`
+		LocalNetOutflow int64 `gorm:"column:local_net_outflow"`
+		ForeignCnt      int64 `gorm:"column:foreign_cnt"`
 	}
 	if err := gdb.Raw(query, args...).Scan(&agg).Error; err != nil {
 		return accountBalanceInfo{}, err
@@ -115,7 +113,7 @@ func computeAccountBalanceAsOf(gdb *gorm.DB, account db.Account, asOfUtc, nowUtc
 		return accountBalanceInfo{}, err
 	}
 
-	netFlow, computed := computeNetFlowAndBalance(account.Type, anchorBalance, agg.LocalTotal)
+	netFlow, computed := computeNetFlowAndBalance(account.Type, anchorBalance, agg.LocalNetOutflow)
 
 	return accountBalanceInfo{
 		ComputedBalanceMinor:   computed,
@@ -199,8 +197,6 @@ func isAccountTypeLocked(gdb *gorm.DB, account db.Account, hasRec bool) (bool, e
 		return true, nil
 	}
 	if account.Status == "provisional" {
-		// A provisional account can be reclassified while its history only
-		// consists of imported charges. Explicit movements keep their meaning.
 		return hasTypedAccountMovements(gdb, account.ID)
 	}
 	return hasAccountLedgerRows(gdb, account.ID)
@@ -252,7 +248,6 @@ func buildAccountSummariesAt(
 ) ([]AccountSummary, error) {
 	nowUtc := ToUtcIsoSeconds(now)
 
-	// 1. Latest reconciliation per account (<= nowUtc) in a single query.
 	var latestRecRows []db.AccountReconciliation
 	if err := gdb.Raw(`
 		SELECT id, account_id, currency, computed_balance_minor, actual_balance_minor, adjustment_minor, note, recorded_at_utc
@@ -271,35 +266,21 @@ func buildAccountSummariesAt(
 		latestRecByAcct[rec.AccountID] = &rec
 	}
 
-	// 2. Read account movements together to compute balances, future counts,
-	//    type-lock status, and credit card billing-cycle spend for all accounts at once.
-	type acctTxRow struct {
-		AccountID   string
-		Currency    string
-		Kind        string
-		AmountMinor int64
-		PostedAtUtc string
-	}
-	var allTx []acctTxRow
-	if err := gdb.Raw(accountMovementsSQL).Scan(&allTx).Error; err != nil {
-		return nil, err
-	}
-
 	type acctState struct {
-		account        db.Account
-		latestRec      *db.AccountReconciliation
-		anchorBalance  *int64
-		anchorTime     string
-		localTotal     int64
-		foreignCnt     int64
-		futureCnt      int64
-		hasTx          bool
-		hasTypedTx     bool
-		cycleBounds    *CreditCardCycleBounds
-		curCycleSpent  int64
-		curCycleCount  int64
-		lastCycleSpent int64
-		lastCycleCount int64
+		account         db.Account
+		latestRec       *db.AccountReconciliation
+		anchorBalance   *int64
+		anchorTime      string
+		localNetOutflow int64
+		foreignCnt      int64
+		futureCnt       int64
+		hasTx           bool
+		hasTypedTx      bool
+		cycleBounds     *CreditCardCycleBounds
+		curCycleSpent   int64
+		curCycleCount   int64
+		lastCycleSpent  int64
+		lastCycleCount  int64
 	}
 
 	states := make([]*acctState, len(accounts))
@@ -326,44 +307,58 @@ func buildAccountSummariesAt(
 		stateByID[acct.ID] = st
 	}
 
-	for _, tx := range allTx {
-		st, ok := stateByID[tx.AccountID]
+	rows, err := gdb.Raw(accountMovementsSQL).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var accountID, currency, kind, postedAtUtc string
+		var signedOutflowMinor int64
+		if err := rows.Scan(&accountID, &currency, &kind, &signedOutflowMinor, &postedAtUtc); err != nil {
+			return nil, err
+		}
+		st, ok := stateByID[accountID]
 		if !ok {
 			continue
 		}
 		st.hasTx = true
-		st.hasTypedTx = st.hasTypedTx || tx.Kind != "expense"
-		if tx.PostedAtUtc > nowUtc {
+		st.hasTypedTx = st.hasTypedTx || kind != "expense"
+		if postedAtUtc > nowUtc {
 			st.futureCnt++
 		} else {
 			inAnchorWindow := false
 			if st.anchorBalance == nil {
 				inAnchorWindow = true
 			} else if st.latestRec != nil {
-				inAnchorWindow = tx.PostedAtUtc > st.anchorTime
+				inAnchorWindow = postedAtUtc > st.anchorTime
 			} else {
-				inAnchorWindow = tx.PostedAtUtc >= st.anchorTime
+				inAnchorWindow = postedAtUtc >= st.anchorTime
 			}
 			if inAnchorWindow {
-				if tx.Currency == st.account.Currency {
-					st.localTotal += tx.AmountMinor
+				if currency == st.account.Currency {
+					st.localNetOutflow += signedOutflowMinor
 				} else {
 					st.foreignCnt++
 				}
 			}
 		}
 
-		if st.cycleBounds != nil && tx.Kind == "expense" && tx.Currency == st.account.Currency {
+		if st.cycleBounds != nil && kind == "expense" && currency == st.account.Currency {
 			cb := st.cycleBounds
-			if tx.PostedAtUtc >= cb.CurrentCycle.StartUtc && tx.PostedAtUtc < cb.CurrentCycle.EndExclusiveUtc && tx.PostedAtUtc <= nowUtc {
-				st.curCycleSpent += tx.AmountMinor
+			if postedAtUtc >= cb.CurrentCycle.StartUtc && postedAtUtc < cb.CurrentCycle.EndExclusiveUtc && postedAtUtc <= nowUtc {
+				st.curCycleSpent += signedOutflowMinor
 				st.curCycleCount++
 			}
-			if tx.PostedAtUtc >= cb.LastCycle.StartUtc && tx.PostedAtUtc < cb.LastCycle.EndExclusiveUtc {
-				st.lastCycleSpent += tx.AmountMinor
+			if postedAtUtc >= cb.LastCycle.StartUtc && postedAtUtc < cb.LastCycle.EndExclusiveUtc {
+				st.lastCycleSpent += signedOutflowMinor
 				st.lastCycleCount++
 			}
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	out := make([]AccountSummary, 0, len(accounts))
@@ -373,7 +368,7 @@ func buildAccountSummariesAt(
 			idents = []db.AccountIdentifier{}
 		}
 
-		netFlow, computed := computeNetFlowAndBalance(st.account.Type, st.anchorBalance, st.localTotal)
+		netFlow, computed := computeNetFlowAndBalance(st.account.Type, st.anchorBalance, st.localNetOutflow)
 
 		var billingCycle *CreditCardBillingCycleSummary
 		if st.cycleBounds != nil && st.account.StatementDay != nil {

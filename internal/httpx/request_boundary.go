@@ -7,7 +7,6 @@ import (
 	"strings"
 )
 
-// AllowLocalRequest guards local ledger and email-evidence endpoints.
 func AllowLocalRequest(w http.ResponseWriter, r *http.Request, jsonWrite bool) bool {
 	host, err := url.Parse("http://" + r.Host)
 	if err != nil || host.User != nil || host.Host != r.Host || host.Path != "" || host.RawQuery != "" || host.Fragment != "" {

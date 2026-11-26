@@ -15,3 +15,11 @@ An action that uses source emails to suggest transaction details and fills the f
 ## Combine
 
 The operation that consolidates two or more transactions with the same currency and account assignment into one transaction with their summed amount. All selected transactions can also be unassigned.
+
+## Spending cycle
+
+The calendar month used for personal spending on the dashboard, from the first through the last day in the app's configured timezone. Credit cards can have separate billing cycles.
+
+## Net spending
+
+Expenses minus income within the selected spending cycle and any active category or tag filters. Transfers and credit card payments are excluded.

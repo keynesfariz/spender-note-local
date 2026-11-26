@@ -159,6 +159,18 @@ func copyTransactionTags(tx *gorm.DB, targetTxID string, sourceTxIDs []string, n
 	).Error
 }
 
+func incomeReceivingCurrency(tx *gorm.DB, accountID *string, selected bool) (string, error) {
+	if accountID == nil {
+		return "", errors.New("Select a receiving account for income.")
+	}
+	var account db.Account
+	err := tx.Select("currency").First(&account, "id = ?", *accountID).Error
+	if selected && errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", errors.New("Selected account does not exist.")
+	}
+	return account.Currency, err
+}
+
 func CreateManualTransaction(gdb *gorm.DB, input CreateManualTransactionInput) (*TransactionListItem, error) {
 	_, curPtr, err := getLocaleConfig(gdb)
 	if err != nil {
@@ -206,24 +218,20 @@ func CreateManualTransaction(gdb *gorm.DB, input CreateManualTransactionInput) (
 			return err
 		}
 		var accountID *string
-		if input.AccountID != nil && strings.TrimSpace(*input.AccountID) != "" {
-			trimmed := strings.TrimSpace(*input.AccountID)
-			if err := AssertAccountExists(tx, trimmed, ""); err != nil {
-				return err
-			}
-			accountID = &trimmed
+		if input.AccountID != nil {
+			accountID = strPtrOrNil(*input.AccountID)
 		}
 
 		currency := *curPtr
 		if kind == "income" {
-			if accountID == nil {
-				return errors.New("Select a receiving account for income.")
-			}
-			var account db.Account
-			if err := tx.Select("currency").First(&account, "id = ?", *accountID).Error; err != nil {
+			currency, err = incomeReceivingCurrency(tx, accountID, true)
+			if err != nil {
 				return err
 			}
-			currency = account.Currency
+		} else if accountID != nil {
+			if err := AssertAccountExists(tx, *accountID, ""); err != nil {
+				return err
+			}
 		}
 		id := uuid.NewString()
 		nowUtc := NowUtcIsoSeconds()
@@ -335,14 +343,14 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 
 		accountID := current.AccountID
 		if patch.HasAccountID {
-			if patch.AccountID != nil && strings.TrimSpace(*patch.AccountID) != "" {
-				trimmed := strings.TrimSpace(*patch.AccountID)
-				if err := AssertAccountExists(tx, trimmed, ""); err != nil {
+			accountID = nil
+			if patch.AccountID != nil {
+				accountID = strPtrOrNil(*patch.AccountID)
+			}
+			if accountID != nil && current.Kind != "income" {
+				if err := AssertAccountExists(tx, *accountID, ""); err != nil {
 					return err
 				}
-				accountID = &trimmed
-			} else {
-				accountID = nil
 			}
 		}
 
@@ -366,17 +374,14 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 		}
 
 		if current.Kind == "income" {
-			if accountID == nil {
-				return errors.New("Select a receiving account for income.")
-			}
-			var account db.Account
-			if err := tx.Select("currency").First(&account, "id = ?", *accountID).Error; err != nil {
+			receivingCurrency, err := incomeReceivingCurrency(tx, accountID, patch.HasAccountID)
+			if err != nil {
 				return err
 			}
-			if account.Currency != current.Currency && patch.AmountMinor == nil {
+			if receivingCurrency != current.Currency && patch.AmountMinor == nil {
 				return errors.New("Enter an amount in the receiving account's currency.")
 			}
-			nextCurrency = account.Currency
+			nextCurrency = receivingCurrency
 		}
 		remark, remarkUserEdited := applyTransactionRemark(current, merchant, patch.Remark, patch.RemarkUserEdited)
 		manualOverride := current.ManualOverride

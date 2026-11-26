@@ -344,7 +344,11 @@ func TestAccountMovements_TransfersAndIncomeRespectEachPostingAndAnchor(t *testi
 		if err != nil || !reflect.DeepEqual(account, single) {
 			t.Fatalf("account %s: batched = %+v, single = %+v, err = %v", account.ID, account, single, err)
 		}
-		expected := want[account.ID]
+		expected, ok := want[account.ID]
+		if !ok {
+			t.Fatalf("unexpected or duplicate account %s", account.ID)
+		}
+		delete(want, account.ID)
 		if account.ComputedBalanceMinor == nil || *account.ComputedBalanceMinor != expected.balance ||
 			account.NetFlowMinor != expected.flow || account.UncountedForeignCount != 0 ||
 			account.FutureTransactionCount != expected.future {
@@ -354,6 +358,9 @@ func TestAccountMovements_TransfersAndIncomeRespectEachPostingAndAnchor(t *testi
 			account.BillingCycle.CurrentCycle.TransactionCount != 1) {
 			t.Fatalf("card billing cycle includes a non-expense: %+v", account.BillingCycle)
 		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing expected accounts: %v", want)
 	}
 }
 
@@ -373,8 +380,8 @@ func TestAccountMovements_ProtectHistoryOnDeleteAndMerge(t *testing.T) {
 	})
 	seedAccountMovement(t, gdb, "linked-income", income, "IDR", 50, at, map[string]any{"kind": "income"})
 	for _, id := range []string{source, destination, income} {
-		if err := DeleteAccount(gdb, id); err == nil {
-			t.Fatalf("deleted account %s with movement history", id)
+		if err := DeleteAccount(gdb, id); err == nil || !strings.Contains(err.Error(), "This account still has income or transfers.") {
+			t.Fatalf("deletion of account %s should explain its movement history, got %v", id, err)
 		}
 	}
 	nextType := "debit_card"

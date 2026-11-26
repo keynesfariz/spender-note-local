@@ -117,8 +117,19 @@ func TestRecoverDraftlessPaymentAndMarkStatement(t *testing.T) {
 		EmailIDs: []string{"paid"}, AccountID: source, DestinationAccountID: dest,
 		AmountMinor: 900000, OccurredAtUtc: when,
 	}}}
-	if _, err := ApplyTransfers(gdb, input); err != nil {
+	recovered, err := ApplyTransfers(gdb, input)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(recovered.Items) != 1 || recovered.Items[0].Kind != "transfer" {
+		t.Fatalf("recovered payment: %#v", recovered.Items)
+	}
+	detail, err := GetTransactionDetail(gdb, recovered.Items[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Sources) != 1 || detail.Sources[0].EmailID != "paid" {
+		t.Fatalf("recovered payment sources: %#v", detail.Sources)
 	}
 	if _, err := GetSkippedPaymentEmailBody(gdb, "paid"); err == nil {
 		t.Fatal("recorded payment remains readable as skipped evidence")
@@ -135,10 +146,30 @@ func TestRecoverDraftlessPaymentAndMarkStatement(t *testing.T) {
 	statement := TransferInput{Action: "non_transaction", Items: []TransferItemInput{{
 		EmailIDs: []string{"statement"}, ExpectedTransactionID: expense,
 	}}}
-	for range 2 {
-		if _, err := ApplyTransfers(gdb, statement); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := ApplyTransfers(gdb, statement); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int64
+	if err := gdb.Model(&db.Transaction{}).Where("id = ?", expense).Count(&remaining).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatal("the statement still has an expense")
+	}
+	var email db.RawEmail
+	if err := gdb.First(&email, "id = ?", "statement").Error; err != nil {
+		t.Fatal(err)
+	}
+	var extraction db.EmailExtraction
+	if err := gdb.First(&extraction, "email_id = ?", email.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if email.Status != "non_transaction" || extraction.EmailKind != "non_transaction" ||
+		extraction.ExtractionModel != userStatementExtraction {
+		t.Fatalf("statement disposition = %q / %q / %q", email.Status, extraction.EmailKind, extraction.ExtractionModel)
+	}
+	if _, err := ApplyTransfers(gdb, statement); err != nil {
+		t.Fatalf("retry marking statement: %v", err)
 	}
 	if _, err := GetSkippedPaymentEmailBody(gdb, "statement"); err == nil {
 		t.Fatal("statement became eligible for payment recovery")

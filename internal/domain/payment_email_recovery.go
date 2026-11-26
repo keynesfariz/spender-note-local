@@ -9,9 +9,7 @@ const paymentRecoveryBase = `
 	  AND (ee.triage_state IS NULL OR ee.triage_state = 'ghost')
 	  AND ee.extraction_model NOT IN ('rule:billing_statement', 'user:statement')
 	  AND NOT EXISTS (SELECT 1 FROM transaction_sources ts WHERE ts.email_id = re.id)`
-const withoutPaymentDraft = `
-	  AND (ee.amount_minor IS NULL OR ee.amount_minor <= 0
-	       OR ee.currency IS NULL OR LENGTH(TRIM(ee.currency)) != 3)`
+const withoutPaymentDraft = ` AND NOT ` + validTriageDraftSQL
 
 func ListSkippedPaymentEmails(gdb *gorm.DB, page, pageSize int) (*PaginatedSkippedTransactionsResponse, error) {
 	page = max(1, page)

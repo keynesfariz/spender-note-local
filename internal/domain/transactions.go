@@ -83,6 +83,66 @@ type TransactionListItem struct {
 	IsForeignCurrency      bool                 `json:"isForeignCurrency"`
 }
 
+type transactionLedgerRow struct {
+	ID                     string  `gorm:"column:id"`
+	SourceType             string  `gorm:"column:source_type"`
+	AccountID              *string `gorm:"column:account_id"`
+	AccountName            *string `gorm:"column:account_name"`
+	Kind                   string  `gorm:"column:kind"`
+	DestinationAccountID   *string `gorm:"column:destination_account_id"`
+	DestinationAccountName *string `gorm:"column:destination_account_name"`
+	DestinationAmountMinor *int64  `gorm:"column:destination_amount_minor"`
+	DestinationCurrency    *string `gorm:"column:destination_currency"`
+	SourcePostedAtUtc      *string `gorm:"column:source_posted_at_utc"`
+	DestinationPostedAtUtc *string `gorm:"column:destination_posted_at_utc"`
+	PaymentMethodRaw       *string `gorm:"column:payment_method_raw"`
+	AmountMinor            int64   `gorm:"column:amount_minor"`
+	Currency               string  `gorm:"column:currency"`
+	OccurredAtUtc          string  `gorm:"column:occurred_at_utc"`
+	Merchant               string  `gorm:"column:merchant"`
+	Remark                 *string `gorm:"column:remark"`
+	RemarkUserEdited       bool    `gorm:"column:remark_user_edited"`
+	Category               string  `gorm:"column:category"`
+	ManualOverride         int     `gorm:"column:manual_override"`
+	Reviewed               int     `gorm:"column:reviewed"`
+	Note                   *string `gorm:"column:note"`
+	CreatedAtUtc           string  `gorm:"column:created_at_utc"`
+	UpdatedAtUtc           string  `gorm:"column:updated_at_utc"`
+}
+
+func (r transactionLedgerRow) listItem(paymentMethod *string, tags []TransactionTagItem, roles []string, isForeign bool) TransactionListItem {
+	return TransactionListItem{
+		ID:                     r.ID,
+		SourceType:             r.SourceType,
+		AccountID:              r.AccountID,
+		AccountName:            r.AccountName,
+		Kind:                   r.Kind,
+		DestinationAccountID:   r.DestinationAccountID,
+		DestinationAccountName: r.DestinationAccountName,
+		DestinationAmountMinor: r.DestinationAmountMinor,
+		DestinationCurrency:    r.DestinationCurrency,
+		SourcePostedAtUtc:      r.SourcePostedAtUtc,
+		DestinationPostedAtUtc: r.DestinationPostedAtUtc,
+		PaymentMethodRaw:       paymentMethod,
+		AmountMinor:            r.AmountMinor,
+		Currency:               r.Currency,
+		OccurredAtUtc:          r.OccurredAtUtc,
+		Merchant:               r.Merchant,
+		Remark:                 r.Remark,
+		RemarkUserEdited:       r.RemarkUserEdited,
+		Category:               r.Category,
+		Tags:                   tags,
+		ManualOverride:         r.ManualOverride,
+		Reviewed:               r.Reviewed,
+		Note:                   r.Note,
+		CreatedAtUtc:           r.CreatedAtUtc,
+		UpdatedAtUtc:           r.UpdatedAtUtc,
+		SourceCount:            len(roles),
+		SourceRoles:            roles,
+		IsForeignCurrency:      isForeign,
+	}
+}
+
 type TransactionSourceView struct {
 	ID              string  `gorm:"column:id" json:"id"`
 	EmailID         string  `gorm:"column:email_id" json:"email_id"`
@@ -468,36 +528,10 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 		}
 	}
 
-	type rawTxRow struct {
-		ID                     string  `gorm:"column:id"`
-		SourceType             string  `gorm:"column:source_type"`
-		AccountID              *string `gorm:"column:account_id"`
-		AccountName            *string `gorm:"column:account_name"`
-		Kind                   string  `gorm:"column:kind"`
-		DestinationAccountID   *string `gorm:"column:destination_account_id"`
-		DestinationAccountName *string `gorm:"column:destination_account_name"`
-		DestinationAmountMinor *int64  `gorm:"column:destination_amount_minor"`
-		DestinationCurrency    *string `gorm:"column:destination_currency"`
-		SourcePostedAtUtc      *string `gorm:"column:source_posted_at_utc"`
-		DestinationPostedAtUtc *string `gorm:"column:destination_posted_at_utc"`
-		AmountMinor            int64   `gorm:"column:amount_minor"`
-		Currency               string  `gorm:"column:currency"`
-		OccurredAtUtc          string  `gorm:"column:occurred_at_utc"`
-		Merchant               string  `gorm:"column:merchant"`
-		Remark                 *string `gorm:"column:remark"`
-		RemarkUserEdited       bool    `gorm:"column:remark_user_edited"`
-		Category               string  `gorm:"column:category"`
-		ManualOverride         int     `gorm:"column:manual_override"`
-		Reviewed               int     `gorm:"column:reviewed"`
-		Note                   *string `gorm:"column:note"`
-		CreatedAtUtc           string  `gorm:"column:created_at_utc"`
-		UpdatedAtUtc           string  `gorm:"column:updated_at_utc"`
-	}
-
 	offset := (page - 1) * pageSize
 	pageArgs := append(append([]any{}, args...), pageSize, offset)
 
-	var rows []rawTxRow
+	var rows []transactionLedgerRow
 	query := `
 		SELECT
 			t.*, c.name AS category,
@@ -583,36 +617,7 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 		if tags == nil {
 			tags = []TransactionTagItem{}
 		}
-		out = append(out, TransactionListItem{
-			ID:                     r.ID,
-			SourceType:             r.SourceType,
-			AccountID:              r.AccountID,
-			AccountName:            r.AccountName,
-			Kind:                   r.Kind,
-			DestinationAccountID:   r.DestinationAccountID,
-			DestinationAccountName: r.DestinationAccountName,
-			DestinationAmountMinor: r.DestinationAmountMinor,
-			DestinationCurrency:    r.DestinationCurrency,
-			SourcePostedAtUtc:      r.SourcePostedAtUtc,
-			DestinationPostedAtUtc: r.DestinationPostedAtUtc,
-			PaymentMethodRaw:       pmByTx[r.ID],
-			AmountMinor:            r.AmountMinor,
-			Currency:               r.Currency,
-			OccurredAtUtc:          r.OccurredAtUtc,
-			Merchant:               r.Merchant,
-			Remark:                 r.Remark,
-			RemarkUserEdited:       r.RemarkUserEdited,
-			Category:               r.Category,
-			Tags:                   tags,
-			ManualOverride:         r.ManualOverride,
-			Reviewed:               r.Reviewed,
-			Note:                   r.Note,
-			CreatedAtUtc:           r.CreatedAtUtc,
-			UpdatedAtUtc:           r.UpdatedAtUtc,
-			SourceCount:            len(roles),
-			SourceRoles:            roles,
-			IsForeignCurrency:      r.Currency != currency,
-		})
+		out = append(out, r.listItem(pmByTx[r.ID], tags, roles, r.Currency != currency))
 	}
 	prevPageOldestUtc := ""
 	if (params.ShowSkipped == nil || *params.ShowSkipped) && page > 1 && totalCount > 0 && len(rows) > 0 {
@@ -664,33 +669,7 @@ func getTransactionDetail(gdb *gorm.DB, id string, includeSourceContent bool) (*
 		return nil, err
 	}
 
-	type rawTxRow struct {
-		ID                     string  `gorm:"column:id"`
-		SourceType             string  `gorm:"column:source_type"`
-		AccountID              *string `gorm:"column:account_id"`
-		AccountName            *string `gorm:"column:account_name"`
-		Kind                   string  `gorm:"column:kind"`
-		DestinationAccountID   *string `gorm:"column:destination_account_id"`
-		DestinationAccountName *string `gorm:"column:destination_account_name"`
-		DestinationAmountMinor *int64  `gorm:"column:destination_amount_minor"`
-		DestinationCurrency    *string `gorm:"column:destination_currency"`
-		SourcePostedAtUtc      *string `gorm:"column:source_posted_at_utc"`
-		DestinationPostedAtUtc *string `gorm:"column:destination_posted_at_utc"`
-		PaymentMethodRaw       *string `gorm:"column:payment_method_raw"`
-		AmountMinor            int64   `gorm:"column:amount_minor"`
-		Currency               string  `gorm:"column:currency"`
-		OccurredAtUtc          string  `gorm:"column:occurred_at_utc"`
-		Merchant               string  `gorm:"column:merchant"`
-		Remark                 *string `gorm:"column:remark"`
-		RemarkUserEdited       bool    `gorm:"column:remark_user_edited"`
-		Category               string  `gorm:"column:category"`
-		ManualOverride         int     `gorm:"column:manual_override"`
-		Reviewed               int     `gorm:"column:reviewed"`
-		Note                   *string `gorm:"column:note"`
-		CreatedAtUtc           string  `gorm:"column:created_at_utc"`
-		UpdatedAtUtc           string  `gorm:"column:updated_at_utc"`
-	}
-	var rows []rawTxRow
+	var rows []transactionLedgerRow
 	if err := gdb.Raw(`
 		SELECT t.*, c.name AS category, a.name AS account_name,
 			destination.name AS destination_account_name, `+paymentMethodSubquery+` AS payment_method_raw
@@ -742,36 +721,7 @@ func getTransactionDetail(gdb *gorm.DB, id string, includeSourceContent bool) (*
 	}
 
 	return &TransactionDetailView{
-		Transaction: TransactionListItem{
-			ID:                     txRow.ID,
-			SourceType:             txRow.SourceType,
-			AccountID:              txRow.AccountID,
-			AccountName:            txRow.AccountName,
-			Kind:                   txRow.Kind,
-			DestinationAccountID:   txRow.DestinationAccountID,
-			DestinationAccountName: txRow.DestinationAccountName,
-			DestinationAmountMinor: txRow.DestinationAmountMinor,
-			DestinationCurrency:    txRow.DestinationCurrency,
-			SourcePostedAtUtc:      txRow.SourcePostedAtUtc,
-			DestinationPostedAtUtc: txRow.DestinationPostedAtUtc,
-			PaymentMethodRaw:       txRow.PaymentMethodRaw,
-			AmountMinor:            txRow.AmountMinor,
-			Currency:               txRow.Currency,
-			OccurredAtUtc:          txRow.OccurredAtUtc,
-			Merchant:               txRow.Merchant,
-			Remark:                 txRow.Remark,
-			RemarkUserEdited:       txRow.RemarkUserEdited,
-			Category:               txRow.Category,
-			Tags:                   tags,
-			ManualOverride:         txRow.ManualOverride,
-			Reviewed:               txRow.Reviewed,
-			Note:                   txRow.Note,
-			CreatedAtUtc:           txRow.CreatedAtUtc,
-			UpdatedAtUtc:           txRow.UpdatedAtUtc,
-			SourceCount:            len(sources),
-			SourceRoles:            roles,
-			IsForeignCurrency:      isForeign,
-		},
-		Sources: sources,
+		Transaction: txRow.listItem(txRow.PaymentMethodRaw, tags, roles, isForeign),
+		Sources:     sources,
 	}, nil
 }

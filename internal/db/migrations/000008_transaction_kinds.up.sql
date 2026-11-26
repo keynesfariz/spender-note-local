@@ -20,7 +20,6 @@ ALTER TABLE transactions ADD COLUMN destination_posted_at_utc TEXT CHECK (
 );
 ALTER TABLE transactions ADD COLUMN ambiguous_source_amount INTEGER NOT NULL DEFAULT 0
   CHECK (ambiguous_source_amount IN (0, 1));
--- An old override does not record whether its amount came from a Combine.
 UPDATE transactions SET ambiguous_source_amount = 1 WHERE manual_override = 1;
 CREATE INDEX idx_transactions_destination_account ON transactions(destination_account_id)
   WHERE destination_account_id IS NOT NULL;

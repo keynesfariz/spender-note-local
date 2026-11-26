@@ -191,15 +191,16 @@ type ghostListQueryResult struct {
 	GhostRowsTruncated bool
 }
 
+const validTriageDraftSQL = `(ee.amount_minor IS NOT NULL AND ee.amount_minor > 0
+	AND ee.currency IS NOT NULL AND LENGTH(TRIM(ee.currency)) = 3)`
+
 const eligibleGhostBase = `
 		FROM raw_emails re
 		JOIN email_extractions ee ON ee.email_id = re.id
 		WHERE re.status = 'non_transaction'
 		  AND ee.triage_state = 'ghost'
 		  AND COALESCE(ee.extraction_model, '') != 'rule:billing_statement'
-		  AND ee.amount_minor > 0
-		  AND ee.currency IS NOT NULL
-		  AND LENGTH(TRIM(ee.currency)) = 3`
+		  AND ` + validTriageDraftSQL
 
 func queryGhostRowsForTransactions(
 	gdb *gorm.DB,
@@ -685,9 +686,7 @@ func ApplyTriageVerdict(gdb *gorm.DB, input ApplyTriageVerdictInput) (*TriageVer
 			  AND ee.triage_signature_key = ?
 			  AND ee.triage_state = 'ghost'
 			  AND COALESCE(ee.extraction_model, '') != 'rule:billing_statement'
-			  AND ee.amount_minor > 0
-			  AND ee.currency IS NOT NULL
-			  AND LENGTH(TRIM(ee.currency)) = 3
+			  AND `+validTriageDraftSQL+`
 			ORDER BY re.internal_date_ms ASC, re.id ASC`,
 			sig.SignatureKey,
 		).Scan(&rawSiblings).Error; err != nil {
@@ -1094,9 +1093,7 @@ func restorePostLlmIgnoredToGhostInTx(tx *gorm.DB, senderEmail, signatureKey str
 		  AND ee.triage_signature_key = ?
 		  AND ee.triage_state = 'ignored'
 		  AND COALESCE(ee.extraction_model, '') != 'policy:ignore'
-		  AND ee.amount_minor > 0
-		  AND ee.currency IS NOT NULL
-		  AND LENGTH(TRIM(ee.currency)) = 3`,
+		  AND `+validTriageDraftSQL,
 		signatureKey,
 	).Scan(&candidates).Error; err != nil {
 		return 0, err

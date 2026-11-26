@@ -207,28 +207,31 @@ func getConfiguredAppCurrency(gdb *gorm.DB) (string, error) {
 }
 
 func hasAccountLedgerRows(gdb *gorm.DB, accountID string) (bool, error) {
-	var txCnt int64
-	if err := gdb.Model(&db.Transaction{}).
-		Where("account_id = ? OR destination_account_id = ?", accountID, accountID).
-		Count(&txCnt).Error; err != nil {
+	var exists bool
+	if err := gdb.Raw(`
+		SELECT EXISTS (
+			SELECT 1 FROM transactions WHERE account_id = ? OR destination_account_id = ?
+		)`, accountID, accountID).Scan(&exists).Error; err != nil {
 		return false, err
 	}
-	if txCnt > 0 {
+	if exists {
 		return true, nil
 	}
-	var recCnt int64
-	if err := gdb.Model(&db.AccountReconciliation{}).Where("account_id = ?", accountID).Count(&recCnt).Error; err != nil {
-		return false, err
-	}
-	return recCnt > 0, nil
+
+	err := gdb.Raw(`
+		SELECT EXISTS (SELECT 1 FROM account_reconciliations WHERE account_id = ?)
+	`, accountID).Scan(&exists).Error
+	return exists && err == nil, err
 }
 
 func hasTypedAccountMovements(gdb *gorm.DB, accountID string) (bool, error) {
-	var count int64
-	err := gdb.Model(&db.Transaction{}).
-		Where("(account_id = ? AND kind IN ('income', 'transfer')) OR destination_account_id = ?", accountID, accountID).
-		Count(&count).Error
-	return count > 0, err
+	var exists bool
+	err := gdb.Raw(`
+		SELECT EXISTS (
+			SELECT 1 FROM transactions
+			WHERE (account_id = ? AND kind IN ('income', 'transfer')) OR destination_account_id = ?
+		)`, accountID, accountID).Scan(&exists).Error
+	return exists, err
 }
 
 func ListAccounts(gdb *gorm.DB) ([]AccountSummary, error) {

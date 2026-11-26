@@ -33,16 +33,7 @@ func GET(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, body)
 		return
 	}
-	if query.Get("view") == "inspector" {
-		detail, err := domain.GetTransactionInspector(gdb.WithContext(r.Context()), id)
-		if err != nil {
-			httpx.WriteError(w, http.StatusNotFound, err.Error())
-			return
-		}
-		httpx.WriteJSON(w, http.StatusOK, detail)
-		return
-	}
-	detail, err := domain.GetTransactionDetail(gdb, id)
+	detail, err := domain.GetTransactionInspector(gdb.WithContext(r.Context()), id)
 	if err != nil {
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
 		return

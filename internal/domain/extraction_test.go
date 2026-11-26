@@ -169,11 +169,11 @@ func TestSplitTransactionSource_DetachedTransactionStartsUnreviewedAndPreservesP
 		t.Fatalf("SplitTransactionSource: %v", err)
 	}
 
-	parentDetail, err := GetTransactionDetail(gdb, txID)
+	parentDetail, err := GetTransactionInspector(gdb, txID)
 	if err != nil {
 		t.Fatalf("load parent detail: %v", err)
 	}
-	splitDetail, err := GetTransactionDetail(gdb, splitTxID)
+	splitDetail, err := GetTransactionInspector(gdb, splitTxID)
 	if err != nil {
 		t.Fatalf("load split detail: %v", err)
 	}

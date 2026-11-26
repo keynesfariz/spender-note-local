@@ -65,11 +65,11 @@ func ApplyTransfers(gdb *gorm.DB, input TransferInput) (*TransferResult, error) 
 				return fmt.Errorf("Entry %d: %w", i+1, err)
 			}
 			if id != "" {
-				detail, err := getTransactionDetail(tx, id, false)
+				updated, err := getTransactionItem(tx, id, nil)
 				if err != nil {
 					return err
 				}
-				result.Items = append(result.Items, detail.Transaction)
+				result.Items = append(result.Items, *updated)
 			}
 		}
 		return nil

@@ -10,7 +10,7 @@ export const transactionInspectorQuery = (id: string) =>
     queryKey: ["transactions", "inspector", id] as const,
     queryFn: ({ signal }) =>
       apiFetch<TransactionInspectorView>(
-        `/api/transactions/${encodeURIComponent(id)}?view=inspector`,
+        `/api/transactions/${encodeURIComponent(id)}`,
         { signal }
       ),
   })

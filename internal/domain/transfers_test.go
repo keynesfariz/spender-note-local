@@ -124,7 +124,7 @@ func TestRecoverDraftlessPaymentAndMarkStatement(t *testing.T) {
 	if len(recovered.Items) != 1 || recovered.Items[0].Kind != "transfer" {
 		t.Fatalf("recovered payment: %#v", recovered.Items)
 	}
-	detail, err := GetTransactionDetail(gdb, recovered.Items[0].ID)
+	detail, err := GetTransactionInspector(gdb, recovered.Items[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}

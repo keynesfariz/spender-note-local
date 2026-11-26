@@ -4,12 +4,12 @@ import "gorm.io/gorm"
 
 type TransactionInspectorSource struct {
 	ID            string `json:"id"`
-	EmailID       string `json:"email_id"`
+	EmailID       string `gorm:"column:email_id" json:"email_id"`
 	Role          string `json:"role"`
 	MatchState    string `json:"match_state"`
 	FromAddress   string `json:"from_address"`
 	Subject       string `json:"subject"`
-	ReceivedAtUtc string `json:"received_at_utc"`
+	ReceivedAtUtc string `gorm:"column:received_at_utc" json:"received_at_utc"`
 }
 
 type TransactionInspectorView struct {
@@ -22,18 +22,24 @@ type TransactionSourceBody struct {
 }
 
 func GetTransactionInspector(gdb *gorm.DB, id string) (*TransactionInspectorView, error) {
-	detail, err := getTransactionDetail(gdb, id, false)
+	sources := []TransactionInspectorSource{}
+	if err := gdb.Raw(`
+		SELECT ts.id, ts.email_id, ts.role, ts.match_state, re.from_address, re.subject, re.received_at_utc
+		FROM transaction_sources ts
+		JOIN raw_emails re ON re.id = ts.email_id
+		WHERE ts.transaction_id = ?
+		ORDER BY re.internal_date_ms ASC`, id).Scan(&sources).Error; err != nil {
+		return nil, err
+	}
+	roles := make([]string, 0, len(sources))
+	for _, source := range sources {
+		roles = append(roles, source.Role)
+	}
+	item, err := getTransactionItem(gdb, id, roles)
 	if err != nil {
 		return nil, err
 	}
-	sources := make([]TransactionInspectorSource, 0, len(detail.Sources))
-	for _, source := range detail.Sources {
-		sources = append(sources, TransactionInspectorSource{
-			ID: source.ID, EmailID: source.EmailID, Role: source.Role, MatchState: source.MatchState,
-			FromAddress: source.FromAddress, Subject: source.Subject, ReceivedAtUtc: source.ReceivedAtUtc,
-		})
-	}
-	return &TransactionInspectorView{Transaction: detail.Transaction, Sources: sources}, nil
+	return &TransactionInspectorView{Transaction: *item, Sources: sources}, nil
 }
 
 func GetTransactionSourceBody(gdb *gorm.DB, transactionID, emailID string) (*TransactionSourceBody, error) {

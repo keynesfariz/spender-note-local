@@ -248,7 +248,7 @@ func TestListTransactions_TransferKindMatchesEitherAccount(t *testing.T) {
 			}
 		}
 	}
-	detail, err := GetTransactionDetail(gdb, row.ID)
+	detail, err := GetTransactionInspector(gdb, row.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

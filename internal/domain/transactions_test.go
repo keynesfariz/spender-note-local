@@ -192,7 +192,7 @@ func TestCombineTransactions_SumsAmountsLocksOverrideTransfersEmailsAndMarksRevi
 	}
 
 	RecomputeTransactionFromSources(gdb, combined.ID, NowUtcIsoSeconds())
-	detail, err := GetTransactionDetail(gdb, combined.ID)
+	detail, err := GetTransactionInspector(gdb, combined.ID)
 	if err != nil {
 		t.Fatalf("reload combined detail: %v", err)
 	}

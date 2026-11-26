@@ -256,11 +256,11 @@ func CreateManualTransaction(gdb *gorm.DB, input CreateManualTransactionInput) (
 		if err := replaceTransactionTags(tx, id, input.TagIDs, nowUtc); err != nil {
 			return err
 		}
-		detail, err := GetTransactionDetail(tx, id)
+		updated, err := getTransactionItem(tx, id, nil)
 		if err != nil {
 			return err
 		}
-		created = detail.Transaction
+		created = *updated
 		return nil
 	})
 	if err != nil {
@@ -417,11 +417,11 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 			}
 		}
 
-		detail, err := GetTransactionDetail(tx, id)
+		updated, err := getTransactionItem(tx, id, nil)
 		if err != nil {
 			return err
 		}
-		item = detail.Transaction
+		item = *updated
 		return nil
 	})
 	if err != nil {
@@ -574,11 +574,11 @@ func DuplicateMergeTransactions(gdb *gorm.DB, keepID, dropID string) (*Transacti
 			return err
 		}
 
-		detail, err := GetTransactionDetail(tx, keepID)
+		updated, err := getTransactionItem(tx, keepID, nil)
 		if err != nil {
 			return err
 		}
-		result = detail.Transaction
+		result = *updated
 		return nil
 	})
 	if err != nil {
@@ -751,11 +751,11 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 			return err
 		}
 
-		detail, err := GetTransactionDetail(tx, survivorID)
+		updated, err := getTransactionItem(tx, survivorID, nil)
 		if err != nil {
 			return err
 		}
-		result = detail.Transaction
+		result = *updated
 		return nil
 	})
 	if err != nil {

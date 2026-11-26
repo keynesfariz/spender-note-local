@@ -374,25 +374,6 @@ export interface PromoteIgnoredEmailResult {
   usedLlm: boolean
 }
 
-export interface TransactionSourceView {
-  id: string
-  email_id: string
-  role: "card_charge" | "receipt"
-  match_score: number
-  match_state: "auto" | "confirmed" | "single"
-  from_address: string
-  subject: string
-  cleaned_text: string
-  received_at_utc: string
-  extraction_model: string | null
-  raw_llm_json: string | null
-}
-
-export interface TransactionDetailView {
-  transaction: TransactionListItem
-  sources: TransactionSourceView[]
-}
-
 export interface TransactionEnrichmentPreview {
   remark: string
   merchant: string

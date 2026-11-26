@@ -196,18 +196,6 @@ var typeSpecs = []structSpec{
 		goType: reflect.TypeOf(domain.PromoteIgnoredEmailResult{}),
 	},
 	{
-		tsName: "TransactionSourceView",
-		goType: reflect.TypeOf(domain.TransactionSourceView{}),
-		overrides: map[string]string{
-			"role":        `"card_charge" | "receipt"`,
-			"match_state": `"auto" | "confirmed" | "single"`,
-		},
-	},
-	{
-		tsName: "TransactionDetailView",
-		goType: reflect.TypeOf(domain.TransactionDetailView{}),
-	},
-	{
 		tsName: "TransactionEnrichmentPreview",
 		goType: reflect.TypeOf(domain.TransactionEnrichmentPreview{}),
 	},

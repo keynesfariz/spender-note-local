@@ -104,7 +104,7 @@ func TestCategories_CreateUpdateCaseInsensitiveUniquenessAndRenamePropagation(t 
 	if tx.CategoryID != created.ID {
 		t.Fatalf("expected transaction to keep category ID %q, got %q", created.ID, tx.CategoryID)
 	}
-	item, err := GetTransactionDetail(gdb, txID)
+	item, err := GetTransactionInspector(gdb, txID)
 	if err != nil || item.Transaction.Category != renamed {
 		t.Fatalf("expected transaction to show renamed category %q, got %+v, %v", renamed, item, err)
 	}

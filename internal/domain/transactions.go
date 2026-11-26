@@ -143,25 +143,6 @@ func (r transactionLedgerRow) listItem(paymentMethod *string, tags []Transaction
 	}
 }
 
-type TransactionSourceView struct {
-	ID              string  `gorm:"column:id" json:"id"`
-	EmailID         string  `gorm:"column:email_id" json:"email_id"`
-	Role            string  `gorm:"column:role" json:"role"`
-	MatchScore      float64 `gorm:"column:match_score" json:"match_score"`
-	MatchState      string  `gorm:"column:match_state" json:"match_state"`
-	FromAddress     string  `gorm:"column:from_address" json:"from_address"`
-	Subject         string  `gorm:"column:subject" json:"subject"`
-	CleanedText     string  `gorm:"column:cleaned_text" json:"cleaned_text"`
-	ReceivedAtUtc   string  `gorm:"column:received_at_utc" json:"received_at_utc"`
-	ExtractionModel *string `gorm:"column:extraction_model" json:"extraction_model"`
-	RawLlmJSON      *string `gorm:"column:raw_llm_json" json:"raw_llm_json"`
-}
-
-type TransactionDetailView struct {
-	Transaction TransactionListItem     `json:"transaction"`
-	Sources     []TransactionSourceView `json:"sources"`
-}
-
 func getLocaleConfig(gdb *gorm.DB) (tz *string, cur *string, err error) {
 	var s db.AppSetting
 	err = gdb.Select("timezone, currency").First(&s, 1).Error
@@ -626,11 +607,7 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 	}, nil
 }
 
-func GetTransactionDetail(gdb *gorm.DB, id string) (*TransactionDetailView, error) {
-	return getTransactionDetail(gdb, id, true)
-}
-
-func getTransactionDetail(gdb *gorm.DB, id string, includeSourceContent bool) (*TransactionDetailView, error) {
+func getTransactionItem(gdb *gorm.DB, id string, roles []string) (*TransactionListItem, error) {
 	_, curPtr, err := getLocaleConfig(gdb)
 	if err != nil {
 		return nil, err
@@ -652,26 +629,15 @@ func getTransactionDetail(gdb *gorm.DB, id string, includeSourceContent bool) (*
 	}
 	txRow := rows[0]
 
-	const sourceColumns = `ts.id, ts.email_id, ts.role, ts.match_state, re.from_address, re.subject, re.received_at_utc`
-	columns, extractionJoin := sourceColumns, ""
-	if includeSourceContent {
-		columns += ", ts.match_score, re.cleaned_text, ee.extraction_model, ee.raw_llm_json"
-		extractionJoin = "LEFT JOIN email_extractions ee ON ee.email_id = ts.email_id"
-	}
-	sources := []TransactionSourceView{}
-	if err := gdb.Raw(`
-		SELECT `+columns+`
-		FROM transaction_sources ts
-		JOIN raw_emails re ON re.id = ts.email_id
-		`+extractionJoin+`
-		WHERE ts.transaction_id = ?
-		ORDER BY re.internal_date_ms ASC`, id).Scan(&sources).Error; err != nil {
-		return nil, err
-	}
-
-	roles := make([]string, 0, len(sources))
-	for _, s := range sources {
-		roles = append(roles, s.Role)
+	if roles == nil {
+		roles = []string{}
+		if err := gdb.Table("transaction_sources ts").
+			Joins("JOIN raw_emails re ON re.id = ts.email_id").
+			Where("ts.transaction_id = ?", id).
+			Order("re.internal_date_ms ASC").
+			Pluck("ts.role", &roles).Error; err != nil {
+			return nil, err
+		}
 	}
 	tags := []TransactionTagItem{}
 	if err := gdb.Raw(`
@@ -687,8 +653,6 @@ func getTransactionDetail(gdb *gorm.DB, id string, includeSourceContent bool) (*
 		isForeign = txRow.Currency != *curPtr
 	}
 
-	return &TransactionDetailView{
-		Transaction: txRow.listItem(txRow.PaymentMethodRaw, tags, roles, isForeign),
-		Sources:     sources,
-	}, nil
+	item := txRow.listItem(txRow.PaymentMethodRaw, tags, roles, isForeign)
+	return &item, nil
 }

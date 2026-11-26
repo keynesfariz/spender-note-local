@@ -1377,12 +1377,12 @@ func PromoteIgnoredEmail(gdb *gorm.DB, ctx context.Context, emailID string) (*Pr
 		return nil, err
 	}
 
-	detail, err := GetTransactionDetail(gdb, txID)
+	updated, err := getTransactionItem(gdb, txID, nil)
 	if err != nil {
 		return nil, err
 	}
 	return &PromoteIgnoredEmailResult{
-		Transaction: detail.Transaction,
+		Transaction: *updated,
 		EmailID:     emailID,
 		UsedLlm:     usedLlm,
 	}, nil

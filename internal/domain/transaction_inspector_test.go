@@ -3,7 +3,6 @@ package domain
 import (
 	"encoding/json"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -59,22 +58,13 @@ func TestTransactionInspector_DefersContentAndChecksCurrentMembership(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := GetTransactionDetail(gdb, combined.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(legacy.Sources) != 2 || legacy.Sources[0].CleanedText != "Paid merchant" ||
-		legacy.Sources[0].RawLlmJSON == nil || *legacy.Sources[0].RawLlmJSON != rawJSON {
-		t.Fatalf("legacy detail lost content: %#v", legacy.Sources)
-	}
-
 	inspector, err := GetTransactionInspector(gdb, combined.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(inspector.Transaction, legacy.Transaction) ||
+	if inspector.Transaction.ID != combined.ID ||
 		len(inspector.Sources) != 2 || inspector.Sources[0].EmailID != "earlier" || inspector.Sources[1].EmailID != "later" {
-		t.Fatalf("inspector detail = %#v, legacy = %#v", inspector, legacy)
+		t.Fatalf("inspector detail = %#v", inspector)
 	}
 	encoded, err := json.Marshal(inspector)
 	if err != nil {

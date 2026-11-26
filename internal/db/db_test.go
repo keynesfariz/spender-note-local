@@ -38,8 +38,8 @@ func TestOpenDatabase_FreshSchemaDefaultsAndIndexes(t *testing.T) {
 	if err := gdb.Raw(`SELECT version, dirty FROM schema_migrations`).Scan(&mig).Error; err != nil {
 		t.Fatalf("read schema_migrations: %v", err)
 	}
-	if mig.Version != baselineVersion || mig.Dirty {
-		t.Fatalf("expected schema_migrations version=%d dirty=false, got version=%d dirty=%v", baselineVersion, mig.Version, mig.Dirty)
+	if mig.Version != 1 || mig.Dirty {
+		t.Fatalf("expected schema_migrations version=1 dirty=false, got version=%d dirty=%v", mig.Version, mig.Dirty)
 	}
 
 	for _, idxName := range []string{
@@ -100,6 +100,30 @@ func TestOpenDatabase_FreshSchemaDefaultsAndIndexes(t *testing.T) {
 	}
 	if err := gdb.Create(&run).Error; err != nil {
 		t.Fatalf("expected sync_runs to accept phase='syncing', got error: %v", err)
+	}
+}
+
+func TestOpenDatabase_RejectsUnsupportedMigrationVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spender.db")
+	gdb, err := OpenDatabase(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	if err := gdb.Exec("UPDATE schema_migrations SET version = 8").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := OpenDatabase(path, false); err == nil || !strings.Contains(err.Error(), "schema version 8 is outside the current migration history") {
+		t.Fatalf("expected an explicit unsupported version error, got %v", err)
+	}
+	var version int
+	if err := gdb.Raw("SELECT version FROM schema_migrations").Scan(&version).Error; err != nil || version != 8 {
+		t.Fatalf("unsupported migration version changed: version=%d err=%v", version, err)
 	}
 }
 

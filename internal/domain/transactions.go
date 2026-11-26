@@ -445,8 +445,6 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 		case "expense", "income", "transfer":
 			conds = append(conds, "t.kind = ?")
 			args = append(args, params.Kind)
-			if params.Kind != "expense" {
-			}
 		default:
 			return nil, errors.New("Invalid transaction kind.")
 		}

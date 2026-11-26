@@ -20,7 +20,6 @@ import (
 )
 
 const DefaultLlmBaseURL = "http://localhost:9931/v1"
-const baselineVersion = 1
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
@@ -121,9 +120,6 @@ func runMigrations(sqlDB *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > 0 && version < baselineVersion {
-		return errors.New("database schema predates the new baseline; set DATABASE_PATH to a new database file")
-	}
 	if version < 1 {
 		hasAppSettings, err := tableExists(sqlDB, "app_settings")
 		if err != nil {
@@ -135,6 +131,9 @@ func runMigrations(sqlDB *sql.DB) error {
 	}
 
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		if version > 0 && errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("database schema version %d is outside the current migration history; set DATABASE_PATH to a new database file", version)
+		}
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	return nil

@@ -318,8 +318,7 @@ func SplitTransactionSource(gdb *gorm.DB, transactionID, emailID string) (string
 		var ext extInfo
 		if err := tx.Raw(`
 			SELECT ee.amount_minor, ee.currency, ee.occurred_at_utc, ee.merchant_raw,
-			       ee.category, ee.bank_account_hint, ee.payment_method_raw,
-			       ee.llm_account_id, re.sender_id
+			       ee.category, ee.llm_account_id, re.sender_id
 			FROM raw_emails re
 			LEFT JOIN email_extractions ee ON ee.email_id = re.id
 			WHERE re.id = ?`, emailID).Scan(&ext).Error; err != nil {

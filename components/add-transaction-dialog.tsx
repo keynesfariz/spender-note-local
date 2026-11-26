@@ -11,6 +11,13 @@ import {
   UNASSIGNED_ACCOUNT,
 } from "@/components/transaction-form"
 import { Field, FieldLabel } from "@/components/ui/field"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { accountsQuery } from "@/lib/api/accounts"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { categoriesQuery } from "@/lib/api/categories"
@@ -27,6 +34,11 @@ import {
   groupAmountInput,
   parseDecimalToMinorClient,
 } from "@/lib/format"
+
+const TRANSACTION_TYPE_OPTIONS = [
+  { value: "expense", label: "Expense" },
+  { value: "income", label: "Income" },
+] as const
 
 export function AddTransactionDialog({
   open,
@@ -162,19 +174,24 @@ export function AddTransactionDialog({
               <FieldLabel htmlFor={`${formId}-kind`}>
                 Transaction type
               </FieldLabel>
-              <select
-                id={`${formId}-kind`}
-                className="h-9 w-fit rounded-md border border-input bg-background px-3 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              <Select
+                items={TRANSACTION_TYPE_OPTIONS}
                 value={kind}
-                onChange={(event) =>
-                  setKind(
-                    event.target.value === "income" ? "income" : "expense"
-                  )
-                }
+                onValueChange={(value) => {
+                  if (value) setKind(value)
+                }}
               >
-                <option value="expense">Expense</option>
-                <option value="income">Income</option>
-              </select>
+                <SelectTrigger id={`${formId}-kind`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TRANSACTION_TYPE_OPTIONS.map(({ value, label }) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Field>
             {kind === "income" && accountQuery.isError && (
               <Alert variant="destructive">

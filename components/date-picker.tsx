@@ -62,7 +62,7 @@ export function DatePicker({
   id?: string
   ariaLabel?: string
   className?: string
-  time?: { value: string; onChange: (next: string) => void }
+  time?: { value: string; onChange: (next: string) => void; step?: number }
 }) {
   const [open, setOpen] = useState(false)
   const [keyboardOpen, setKeyboardOpen] = useState(false)
@@ -138,6 +138,7 @@ export function DatePicker({
               <Input
                 id={timeId}
                 type="time"
+                step={time.step}
                 required
                 value={time.value}
                 onChange={(event) => time.onChange(event.target.value)}

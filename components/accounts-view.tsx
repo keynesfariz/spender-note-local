@@ -2,6 +2,7 @@
 
 import { DetailDrawerContent } from "@/components/detail-drawer-content"
 import { IconTooltip } from "@/components/icon-tooltip"
+import { TransferFormDialog } from "@/components/transfer-form-dialog"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   CalendarRangeIcon,
@@ -55,12 +56,6 @@ import {
   formatUtcInTimezone,
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
-
-const TransferFormDialog = dynamic(() =>
-  import("@/components/transfer-form-dialog").then(
-    (mod) => mod.TransferFormDialog
-  )
-)
 
 const AccountFormDialog = dynamic(() =>
   import("@/components/account-form-dialog").then(
@@ -205,7 +200,6 @@ export function AccountsView() {
 
   const formTrigger = useRef<HTMLButtonElement>(null)
   const [formOpen, setFormOpen] = useState(false)
-  const [transferOpen, setTransferOpen] = useState(false)
   const [editingAccount, setEditingAccount] = useState<AccountSummary | null>(
     null
   )
@@ -275,14 +269,18 @@ export function AccountsView() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!hasCurrency || (accounts.data?.length ?? 0) < 2}
-            onClick={() => setTransferOpen(true)}
-          >
-            Transfer
-          </Button>
+          <TransferFormDialog
+            targets={[{}]}
+            timezone={settings.data?.timezone}
+            trigger={
+              <DrawerTrigger
+                render={<Button type="button" variant="outline" />}
+                disabled={!hasCurrency || (accounts.data?.length ?? 0) < 2}
+              >
+                Transfer
+              </DrawerTrigger>
+            }
+          />
           <Button
             type="button"
             disabled={!hasCurrency}
@@ -568,14 +566,6 @@ export function AccountsView() {
             )
           })}
         </div>
-      )}
-
-      {transferOpen && (
-        <TransferFormDialog
-          targets={[{}]}
-          timezone={settings.data?.timezone}
-          onClose={() => setTransferOpen(false)}
-        />
       )}
 
       {hasOpenedForm && (

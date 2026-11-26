@@ -78,7 +78,8 @@ import {
 } from "@/lib/api/types.generated"
 import {
   dateTimeInputToUtcIso,
-  formatMinorCurrency,
+  formatTransactionAmount,
+  transactionKindLabel,
   formatUtcInTimezone,
   minorToDecimalInput,
   groupAmountInput,
@@ -717,25 +718,12 @@ function InspectorForm({
       <div className="rounded-xl border bg-secondary/60 p-4">
         <p className="text-sm font-medium wrap-break-word text-secondary-foreground">
           <Badge variant="outline" className="mr-2">
-            {isTransfer ? "Transfer" : isIncome ? "Income" : "Expense"}
+            {transactionKindLabel(tx.kind)}
           </Badge>
           {tx.remark ?? tx.merchant}
         </p>
         <p className="mt-1 text-2xl font-semibold tracking-tight text-foreground tabular-nums">
-          {formatMinorCurrency(tx.amount_minor, tx.currency)}
-          {isTransfer &&
-            tx.destination_amount_minor != null &&
-            tx.destination_currency &&
-            tx.currency !== tx.destination_currency && (
-              <>
-                {" "}
-                →{" "}
-                {formatMinorCurrency(
-                  tx.destination_amount_minor,
-                  tx.destination_currency
-                )}
-              </>
-            )}
+          {formatTransactionAmount(tx)}
         </p>
         {isTransfer && (
           <p className="text-sm text-muted-foreground">

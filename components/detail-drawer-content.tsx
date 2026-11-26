@@ -83,6 +83,8 @@ export function DetailDrawerContent({
 export function CreateFormDrawer({
   open,
   onOpenChange,
+  onOpenChangeComplete,
+  trigger,
   formId,
   onSubmit,
   onInvalid,
@@ -93,6 +95,8 @@ export function CreateFormDrawer({
 }: Omit<DetailDrawerContentProps, "footer"> & {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onOpenChangeComplete?: ComponentProps<typeof Drawer>["onOpenChangeComplete"]
+  trigger?: ReactNode
   formId: string
   onSubmit: NonNullable<ComponentProps<"form">["onSubmit"]>
   onInvalid?: ComponentProps<"form">["onInvalid"]
@@ -100,7 +104,13 @@ export function CreateFormDrawer({
   submitDisabled?: boolean
 }) {
   return (
-    <Drawer open={open} onOpenChange={onOpenChange} swipeDirection="right">
+    <Drawer
+      open={open}
+      onOpenChange={onOpenChange}
+      onOpenChangeComplete={onOpenChangeComplete}
+      swipeDirection="right"
+    >
+      {trigger}
       <DetailDrawerContent
         {...content}
         footer={

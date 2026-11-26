@@ -10,6 +10,7 @@ import {
 } from "date-fns"
 
 import currencyExponents from "../internal/money/currency-exponents.json"
+import type { TransactionListItem } from "./api/types.generated"
 
 const CURRENCY_EXPONENTS: Readonly<Record<string, number>> = currencyExponents
 
@@ -77,6 +78,34 @@ export function formatSignedMinor(
 ): string {
   const formatted = formatMinorCurrency(amountMinor, currency)
   return amountMinor > 0 ? `+${formatted}` : formatted
+}
+
+export function transactionKindLabel(kind: TransactionListItem["kind"]): string {
+  if (kind === "transfer") return "Transfer"
+  if (kind === "income") return "Income"
+  return "Expense"
+}
+
+export function formatTransactionAmount({
+  kind,
+  amount_minor,
+  currency,
+  destination_amount_minor,
+  destination_currency,
+}: Pick<
+  TransactionListItem,
+  "kind" | "amount_minor" | "currency" | "destination_amount_minor" | "destination_currency"
+>): string {
+  const amount = formatMinorCurrency(amount_minor, currency)
+  if (
+    kind === "transfer" &&
+    destination_amount_minor != null &&
+    destination_currency &&
+    currency !== destination_currency
+  ) {
+    return `${amount} → ${formatMinorCurrency(destination_amount_minor, destination_currency)}`
+  }
+  return amount
 }
 
 function normalizeDecimalAmountString(raw: string, exponent: number): string {
@@ -270,7 +299,8 @@ function getTimeZoneOffsetMs(epochMs: number, timeZone: string): number {
 
 export function utcToTimeInputValue(
   utcIso: string,
-  timeZone: string | null | undefined
+  timeZone: string | null | undefined,
+  includeSeconds = false
 ): string {
   const parsed = parseISO(utcIso)
   if (!isValid(parsed)) return ""
@@ -278,13 +308,17 @@ export function utcToTimeInputValue(
     const parts = getDateTimeFormatter("en-US", timeZone || "UTC", {
       hour: "2-digit",
       minute: "2-digit",
+      second: includeSeconds ? "2-digit" : undefined,
       hourCycle: "h23",
     }).formatToParts(parsed)
     const h = parts.find((p) => p.type === "hour")?.value ?? "00"
     const m = parts.find((p) => p.type === "minute")?.value ?? "00"
-    return `${h === "24" ? "00" : h}:${m}`
+    const time = `${h === "24" ? "00" : h}:${m}`
+    if (!includeSeconds) return time
+    const seconds = parts.find((p) => p.type === "second")?.value ?? "00"
+    return `${time}:${seconds}`
   } catch {
-    return utcIso.slice(11, 16)
+    return utcIso.slice(11, includeSeconds ? 19 : 16)
   }
 }
 

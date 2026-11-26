@@ -54,7 +54,11 @@ import {
   buildCategoryIconMap,
   buildCategorySelectOptions,
 } from "@/lib/categories"
-import { formatMinorCurrency, formatUtcInTimezone } from "@/lib/format"
+import {
+  formatTransactionAmount,
+  formatUtcInTimezone,
+  transactionKindLabel,
+} from "@/lib/format"
 
 function sourceBadgeLabel(tx: TransactionListItem): string {
   if (tx.sourceCount > 1) return `${tx.sourceCount} emails`
@@ -649,20 +653,9 @@ const TransactionRow = memo(function TransactionRow({
   onMarkReviewed: (ids: string[]) => void
 }) {
   const title = tx.remark ?? tx.merchant
-  const outgoingAmount = formatMinorCurrency(tx.amount_minor, tx.currency)
   const isTransfer = tx.kind === "transfer"
-  const kindLabel = isTransfer
-    ? "Transfer"
-    : tx.kind === "income"
-      ? "Income"
-      : "Expense"
-  const formattedAmount =
-    isTransfer &&
-    tx.destination_amount_minor != null &&
-    tx.destination_currency &&
-    tx.currency !== tx.destination_currency
-      ? `${outgoingAmount} → ${formatMinorCurrency(tx.destination_amount_minor, tx.destination_currency)}`
-      : outgoingAmount
+  const kindLabel = transactionKindLabel(tx.kind)
+  const formattedAmount = formatTransactionAmount(tx)
   return (
     <li>
       {separated && <Separator className="my-1" />}

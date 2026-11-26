@@ -200,3 +200,138 @@ func TestListTransactions_LedgerRangeMissingMidnight(t *testing.T) {
 		t.Fatalf("unexpected local day boundary: %+v", list.Ledger)
 	}
 }
+
+func TestMonthlySpending_IncomeFiltersAndMonthlyCardPayments(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	category, err := CreateCategory(gdb, CreateCategoryInput{Name: "Dinner", Icon: "Tag"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dinner, err := CreateTag(gdb, CreateTagInput{Name: "Dinner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra, err := CreateTag(gdb, CreateTagInput{Name: "Extra"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	funding := seedTestAccount(t, gdb, "funding", "Wallet", "IDR")
+	if err := gdb.Model(&db.Account{}).Where("id = ?", funding).Update("type", "digital_wallet").Error; err != nil {
+		t.Fatal(err)
+	}
+	card := seedTestAccount(t, gdb, "card", "Local card", "IDR")
+	foreignCard := seedTestAccount(t, gdb, "foreign-card", "Foreign card", "USD")
+	seed := func(tx db.Transaction, tags ...string) {
+		t.Helper()
+		tx.SourceType = "manual"
+		tx.AccountID = &funding
+		tx.CreatedAtUtc = tx.OccurredAtUtc
+		tx.UpdatedAtUtc = tx.OccurredAtUtc
+		if tx.CategoryID == "" {
+			tx.CategoryID = category.ID
+		}
+		if tx.Currency == "" {
+			tx.Currency = "IDR"
+		}
+		if err := gdb.Create(&tx).Error; err != nil {
+			t.Fatal(err)
+		}
+		for _, tag := range tags {
+			if err := gdb.Create(&db.TransactionTag{TransactionID: tx.ID, TagID: tag, CreatedAtUtc: tx.CreatedAtUtc}).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	seed(db.Transaction{ID: "expense", AmountMinor: 1_000_000, Merchant: "Shared dinner", OccurredAtUtc: "2026-11-30T16:59:59Z"}, dinner.ID, extra.ID)
+	seed(db.Transaction{ID: "income", Kind: "income", AmountMinor: 750_000, OccurredAtUtc: "2026-11-30T16:59:59Z"}, dinner.ID)
+	t.Run("shared dinner nets under tag and with no filter", func(t *testing.T) {
+		for _, tag := range []string{"", dinner.ID, "DINNER"} {
+			s, err := GetFilteredMonthlySpendingSummary(gdb, "2026-11", "", tag)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s.TotalSpentMinor != 1_000_000 || s.IncomeMinor != 750_000 || s.NetSpentMinor != 250_000 || s.TransactionCount != 2 {
+				t.Fatalf("tag %q: unexpected summary: %+v", tag, s)
+			}
+			if len(s.ByCategory) != 1 || s.ByCategory[0].TotalMinor != 1_000_000 || s.ByCategory[0].Count != 1 {
+				t.Fatalf("expense breakdown must exclude income and count tagged expense once: %+v", s.ByCategory)
+			}
+		}
+	})
+
+	cardAmount, foreignAmount := int64(900_000), int64(1000)
+	localCurrency, foreignCurrency := "IDR", "USD"
+	seed(db.Transaction{ID: "local-paid", Kind: "transfer", AmountMinor: cardAmount, DestinationAccountID: &card, DestinationAmountMinor: &cardAmount, DestinationCurrency: &localCurrency, OccurredAtUtc: "2026-11-25T10:00:00Z"}, dinner.ID)
+	seed(db.Transaction{ID: "foreign-paid", Kind: "transfer", AmountMinor: 200_000, DestinationAccountID: &foreignCard, DestinationAmountMinor: &foreignAmount, DestinationCurrency: &foreignCurrency, OccurredAtUtc: "2026-11-25T10:00:00Z"})
+	seed(db.Transaction{ID: "untagged-income", Kind: "income", AmountMinor: 500_000, OccurredAtUtc: "2026-11-30T16:59:59Z"})
+	seed(db.Transaction{ID: "next-month-income", Kind: "income", AmountMinor: 150_000, OccurredAtUtc: "2026-11-30T17:00:00Z"}, dinner.ID)
+	seed(db.Transaction{ID: "foreign-expense", AmountMinor: 100, Currency: "USD", OccurredAtUtc: "2026-11-27T10:00:00Z"}, dinner.ID)
+	for _, tc := range []struct {
+		name, month, category, tag                                       string
+		expenses, income, net, payments, foreignEntries, foreignPayments int64
+	}{
+		{"unfiltered with additional income", "2026-11", "", "", 1_000_000, 1_250_000, -250_000, 900_000, 1, 1},
+		{"intersect category and tag", "2026-11", category.Name, dinner.ID, 1_000_000, 750_000, 250_000, 900_000, 1, 1},
+		{"excluded category retains all card payments", "2026-11", "Different category", dinner.ID, 0, 0, 0, 900_000, 0, 1},
+		{"next calendar month can be negative", "2026-12", "", dinner.ID, 0, 150_000, -150_000, 0, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := GetFilteredMonthlySpendingSummary(gdb, tc.month, tc.category, tc.tag)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s.TotalSpentMinor != tc.expenses || s.IncomeMinor != tc.income || s.NetSpentMinor != tc.net ||
+				s.CardPaymentsMinor != tc.payments || s.ForeignCurrencyCount != tc.foreignEntries || s.ForeignCardPaymentCount != tc.foreignPayments {
+				t.Fatalf("unexpected summary: %+v", s)
+			}
+		})
+	}
+}
+
+func TestListTransactions_TransferKindMatchesEitherAccount(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	from := seedTestAccount(t, gdb, "from-account", "Source card", "IDR")
+	to := seedTestAccount(t, gdb, "to-account", "Destination card", "USD")
+	timestamp, toPosting := "2026-11-22T10:00:00Z", "2026-11-22T11:00:00Z"
+	row, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor: 100_000, OccurredAtUtc: timestamp, Merchant: "Transfer", AccountID: &from,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Model(&db.Transaction{}).Where("id = ?", row.ID).Updates(map[string]any{
+		"kind": "transfer", "destination_account_id": to, "destination_amount_minor": 500,
+		"destination_currency": "USD", "source_posted_at_utc": timestamp, "destination_posted_at_utc": toPosting,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor: 100_000, OccurredAtUtc: timestamp, Merchant: "Expense", AccountID: &from,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, account := range []string{from, to, ""} {
+		result, err := ListTransactions(gdb, ListTransactionsParams{AccountID: account, Kind: "transfer"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.TotalCount != 1 || len(result.Items) != 1 || result.Items[0].ID != row.ID || result.Items[0].Kind != "transfer" {
+			t.Fatalf("account scope %q should contain one transfer: %+v", account, result)
+		}
+		item := result.Items[0]
+		if item.DestinationAccountName == nil || *item.DestinationAccountName != "Destination card" || item.DestinationPostedAtUtc == nil || *item.DestinationPostedAtUtc != toPosting {
+			t.Fatalf("missing transfer details: %+v", item)
+		}
+	}
+	detail, err := GetTransactionDetail(gdb, row.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item := detail.Transaction; item.AccountID == nil || *item.AccountID != from || item.DestinationAccountID == nil || *item.DestinationAccountID != to ||
+		item.DestinationAmountMinor == nil || *item.DestinationAmountMinor != 500 || item.DestinationCurrency == nil || *item.DestinationCurrency != "USD" ||
+		item.SourcePostedAtUtc == nil || *item.SourcePostedAtUtc != timestamp {
+		t.Fatalf("missing transfer sides in detail: %+v", item)
+	}
+}

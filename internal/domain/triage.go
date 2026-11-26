@@ -919,14 +919,15 @@ func UndoTriageVerdict(gdb *gorm.DB, input TriageUndoInput) (*TriageUndoResult, 
 			if acct.Status != "provisional" {
 				continue
 			}
-			var txRefCnt, senderRefCnt int64
-			if err := tx.Model(&db.Transaction{}).Where("account_id = ?", acctID).Count(&txRefCnt).Error; err != nil {
+			hasLedgerRows, err := hasAccountLedgerRows(tx, acctID)
+			if err != nil {
 				return err
 			}
+			var senderRefCnt int64
 			if err := tx.Model(&db.Sender{}).Where("default_account_id = ?", acctID).Count(&senderRefCnt).Error; err != nil {
 				return err
 			}
-			if txRefCnt == 0 && senderRefCnt == 0 {
+			if !hasLedgerRows && senderRefCnt == 0 {
 				if err := tx.Where("id = ?", acctID).Delete(&db.Account{}).Error; err != nil {
 					return err
 				}

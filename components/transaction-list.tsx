@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query"
 import {
+  ArrowRightLeftIcon,
   CheckCircle2Icon,
   Clock3Icon,
   CopyIcon,
@@ -77,6 +78,15 @@ function getMergeEligibility(selected: TransactionListItem[]): {
     }
   }
 
+  if (selected.some((tx) => tx.kind === "income" || tx.kind === "transfer")) {
+    return {
+      canDuplicate: false,
+      duplicateReason: "Duplicate merge is available for expenses.",
+      canCombine: false,
+      combineReason: "Combine is available for expenses.",
+    }
+  }
+
   const baseCurrency = selected[0].currency
   const baseAccount = selected[0].account_id
   const sameCurrencyAndAccount = selected.every(
@@ -143,6 +153,7 @@ export function TransactionList({
   onSelectTransaction,
   onOpenDuplicateMerge,
   onOpenCombine,
+  onMarkAsTransfer,
   onMarkReviewed,
   isMarkingReviewed,
   reviewErrorMessage,
@@ -179,6 +190,7 @@ export function TransactionList({
   onSelectTransaction: (id: string) => void
   onOpenDuplicateMerge: () => void
   onOpenCombine: () => void
+  onMarkAsTransfer: () => void
   onMarkReviewed: (ids: string[]) => void
   isMarkingReviewed: boolean
   reviewErrorMessage: string | null
@@ -405,6 +417,29 @@ export function TransactionList({
                 </span>
               </Button>
             </IconTooltip>
+            <IconTooltip label="Mark as transfer">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-8 px-0 md:w-auto md:px-2.5"
+                disabled={
+                  isMarkingReviewed ||
+                  isDeleting ||
+                  selectedTransactions.length === 0 ||
+                  selectedTransactions.some(
+                    (tx) =>
+                      tx.kind === "transfer" ||
+                      tx.kind === "income" ||
+                      tx.sourceCount === 0
+                  )
+                }
+                onClick={onMarkAsTransfer}
+              >
+                <ArrowRightLeftIcon aria-hidden="true" />
+                <span className="sr-only md:not-sr-only">Mark as transfer</span>
+              </Button>
+            </IconTooltip>
             <IconTooltip label="Duplicate merge">
               <Button
                 type="button"
@@ -614,7 +649,20 @@ const TransactionRow = memo(function TransactionRow({
   onMarkReviewed: (ids: string[]) => void
 }) {
   const title = tx.remark ?? tx.merchant
-  const formattedAmount = formatMinorCurrency(tx.amount_minor, tx.currency)
+  const outgoingAmount = formatMinorCurrency(tx.amount_minor, tx.currency)
+  const isTransfer = tx.kind === "transfer"
+  const kindLabel = isTransfer
+    ? "Transfer"
+    : tx.kind === "income"
+      ? "Income"
+      : "Expense"
+  const formattedAmount =
+    isTransfer &&
+    tx.destination_amount_minor != null &&
+    tx.destination_currency &&
+    tx.currency !== tx.destination_currency
+      ? `${outgoingAmount} → ${formatMinorCurrency(tx.destination_amount_minor, tx.destination_currency)}`
+      : outgoingAmount
   return (
     <li>
       {separated && <Separator className="my-1" />}
@@ -623,14 +671,14 @@ const TransactionRow = memo(function TransactionRow({
         className="flex items-center gap-2 rounded-lg p-3 transition-colors hover:bg-muted data-[selected=true]:bg-secondary/60 data-[selected=true]:hover:bg-secondary"
       >
         <Checkbox
-          aria-label={`Select ${title} (${formattedAmount})`}
+          aria-label={`Select ${kindLabel.toLowerCase()} ${title} (${formattedAmount})`}
           checked={isSelected}
           onCheckedChange={(checked) => onToggleRow(tx.id, Boolean(checked))}
         />
         <Button
           type="button"
           variant="ghost"
-          aria-label={`Inspect ${title} (${formattedAmount})${tx.manual_override === 1 ? ", edited" : ""}`}
+          aria-label={`Inspect ${kindLabel.toLowerCase()} ${title} (${formattedAmount})${tx.manual_override === 1 ? ", edited" : ""}`}
           onClick={() => onSelectTransaction(tx.id)}
           className="grid h-auto min-w-0 flex-1 grid-cols-1 items-start gap-x-4 gap-y-2 px-2 text-left font-normal whitespace-normal hover:bg-transparent sm:grid-cols-[minmax(0,1fr)_auto] dark:hover:bg-transparent"
         >
@@ -650,10 +698,15 @@ const TransactionRow = memo(function TransactionRow({
                 (tx.payment_method_raw
                   ? `Unassigned (${tx.payment_method_raw})`
                   : "Unassigned")}{" "}
-              · {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
+              {isTransfer && (
+                <> → {tx.destination_account_name ?? "Unknown account"}</>
+              )}
+              {" · "}
+              {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
             </span>
           </span>
           <span className="flex flex-wrap items-center gap-1.5 sm:col-start-1 sm:row-start-2">
+            <Badge variant="outline">{kindLabel}</Badge>
             <Badge variant="secondary" className="gap-1">
               <DynamicIcon name={categoryIcon} className="size-3" />
               {tx.category}

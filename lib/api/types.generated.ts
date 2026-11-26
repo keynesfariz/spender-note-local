@@ -171,6 +171,10 @@ export interface MonthlySpendingSummary {
   startUtc: string | null
   endUtc: string | null
   totalSpentMinor: number
+  incomeMinor: number
+  netSpentMinor: number
+  cardPaymentsMinor: number
+  foreignCardPaymentCount: number
   transactionCount: number
   foreignCurrencyCount: number
   byCategory: SpendingGroupRow[]
@@ -203,8 +207,15 @@ export interface TransactionTagItem {
 export interface TransactionListItem {
   id: string
   source_type: "gmail" | "manual"
+  kind: string
   account_id: string | null
   account_name: string | null
+  destination_account_id: string | null
+  destination_account_name: string | null
+  destination_amount_minor: number | null
+  destination_currency: string | null
+  source_posted_at_utc: string | null
+  destination_posted_at_utc: string | null
   payment_method_raw: string | null
   amount_minor: number
   currency: string

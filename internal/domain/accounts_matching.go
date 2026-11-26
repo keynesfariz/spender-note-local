@@ -299,7 +299,7 @@ func MergeAccounts(gdb *gorm.DB, sourceAccountID, targetAccountID string) (map[s
 	}
 
 	var result map[string]any
-	err := gdb.Transaction(func(tx *gorm.DB) error {
+	err := db.RunImmediateTx(gdb, func(tx *gorm.DB) error {
 		var source, target db.Account
 		if err := tx.Where("id = ?", sourceAccountID).First(&source).Error; err != nil {
 			return errors.New("Source account not found.")
@@ -314,9 +314,27 @@ func MergeAccounts(gdb *gorm.DB, sourceAccountID, targetAccountID string) (map[s
 			return errors.New("Credit card accounts can only be merged with other credit card accounts.")
 		}
 
+		var collapsed db.Transaction
+		err := tx.Select("id").Where(
+			"(account_id = ? AND destination_account_id = ?) OR (account_id = ? AND destination_account_id = ?)",
+			sourceAccountID, targetAccountID, targetAccountID, sourceAccountID,
+		).Take(&collapsed).Error
+		if err == nil {
+			return fmt.Errorf("Resolve transfer %s between these accounts before merging them.", collapsed.ID)
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
 		txMove := tx.Model(&db.Transaction{}).Where("account_id = ?", sourceAccountID).Update("account_id", targetAccountID)
 		if txMove.Error != nil {
 			return txMove.Error
+		}
+		destinationMove := tx.Model(&db.Transaction{}).
+			Where("destination_account_id = ?", sourceAccountID).
+			Update("destination_account_id", targetAccountID)
+		if destinationMove.Error != nil {
+			return destinationMove.Error
 		}
 
 		sourceIdents, err := listIdentifiersForAccount(tx, sourceAccountID)
@@ -392,7 +410,7 @@ func MergeAccounts(gdb *gorm.DB, sourceAccountID, targetAccountID string) (map[s
 		}
 		result = map[string]any{
 			"account":           built,
-			"movedTransactions": txMove.RowsAffected,
+			"movedTransactions": txMove.RowsAffected + destinationMove.RowsAffected,
 			"movedIdentifiers":  movedIdents,
 		}
 		return nil

@@ -61,23 +61,23 @@ export function BreakdownPanels({
 
   return (
     <section
-      aria-label="Spending breakdowns"
+      aria-label="Expense breakdowns"
       className="grid gap-4 md:grid-cols-3"
     >
       <BreakdownCard
-        title="By Category"
+        title="Expenses by category"
         emptyText="No local-currency spending by category yet."
         rows={summary.byCategory}
         currency={currency}
       />
       <BreakdownCard
-        title="Top Merchants"
+        title="Expenses by merchant"
         emptyText="No local-currency merchants yet."
         rows={summary.byMerchant}
         currency={currency}
       />
       <BreakdownCard
-        title="By Account"
+        title="Expenses by account"
         emptyText="No local-currency spending by account yet."
         rows={summary.byAccount}
         currency={currency}

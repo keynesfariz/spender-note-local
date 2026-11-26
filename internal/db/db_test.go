@@ -1,6 +1,9 @@
 package db
 
 import (
+	"bytes"
+	"database/sql"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -38,8 +41,8 @@ func TestOpenDatabase_FreshSchemaDefaultsAndIndexes(t *testing.T) {
 	if err := gdb.Raw(`SELECT version, dirty FROM schema_migrations`).Scan(&mig).Error; err != nil {
 		t.Fatalf("read schema_migrations: %v", err)
 	}
-	if mig.Version != baselineVersion || mig.Dirty {
-		t.Fatalf("expected schema_migrations version=%d dirty=false, got version=%d dirty=%v", baselineVersion, mig.Version, mig.Dirty)
+	if mig.Version != 8 || mig.Dirty {
+		t.Fatalf("expected schema_migrations version=8 dirty=false, got version=%d dirty=%v", mig.Version, mig.Dirty)
 	}
 
 	for _, idxName := range []string{
@@ -63,8 +66,8 @@ func TestOpenDatabase_FreshSchemaDefaultsAndIndexes(t *testing.T) {
 	if err := gdb.Order("is_system ASC, sort_order ASC").Find(&cats).Error; err != nil {
 		t.Fatalf("load seeded categories: %v", err)
 	}
-	if len(cats) != 11 {
-		t.Fatalf("expected 11 seeded categories, got %d", len(cats))
+	if len(cats) != 13 {
+		t.Fatalf("expected 13 seeded categories, got %d", len(cats))
 	}
 	if cats[0].Name != "Housing" || cats[0].Icon != "Home" || cats[0].IsSystem != 0 {
 		t.Fatalf("unexpected first seeded category: %+v", cats[0])
@@ -293,5 +296,76 @@ func TestRunImmediateTx_CommitAndRollback(t *testing.T) {
 	}
 	if rollbackCount != 0 {
 		t.Fatalf("expected rolled-back row count 0, got %d", rollbackCount)
+	}
+}
+
+func TestUpgradeTransactionKindsFromBaseline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "baseline.sqlite")
+	conn, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	driver, err := newSQLiteMigrateDriver(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := migrationsFS.ReadFile("migrations/000007_baseline.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := driver.Run(bytes.NewReader(baseline)); err != nil {
+		t.Fatal(err)
+	}
+	if err := driver.SetVersion(7, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(`
+		INSERT INTO raw_emails (id, gmail_message_id, from_address, subject, cleaned_text, internal_date_ms, received_at_utc, status)
+		  VALUES ('e', 'gmail-e', 'bank@example.test', 'Charge', 'Charge', 1, '2026-01-01T00:00:00Z', 'extracted');
+		INSERT INTO transactions (id, source_type, amount_minor, currency, occurred_at_utc, merchant, category_id, created_at_utc, updated_at_utc)
+		  VALUES ('original', 'gmail', 100, 'IDR', '2026-01-01T00:00:00Z', 'Charge', 'cat-other', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+		INSERT INTO transaction_sources (id, transaction_id, email_id, role, match_state)
+		  VALUES ('source', 'original', 'e', 'card_charge', 'single');
+		INSERT INTO tags (id, name, normalized_name, created_at_utc)
+		  VALUES ('tag', 'Dinner', 'dinner', '2026-01-01T00:00:00Z');
+		INSERT INTO transaction_tags (transaction_id, tag_id, created_at_utc)
+		  VALUES ('original', 'tag', '2026-01-01T00:00:00Z');`); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			gdb, err := OpenDatabase(path, false)
+			if err != nil {
+				errs <- err
+				return
+			}
+			sqlDB, err := gdb.DB()
+			if err == nil {
+				defer sqlDB.Close()
+				var count int64
+				err = gdb.Raw(`
+					SELECT COUNT(*) FROM transactions t
+					JOIN transaction_sources ts ON ts.transaction_id = t.id
+					JOIN transaction_tags tt ON tt.transaction_id = t.id
+					WHERE t.id = 'original' AND t.kind = 'expense' AND t.amount_minor = 100
+					  AND t.destination_account_id IS NULL AND ts.email_id = 'e' AND tt.tag_id = 'tag'
+				`).Scan(&count).Error
+				if err == nil && count != 1 {
+					err = fmt.Errorf("migration retained %d complete legacy rows, want 1", count)
+				}
+			}
+			errs <- err
+		}()
+	}
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
 	}
 }

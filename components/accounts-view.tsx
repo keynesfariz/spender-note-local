@@ -56,6 +56,12 @@ import {
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
+const TransferFormDialog = dynamic(() =>
+  import("@/components/transfer-form-dialog").then(
+    (mod) => mod.TransferFormDialog
+  )
+)
+
 const AccountFormDialog = dynamic(() =>
   import("@/components/account-form-dialog").then(
     (mod) => mod.AccountFormDialog
@@ -199,6 +205,7 @@ export function AccountsView() {
 
   const formTrigger = useRef<HTMLButtonElement>(null)
   const [formOpen, setFormOpen] = useState(false)
+  const [transferOpen, setTransferOpen] = useState(false)
   const [editingAccount, setEditingAccount] = useState<AccountSummary | null>(
     null
   )
@@ -267,15 +274,25 @@ export function AccountsView() {
           </p>
         </div>
 
-        <Button
-          type="button"
-          disabled={!hasCurrency}
-          onPointerEnter={preloadAccountFormDialog}
-          onFocus={preloadAccountFormDialog}
-          onClick={(event) => openAccountForm(null, event.currentTarget)}
-        >
-          Add account
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!hasCurrency || (accounts.data?.length ?? 0) < 2}
+            onClick={() => setTransferOpen(true)}
+          >
+            Transfer
+          </Button>
+          <Button
+            type="button"
+            disabled={!hasCurrency}
+            onPointerEnter={preloadAccountFormDialog}
+            onFocus={preloadAccountFormDialog}
+            onClick={(event) => openAccountForm(null, event.currentTarget)}
+          >
+            Add account
+          </Button>
+        </div>
       </div>
 
       {!settings.isPending && !hasCurrency && (
@@ -551,6 +568,14 @@ export function AccountsView() {
             )
           })}
         </div>
+      )}
+
+      {transferOpen && (
+        <TransferFormDialog
+          targets={[{}]}
+          timezone={settings.data?.timezone}
+          onClose={() => setTransferOpen(false)}
+        />
       )}
 
       {hasOpenedForm && (

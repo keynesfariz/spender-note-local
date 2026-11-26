@@ -40,16 +40,16 @@ type OAuthState struct {
 func (OAuthState) TableName() string { return "oauth_states" }
 
 type Account struct {
-	ID                     string  `gorm:"column:id;primaryKey" json:"id"`
-	Name                   string  `gorm:"column:name;not null" json:"name"`
-	Type                   string  `gorm:"column:type;not null" json:"type"`
-	Currency               string  `gorm:"column:currency;not null" json:"currency"`
-	InitialBalanceMinor    *int64  `gorm:"column:initial_balance_minor" json:"initial_balance_minor"`
-	InitialBalanceAsOfUtc  string  `gorm:"column:initial_balance_as_of_utc;not null" json:"initial_balance_as_of_utc"`
-	Last4                  *string `gorm:"column:last4" json:"last4"`
-	StatementDay           *int    `gorm:"column:statement_day" json:"statement_day"`
-	Status                 string  `gorm:"column:status;not null;default:confirmed" json:"status"`
-	CreatedAtUtc           string  `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
+	ID                    string  `gorm:"column:id;primaryKey" json:"id"`
+	Name                  string  `gorm:"column:name;not null" json:"name"`
+	Type                  string  `gorm:"column:type;not null" json:"type"`
+	Currency              string  `gorm:"column:currency;not null" json:"currency"`
+	InitialBalanceMinor   *int64  `gorm:"column:initial_balance_minor" json:"initial_balance_minor"`
+	InitialBalanceAsOfUtc string  `gorm:"column:initial_balance_as_of_utc;not null" json:"initial_balance_as_of_utc"`
+	Last4                 *string `gorm:"column:last4" json:"last4"`
+	StatementDay          *int    `gorm:"column:statement_day" json:"statement_day"`
+	Status                string  `gorm:"column:status;not null;default:confirmed" json:"status"`
+	CreatedAtUtc          string  `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
 }
 
 func (Account) TableName() string { return "accounts" }
@@ -170,21 +170,28 @@ type SenderTriagePolicy struct {
 func (SenderTriagePolicy) TableName() string { return "sender_triage_policies" }
 
 type Transaction struct {
-	ID               string  `gorm:"column:id;primaryKey" json:"id"`
-	SourceType       string  `gorm:"column:source_type;not null" json:"source_type"`
-	AccountID        *string `gorm:"column:account_id" json:"account_id"`
-	AmountMinor      int64   `gorm:"column:amount_minor;not null" json:"amount_minor"`
-	Currency         string  `gorm:"column:currency;not null" json:"currency"`
-	OccurredAtUtc    string  `gorm:"column:occurred_at_utc;not null" json:"occurred_at_utc"`
-	Merchant         string  `gorm:"column:merchant;not null" json:"merchant"`
-	Remark           *string `gorm:"column:remark" json:"remark"`
-	RemarkUserEdited bool    `gorm:"column:remark_user_edited;not null;default:0" json:"remark_user_edited"`
-	CategoryID       string  `gorm:"column:category_id;not null" json:"category_id"`
-	ManualOverride   int     `gorm:"column:manual_override;not null;default:0" json:"manual_override"`
-	Reviewed         int     `gorm:"column:reviewed;not null" json:"reviewed"`
-	Note             *string `gorm:"column:note" json:"note"`
-	CreatedAtUtc     string  `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
-	UpdatedAtUtc     string  `gorm:"column:updated_at_utc;not null" json:"updated_at_utc"`
+	ID                     string  `gorm:"column:id;primaryKey" json:"id"`
+	SourceType             string  `gorm:"column:source_type;not null" json:"source_type"`
+	Kind                   string  `gorm:"column:kind;not null;default:expense" json:"kind"`
+	DestinationAccountID   *string `gorm:"column:destination_account_id" json:"destination_account_id"`
+	DestinationAmountMinor *int64  `gorm:"column:destination_amount_minor" json:"destination_amount_minor"`
+	DestinationCurrency    *string `gorm:"column:destination_currency" json:"destination_currency"`
+	SourcePostedAtUtc      *string `gorm:"column:source_posted_at_utc" json:"source_posted_at_utc"`
+	DestinationPostedAtUtc *string `gorm:"column:destination_posted_at_utc" json:"destination_posted_at_utc"`
+	AccountID              *string `gorm:"column:account_id" json:"account_id"`
+	AmountMinor            int64   `gorm:"column:amount_minor;not null" json:"amount_minor"`
+	Currency               string  `gorm:"column:currency;not null" json:"currency"`
+	OccurredAtUtc          string  `gorm:"column:occurred_at_utc;not null" json:"occurred_at_utc"`
+	Merchant               string  `gorm:"column:merchant;not null" json:"merchant"`
+	Remark                 *string `gorm:"column:remark" json:"remark"`
+	RemarkUserEdited       bool    `gorm:"column:remark_user_edited;not null;default:0" json:"remark_user_edited"`
+	CategoryID             string  `gorm:"column:category_id;not null" json:"category_id"`
+	AmbiguousSourceAmount  bool    `gorm:"column:ambiguous_source_amount;not null;default:false" json:"-"`
+	ManualOverride         int     `gorm:"column:manual_override;not null;default:0" json:"manual_override"`
+	Reviewed               int     `gorm:"column:reviewed;not null" json:"reviewed"`
+	Note                   *string `gorm:"column:note" json:"note"`
+	CreatedAtUtc           string  `gorm:"column:created_at_utc;not null" json:"created_at_utc"`
+	UpdatedAtUtc           string  `gorm:"column:updated_at_utc;not null" json:"updated_at_utc"`
 }
 
 func (Transaction) TableName() string { return "transactions" }

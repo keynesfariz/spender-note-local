@@ -31,6 +31,7 @@ func GET(w http.ResponseWriter, r *http.Request) {
 		Category:       q.Get("category"),
 		Tag:            q.Get("tag"),
 		AccountID:      q.Get("accountId"),
+		Kind:           q.Get("kind"),
 		Search:         q.Get("search"),
 		UnreviewedOnly: q.Get("unreviewedOnly") == "true" || q.Get("unreviewedOnly") == "1",
 		ShowSkipped:    showSkippedPtr,
@@ -55,7 +56,10 @@ func POST(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	tx, err := domain.CreateManualTransaction(gdb, input)
+	if input.Kind != "" && !httpx.AllowLocalRequest(w, r, true) {
+		return
+	}
+	tx, err := domain.CreateManualTransaction(gdb.WithContext(r.Context()), input)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return

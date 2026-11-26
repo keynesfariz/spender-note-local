@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"fmt"
 
 	"gorm.io/gorm"
@@ -19,7 +20,7 @@ func RunImmediateTx(gdb *gorm.DB, fn func(tx *gorm.DB) error) error {
 		committed := false
 		defer func() {
 			if !committed {
-				_ = tx.Exec("ROLLBACK").Error
+				_ = tx.WithContext(context.WithoutCancel(tx.Statement.Context)).Exec("ROLLBACK").Error
 			}
 		}()
 

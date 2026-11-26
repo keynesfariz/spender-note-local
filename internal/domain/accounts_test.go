@@ -2,6 +2,7 @@ package domain
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -274,6 +275,147 @@ func seedAccountTx(t *testing.T, gdb *gorm.DB, id, accountID string, amountMinor
 	}
 	if err := gdb.Create(&tx).Error; err != nil {
 		t.Fatalf("seed tx %s: %v", id, err)
+	}
+}
+
+func TestAccountMovements_TransfersAndIncomeRespectEachPostingAndAnchor(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	configureTestLocale(t, gdb, "UTC", "IDR")
+	bank := seedTestAccount(t, gdb, "bank", "Bank", "IDR")
+	wallet := seedTestAccount(t, gdb, "wallet", "Wallet", "IDR")
+	card := seedTestAccount(t, gdb, "card", "Card", "USD")
+	initial := "2026-11-01T00:00:00Z"
+	for _, account := range []struct {
+		id, kind string
+		initial  int64
+	}{{bank, "debit_card", 1000}, {wallet, "digital_wallet", 0}, {card, "credit_card", 500}} {
+		if err := gdb.Model(&db.Account{}).Where("id = ?", account.id).Updates(map[string]any{
+			"type": account.kind, "initial_balance_minor": account.initial, "initial_balance_as_of_utc": initial,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := gdb.Model(&db.Account{}).Where("id = ?", card).Update("statement_day", 20).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	noon := "2026-11-23T12:00:00Z"
+	now := time.Date(2026, 11, 23, 16, 0, 0, 0, time.UTC)
+	for _, anchor := range []struct {
+		id     string
+		actual int64
+	}{{bank, 900}, {card, 500}} {
+		if _, err := reconcileAccountAt(gdb, ReconcileAccountInput{
+			AccountID: anchor.id, ActualBalanceMinor: anchor.actual, RecordedAtUtc: &noon,
+		}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedAccountMovement(t, gdb, "payment", bank, "IDR", 100, noon, map[string]any{
+		"kind": "transfer", "destination_account_id": card, "destination_amount_minor": 30,
+		"destination_currency": "USD", "source_posted_at_utc": "2026-11-23T09:00:00Z",
+		"destination_posted_at_utc": "2026-11-23T15:00:00Z",
+	})
+	seedAccountMovement(t, gdb, "same-as-reconciliation", bank, "IDR", 1, noon, map[string]any{
+		"kind": "transfer", "destination_account_id": card, "destination_amount_minor": 1, "destination_currency": "USD",
+	})
+	seedAccountMovement(t, gdb, "card-top-up", card, "USD", 10, "2026-11-23T14:00:00Z", map[string]any{
+		"kind": "transfer", "destination_account_id": wallet, "destination_amount_minor": 50, "destination_currency": "IDR",
+	})
+	seedAccountMovement(t, gdb, "future", wallet, "IDR", 20, "2026-11-23T18:00:00Z", map[string]any{
+		"kind": "transfer", "destination_account_id": bank, "destination_amount_minor": 20, "destination_currency": "IDR",
+	})
+	seedAccountMovement(t, gdb, "bank-income", bank, "IDR", 40, "2026-11-23T13:00:00Z", map[string]any{"kind": "income"})
+	seedAccountMovement(t, gdb, "card-income", card, "USD", 5, "2026-11-23T13:00:00Z", map[string]any{"kind": "income"})
+	seedAccountTx(t, gdb, "card-expense", card, 7, "USD", "2026-11-23T13:00:00Z")
+	seedAccountTx(t, gdb, "wallet-expense", wallet, 10, "IDR", initial)
+
+	want := map[string]struct {
+		balance, flow, future int64
+	}{
+		bank: {940, 40, 1}, wallet: {40, 40, 1}, card: {482, -18, 0},
+	}
+	list, err := listAccountsAt(gdb, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, account := range list {
+		single, err := buildAccountSummaryAt(gdb, account.Account, "UTC", account.Identifiers, now)
+		if err != nil || !reflect.DeepEqual(account, single) {
+			t.Fatalf("account %s: batched = %+v, single = %+v, err = %v", account.ID, account, single, err)
+		}
+		expected := want[account.ID]
+		if account.ComputedBalanceMinor == nil || *account.ComputedBalanceMinor != expected.balance ||
+			account.NetFlowMinor != expected.flow || account.UncountedForeignCount != 0 ||
+			account.FutureTransactionCount != expected.future {
+			t.Fatalf("account %s: got %+v, want %+v", account.ID, account, expected)
+		}
+		if account.ID == card && (account.BillingCycle == nil || account.BillingCycle.CurrentCycle.SpentMinor != 7 ||
+			account.BillingCycle.CurrentCycle.TransactionCount != 1) {
+			t.Fatalf("card billing cycle includes a non-expense: %+v", account.BillingCycle)
+		}
+	}
+}
+
+func TestAccountMovements_ProtectHistoryOnDeleteAndMerge(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	configureTestLocale(t, gdb, "UTC", "IDR")
+	source := seedTestAccount(t, gdb, "source", "Source", "IDR")
+	destination := seedTestAccount(t, gdb, "destination", "Destination", "IDR")
+	target := seedTestAccount(t, gdb, "target", "Merge target", "IDR")
+	income := seedTestAccount(t, gdb, "income", "Income", "IDR")
+	if err := gdb.Model(&db.Account{}).Where("id = ?", destination).Update("status", "provisional").Error; err != nil {
+		t.Fatal(err)
+	}
+	at := "2026-11-23T12:00:00Z"
+	seedAccountMovement(t, gdb, "linked-transfer", source, "IDR", 50, at, map[string]any{
+		"kind": "transfer", "destination_account_id": destination, "destination_amount_minor": 50, "destination_currency": "IDR",
+	})
+	seedAccountMovement(t, gdb, "linked-income", income, "IDR", 50, at, map[string]any{"kind": "income"})
+	for _, id := range []string{source, destination, income} {
+		if err := DeleteAccount(gdb, id); err == nil {
+			t.Fatalf("deleted account %s with movement history", id)
+		}
+	}
+	nextType := "debit_card"
+	if _, err := UpdateAccount(gdb, destination, UpdateAccountInput{Type: &nextType}); err == nil {
+		t.Fatal("changed type on provisional transfer destination")
+	}
+	if _, err := MergeAccounts(gdb, source, destination); err == nil || !strings.Contains(err.Error(), "linked-transfer") {
+		t.Fatalf("expected merge rejection naming the collapsed transfer, got %v", err)
+	}
+	var result struct {
+		AccountID            string
+		DestinationAccountID string
+	}
+	if err := gdb.Table("transactions").Where("id = ?", "linked-transfer").
+		Select("account_id, destination_account_id").Take(&result).Error; err != nil {
+		t.Fatal(err)
+	}
+	if result.AccountID != source || result.DestinationAccountID != destination {
+		t.Fatalf("rejected merge modified transfer: %+v", result)
+	}
+	merged, err := MergeAccounts(gdb, destination, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged["movedTransactions"] != int64(1) {
+		t.Fatalf("destination move was not counted: %v", merged["movedTransactions"])
+	}
+	if err := gdb.Table("transactions").Where("id = ?", "linked-transfer").
+		Select("account_id, destination_account_id").Take(&result).Error; err != nil {
+		t.Fatal(err)
+	}
+	if result.AccountID != source || result.DestinationAccountID != target {
+		t.Fatalf("merge failed to reassign transfer destination: %+v", result)
+	}
+}
+
+func seedAccountMovement(t *testing.T, gdb *gorm.DB, id, accountID, currency string, amountMinor int64, occurredAtUtc string, fields map[string]any) {
+	t.Helper()
+	seedAccountTx(t, gdb, id, accountID, amountMinor, currency, occurredAtUtc)
+	if err := gdb.Model(&db.Transaction{}).Where("id = ?", id).Updates(fields).Error; err != nil {
+		t.Fatalf("seed movement %s: %v", id, err)
 	}
 }
 

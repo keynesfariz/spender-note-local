@@ -28,6 +28,7 @@ import { useTransactionReview } from "@/hooks/use-transaction-review"
 
 import { DateRangePicker } from "@/components/date-picker"
 import type { ManualMergeMode } from "@/components/manual-merge-dialog"
+import type { TransferTarget } from "@/components/transfer-form-dialog"
 import { TransactionList } from "@/components/transaction-list"
 import { TriageUndoToast } from "@/components/triage-undo-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -59,6 +60,12 @@ import {
   type TransactionListItem,
 } from "@/lib/api/types.generated"
 import { getTodayDateString, shiftDateRange } from "@/lib/format"
+
+const TransferFormDialog = dynamic(() =>
+  import("@/components/transfer-form-dialog").then(
+    (mod) => mod.TransferFormDialog
+  )
+)
 
 const AddTransactionDialog = dynamic(() =>
   import("@/components/add-transaction-dialog").then(
@@ -133,6 +140,8 @@ export function TransactionsView() {
   })
   const [searchResetKey, setSearchResetKey] = useState(0)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [transferTargets, setTransferTargets] = useState<TransferTarget[]>([])
+  const [withoutDraft, setWithoutDraft] = useState(false)
   const [mergeMode, setMergeMode] = useState<ManualMergeMode | null>(null)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const hasOpenedAddDialog = useHasOpened(addDialogOpen)
@@ -207,7 +216,11 @@ export function TransactionsView() {
     ? (txQuery.data?.items ?? EMPTY_TRANSACTIONS)
     : EMPTY_TRANSACTIONS
   const skippedQuery = useQuery({
-    ...triageSkippedTransactionsQuery(skippedPage, TRANSACTIONS_PAGE_SIZE),
+    ...triageSkippedTransactionsQuery(
+      skippedPage,
+      TRANSACTIONS_PAGE_SIZE,
+      withoutDraft
+    ),
     placeholderData: keepPreviousData,
     enabled: isSkippedTab,
   })
@@ -646,6 +659,14 @@ export function TransactionsView() {
               onSelectTransaction={review.open}
               onOpenDuplicateMerge={() => setMergeMode("duplicate")}
               onOpenCombine={() => setMergeMode("combine")}
+              onMarkAsTransfer={() =>
+                setTransferTargets(
+                  selectedTransactions.map((transaction) => ({
+                    transaction,
+                    title: transaction.remark ?? transaction.merchant,
+                  }))
+                )
+              }
               onMarkReviewed={markReviewedMutation.mutate}
               isMarkingReviewed={markReviewedMutation.isPending}
               reviewErrorMessage={reviewError}
@@ -674,6 +695,23 @@ export function TransactionsView() {
             {isSkippedTab && (
               <SkippedTransactionsList
                 rows={skippedQuery.data?.items ?? []}
+                withoutDraft={withoutDraft}
+                onWithoutDraftChange={(value) => {
+                  setWithoutDraft(value)
+                  void setFilters({ skippedPage: 1 })
+                }}
+                onCardPayment={(row) =>
+                  setTransferTargets([
+                    {
+                      title: row.subject || row.sender_email,
+                      skippedEmailId: row.email_id,
+                      amountMinor: row.amount_minor,
+                      currency: row.currency,
+                      occurredAtUtc: row.occurred_at_utc,
+                      cardPayment: true,
+                    },
+                  ])
+                }
                 timezone={timezone}
                 isLoading={
                   skippedQuery.isPending ||
@@ -700,6 +738,18 @@ export function TransactionsView() {
             )}
           </TabsContent>
         </Tabs>
+      )}
+
+      {transferTargets.length > 0 && (
+        <TransferFormDialog
+          targets={transferTargets}
+          timezone={timezone}
+          onClose={() => setTransferTargets([])}
+          onSuccess={() => {
+            clearSelection()
+            clearActiveUndo()
+          }}
+        />
       )}
 
       {hasOpenedMergeDialog && (

@@ -19,6 +19,9 @@ import { formatMinorCurrency, formatUtcInTimezone } from "@/lib/format"
 
 export function SkippedTransactionsList({
   rows,
+  withoutDraft,
+  onWithoutDraftChange,
+  onCardPayment,
   timezone,
   isLoading,
   errorMessage,
@@ -31,6 +34,9 @@ export function SkippedTransactionsList({
   onPageChange,
 }: {
   rows: GhostRowItem[]
+  withoutDraft: boolean
+  onWithoutDraftChange: (value: boolean) => void
+  onCardPayment: (row: GhostRowItem) => void
   timezone?: string | null
   isLoading: boolean
   errorMessage: string | null
@@ -57,6 +63,30 @@ export function SkippedTransactionsList({
   return (
     <Card>
       <CardContent className="space-y-3">
+        <div
+          role="group"
+          aria-label="Skipped email views"
+          className="flex flex-wrap gap-2"
+        >
+          <Button
+            type="button"
+            size="sm"
+            variant={withoutDraft ? "outline" : "default"}
+            aria-pressed={!withoutDraft}
+            onClick={() => onWithoutDraftChange(false)}
+          >
+            With a draft
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={withoutDraft ? "default" : "outline"}
+            aria-pressed={withoutDraft}
+            onClick={() => onWithoutDraftChange(true)}
+          >
+            Without a draft
+          </Button>
+        </div>
         {triageError && (
           <Alert variant="destructive">
             <AlertDescription>{triageError}</AlertDescription>
@@ -93,10 +123,9 @@ export function SkippedTransactionsList({
                 (subjectSubtitle && subjectSubtitle !== ghostTitle
                   ? subjectSubtitle
                   : "")
-              const formattedAmount = formatMinorCurrency(
-                ghost.amount_minor,
-                ghost.currency
-              )
+              const formattedAmount = withoutDraft
+                ? null
+                : formatMinorCurrency(ghost.amount_minor, ghost.currency)
               const isTriageBusy = pendingTriageVerdict !== null || isUndoing
               const isPromoting =
                 pendingTriageVerdict?.emailId === ghost.email_id &&
@@ -128,7 +157,15 @@ export function SkippedTransactionsList({
                           (ghost.payment_method_raw
                             ? `Unassigned (${ghost.payment_method_raw})`
                             : "Unassigned")}{" "}
-                        · {formatUtcInTimezone(ghost.occurred_at_utc, timezone)}{" "}
+                        {ghost.occurred_at_utc && (
+                          <>
+                            ·{" "}
+                            {formatUtcInTimezone(
+                              ghost.occurred_at_utc,
+                              timezone
+                            )}{" "}
+                          </>
+                        )}
                         · {ghost.sender_email}
                       </p>
                       {framingLine && (
@@ -152,25 +189,38 @@ export function SkippedTransactionsList({
                         <Button
                           type="button"
                           size="xs"
-                          variant="default"
-                          disabled={isTriageBusy}
-                          onClick={() =>
-                            onTriageVerdict(ghost.email_id, "promote")
-                          }
-                        >
-                          {isPromoting ? "Promoting..." : "Promote"}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="xs"
                           variant="outline"
                           disabled={isTriageBusy}
-                          onClick={() =>
-                            onTriageVerdict(ghost.email_id, "ignore")
-                          }
+                          onClick={() => onCardPayment(ghost)}
                         >
-                          {isIgnoring ? "Ignoring..." : "Always ignore"}
+                          Mark as card payment
                         </Button>
+                        {!withoutDraft && (
+                          <>
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="default"
+                              disabled={isTriageBusy}
+                              onClick={() =>
+                                onTriageVerdict(ghost.email_id, "promote")
+                              }
+                            >
+                              {isPromoting ? "Promoting..." : "Promote"}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              disabled={isTriageBusy}
+                              onClick={() =>
+                                onTriageVerdict(ghost.email_id, "ignore")
+                              }
+                            >
+                              {isIgnoring ? "Ignoring..." : "Always ignore"}
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>

@@ -1,8 +1,8 @@
 "use client"
 
-import { useQuery } from "@tanstack/react-query"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
 import Link from "next/link"
-import { useState } from "react"
+import { useId, useState } from "react"
 
 import { BreakdownPanels } from "@/components/breakdown-panels"
 import { MonthlySummary } from "@/components/monthly-summary"
@@ -16,6 +16,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { categoriesQuery } from "@/lib/api/categories"
+import { tagsQuery } from "@/lib/api/tags"
 import { monthlySummaryQuery } from "@/lib/api/transactions"
 import { shiftYearMonth } from "@/lib/format"
 
@@ -51,12 +53,70 @@ function buildYearOptions(activeYear: string): string[] {
   return years
 }
 
+function ReportFilter({
+  label,
+  allLabel,
+  entries,
+  value,
+  onValueChange,
+  unavailable,
+}: {
+  label: string
+  allLabel: string
+  entries: { id: string; name: string }[]
+  value: string | undefined
+  onValueChange: (value: string) => void
+  unavailable: boolean
+}) {
+  const id = useId()
+  const items = [
+    { value: "", label: allLabel },
+    ...entries.map((entry) => ({ value: entry.id, label: entry.name })),
+  ]
+  return (
+    <div className="grid gap-1">
+      <label htmlFor={id} className="text-sm font-medium">
+        {label}
+      </label>
+      <Select
+        items={items}
+        value={value ?? ""}
+        disabled={unavailable}
+        onValueChange={(nextValue) => onValueChange(nextValue ?? "")}
+      >
+        <SelectTrigger id={id} className="min-w-40">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {items.map((item) => (
+            <SelectItem key={item.value} value={item.value}>
+              {item.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
 export function DashboardView() {
   const [selectedMonth, setSelectedMonth] = useState<string | undefined>(
     undefined
   )
 
-  const summaryQuery = useQuery(monthlySummaryQuery(selectedMonth))
+  const [categoryId, setCategoryId] = useState("")
+  const [tagId, setTagId] = useState("")
+  const categories = useQuery(categoriesQuery())
+  const tags = useQuery(tagsQuery())
+  const category = categories.data?.find((entry) => entry.id === categoryId)
+  const tag = tags.data?.find((entry) => entry.id === tagId)
+  const summaryQuery = useQuery({
+    ...monthlySummaryQuery(selectedMonth, {
+      category: category?.name,
+      tag: tag?.id,
+    }),
+    placeholderData: keepPreviousData,
+  })
 
   const activeMonth = selectedMonth ?? summaryQuery.data?.month ?? ""
   const activeParts = parseYearMonth(activeMonth)
@@ -152,7 +212,28 @@ export function DashboardView() {
         </div>
       </div>
 
-      {summaryQuery.isPending ? (
+      {isConfigured && (
+        <section aria-label="Spending filters" className="flex flex-wrap gap-3">
+          <ReportFilter
+            label="Category"
+            allLabel="All categories"
+            entries={categories.data ?? []}
+            value={category?.id}
+            onValueChange={setCategoryId}
+            unavailable={!categories.data}
+          />
+          <ReportFilter
+            label="Tag"
+            allLabel="All tags"
+            entries={tags.data ?? []}
+            value={tag?.id}
+            onValueChange={setTagId}
+            unavailable={!tags.data}
+          />
+        </section>
+      )}
+
+      {summaryQuery.isPending || summaryQuery.isPlaceholderData ? (
         <div className="space-y-4">
           <Skeleton className="h-32 w-full" />
           <div className="grid gap-4 md:grid-cols-3">
@@ -161,7 +242,22 @@ export function DashboardView() {
             <Skeleton className="h-40 w-full" />
           </div>
         </div>
-      ) : summaryQuery.data?.configured ? (
+      ) : summaryQuery.isError ? (
+        <Alert variant="destructive">
+          <AlertTitle>Couldn’t load spending</AlertTitle>
+          <AlertDescription>
+            <p>{summaryQuery.error.message}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void summaryQuery.refetch()}
+            >
+              Try again
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : summaryQuery.data.configured ? (
         <>
           <MonthlySummary summary={summaryQuery.data} />
           <BreakdownPanels summary={summaryQuery.data} />

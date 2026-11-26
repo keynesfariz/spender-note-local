@@ -14,7 +14,8 @@ func GET(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	summary, err := domain.GetMonthlySpendingSummary(gdb, r.URL.Query().Get("month"))
+	q := r.URL.Query()
+	summary, err := domain.GetFilteredMonthlySpendingSummary(gdb.WithContext(r.Context()), q.Get("month"), q.Get("category"), q.Get("tag"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return

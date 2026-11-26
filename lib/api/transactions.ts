@@ -7,12 +7,22 @@ import type {
   TransactionListItem,
 } from "./types.generated"
 
-export const monthlySummaryQuery = (month?: string) =>
+export const monthlySummaryQuery = (
+  month?: string,
+  { category, tag }: { category?: string; tag?: string } = {}
+) =>
   queryOptions({
-    queryKey: ["spending", "summary", month ?? "current"] as const,
-    queryFn: () => {
-      const qs = month ? `?month=${encodeURIComponent(month)}` : ""
-      return apiFetch<MonthlySpendingSummary>(`/api/spending/summary${qs}`)
+    queryKey: ["spending", "summary", month ?? "current", category, tag] as const,
+    queryFn: ({ signal }) => {
+      const params = new URLSearchParams()
+      if (month) params.set("month", month)
+      if (category) params.set("category", category)
+      if (tag) params.set("tag", tag)
+      const qs = params.toString()
+      return apiFetch<MonthlySpendingSummary>(
+        `/api/spending/summary${qs ? `?${qs}` : ""}`,
+        { signal }
+      )
     },
   })
 
@@ -33,6 +43,7 @@ export const transactionsQuery = (params?: {
   category?: string
   tag?: string
   accountId?: string
+  kind?: "expense" | "income" | "transfer"
   search?: string
   unreviewedOnly?: boolean
   showSkipped?: boolean
@@ -50,6 +61,7 @@ export const transactionsQuery = (params?: {
       if (params?.category) sp.set("category", params.category)
       if (params?.tag) sp.set("tag", params.tag)
       if (params?.accountId) sp.set("accountId", params.accountId)
+      if (params?.kind) sp.set("kind", params.kind)
       if (params?.search) sp.set("search", params.search)
       if (params?.unreviewedOnly) sp.set("unreviewedOnly", "true")
       if (params?.showSkipped === false) sp.set("showSkipped", "false")
@@ -64,6 +76,7 @@ export const transactionsQuery = (params?: {
   })
 
 export const addManualTransactionApi = (input: {
+  kind?: "expense" | "income"
   amount_minor: number
   occurred_at_utc: string
   merchant: string
@@ -75,6 +88,32 @@ export const addManualTransactionApi = (input: {
   apiFetch<TransactionListItem>("/api/transactions", {
     method: "POST",
     body: JSON.stringify(input),
+  })
+
+type TransferAction = "record" | "match" | "non_transaction"
+
+export type TransferMutationItem = {
+  action?: TransferAction
+  id?: string
+  request_id?: string
+  account_id?: string
+  destination_account_id?: string
+  amount_minor?: number
+  destination_amount_minor?: number
+  occurred_at_utc?: string
+  source_posted_at_utc?: string | null
+  destination_posted_at_utc?: string | null
+  note?: string | null
+  email_ids?: string[]
+  expected_transaction_id?: string
+  match_transaction_id?: string
+  card_payment?: boolean
+}
+
+export const saveTransfersApi = (items: TransferMutationItem[]) =>
+  apiFetch<{ items: TransactionListItem[] }>("/api/transactions/transfers", {
+    method: "POST",
+    body: JSON.stringify({ action: "record", items }),
   })
 
 export const updateTransactionApi = (input: {

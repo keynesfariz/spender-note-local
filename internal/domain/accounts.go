@@ -208,7 +208,9 @@ func getConfiguredAppCurrency(gdb *gorm.DB) (string, error) {
 
 func hasAccountLedgerRows(gdb *gorm.DB, accountID string) (bool, error) {
 	var txCnt int64
-	if err := gdb.Model(&db.Transaction{}).Where("account_id = ?", accountID).Count(&txCnt).Error; err != nil {
+	if err := gdb.Model(&db.Transaction{}).
+		Where("account_id = ? OR destination_account_id = ?", accountID, accountID).
+		Count(&txCnt).Error; err != nil {
 		return false, err
 	}
 	if txCnt > 0 {
@@ -219,6 +221,14 @@ func hasAccountLedgerRows(gdb *gorm.DB, accountID string) (bool, error) {
 		return false, err
 	}
 	return recCnt > 0, nil
+}
+
+func hasTypedAccountMovements(gdb *gorm.DB, accountID string) (bool, error) {
+	var count int64
+	err := gdb.Model(&db.Transaction{}).
+		Where("(account_id = ? AND kind IN ('income', 'transfer')) OR destination_account_id = ?", accountID, accountID).
+		Count(&count).Error
+	return count > 0, err
 }
 
 func ListAccounts(gdb *gorm.DB) ([]AccountSummary, error) {
@@ -367,7 +377,7 @@ type UpdateAccountInput struct {
 
 func UpdateAccount(gdb *gorm.DB, id string, patch UpdateAccountInput) (*AccountSummary, error) {
 	var summary AccountSummary
-	err := gdb.Transaction(func(tx *gorm.DB) error {
+	err := db.RunImmediateTx(gdb, func(tx *gorm.DB) error {
 		var current db.Account
 		if err := tx.Where("id = ?", id).First(&current).Error; err != nil {
 			return errors.New("Account not found.")
@@ -514,12 +524,21 @@ func ConfirmAccount(gdb *gorm.DB, id string) (*AccountSummary, error) {
 }
 
 func DeleteAccount(gdb *gorm.DB, id string) error {
-	res := gdb.Where("id = ?", id).Delete(&db.Account{})
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return errors.New("Account not found.")
-	}
-	return nil
+	return db.RunImmediateTx(gdb, func(tx *gorm.DB) error {
+		hasMovements, err := hasTypedAccountMovements(tx, id)
+		if err != nil {
+			return err
+		}
+		if hasMovements {
+			return errors.New("This account still has income or transfers. Move or delete those transactions first.")
+		}
+		res := tx.Where("id = ?", id).Delete(&db.Account{})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return errors.New("Account not found.")
+		}
+		return nil
+	})
 }

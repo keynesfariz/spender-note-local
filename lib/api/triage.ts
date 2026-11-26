@@ -65,20 +65,34 @@ export const triageIgnoredEmailBodyQuery = (emailId: string) =>
 
 export const triageSkippedTransactionsQuery = (
   page: number,
-  pageSize: number
+  pageSize: number,
+  withoutDraft = false
 ) =>
   queryOptions({
-    queryKey: ["triage", "skipped", page, pageSize] as const,
+    queryKey: ["triage", "skipped", page, pageSize, withoutDraft] as const,
     queryFn: ({ signal }) => {
       const sp = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
       })
+      if (withoutDraft) sp.set("withoutDraft", "true")
       return apiFetch<PaginatedSkippedTransactionsResponse>(
         `/api/triage/skipped?${sp}`,
         { signal }
       )
     },
+  })
+
+export const skippedEmailBodyQuery = (emailId: string, enabled: boolean) =>
+  queryOptions({
+    queryKey: ["triage", "skipped-body", emailId] as const,
+    queryFn: ({ signal }) =>
+      apiFetch<{ cleanedText: string }>(
+        `/api/triage/skipped/${encodeURIComponent(emailId)}`,
+        { signal }
+      ),
+    enabled,
+    retry: false,
   })
 
 export const applyTriageVerdictApi = (input: ApplyTriageVerdictInput) =>

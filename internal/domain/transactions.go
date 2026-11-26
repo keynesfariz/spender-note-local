@@ -29,18 +29,22 @@ type SpendingGroupRow struct {
 }
 
 type MonthlySpendingSummary struct {
-	Configured           bool               `json:"configured"`
-	Month                *string            `json:"month"`
-	Timezone             *string            `json:"timezone"`
-	Currency             *string            `json:"currency"`
-	StartUtc             *string            `json:"startUtc"`
-	EndUtc               *string            `json:"endUtc"`
-	TotalSpentMinor      int64              `json:"totalSpentMinor"`
-	TransactionCount     int64              `json:"transactionCount"`
-	ForeignCurrencyCount int64              `json:"foreignCurrencyCount"`
-	ByCategory           []SpendingGroupRow `json:"byCategory"`
-	ByMerchant           []SpendingGroupRow `json:"byMerchant"`
-	ByAccount            []SpendingGroupRow `json:"byAccount"`
+	Configured              bool               `json:"configured"`
+	Month                   *string            `json:"month"`
+	Timezone                *string            `json:"timezone"`
+	Currency                *string            `json:"currency"`
+	StartUtc                *string            `json:"startUtc"`
+	EndUtc                  *string            `json:"endUtc"`
+	TotalSpentMinor         int64              `json:"totalSpentMinor"`
+	IncomeMinor             int64              `json:"incomeMinor"`
+	NetSpentMinor           int64              `json:"netSpentMinor"`
+	CardPaymentsMinor       int64              `json:"cardPaymentsMinor"`
+	ForeignCardPaymentCount int64              `json:"foreignCardPaymentCount"`
+	TransactionCount        int64              `json:"transactionCount"`
+	ForeignCurrencyCount    int64              `json:"foreignCurrencyCount"`
+	ByCategory              []SpendingGroupRow `json:"byCategory"`
+	ByMerchant              []SpendingGroupRow `json:"byMerchant"`
+	ByAccount               []SpendingGroupRow `json:"byAccount"`
 }
 
 type TransactionTagItem struct {
@@ -49,27 +53,34 @@ type TransactionTagItem struct {
 }
 
 type TransactionListItem struct {
-	ID                string               `json:"id"`
-	SourceType        string               `json:"source_type"`
-	AccountID         *string              `json:"account_id"`
-	AccountName       *string              `json:"account_name"`
-	PaymentMethodRaw  *string              `json:"payment_method_raw"`
-	AmountMinor       int64                `json:"amount_minor"`
-	Currency          string               `json:"currency"`
-	OccurredAtUtc     string               `json:"occurred_at_utc"`
-	Merchant          string               `json:"merchant"`
-	Remark            *string              `json:"remark"`
-	RemarkUserEdited  bool                 `json:"remark_user_edited"`
-	Category          string               `json:"category"`
-	Tags              []TransactionTagItem `json:"tags"`
-	ManualOverride    int                  `json:"manual_override"`
-	Reviewed          int                  `json:"reviewed"`
-	Note              *string              `json:"note"`
-	CreatedAtUtc      string               `json:"created_at_utc"`
-	UpdatedAtUtc      string               `json:"updated_at_utc"`
-	SourceCount       int                  `json:"sourceCount"`
-	SourceRoles       []string             `json:"sourceRoles"`
-	IsForeignCurrency bool                 `json:"isForeignCurrency"`
+	ID                     string               `json:"id"`
+	SourceType             string               `json:"source_type"`
+	Kind                   string               `json:"kind"`
+	AccountID              *string              `json:"account_id"`
+	AccountName            *string              `json:"account_name"`
+	DestinationAccountID   *string              `json:"destination_account_id"`
+	DestinationAccountName *string              `json:"destination_account_name"`
+	DestinationAmountMinor *int64               `json:"destination_amount_minor"`
+	DestinationCurrency    *string              `json:"destination_currency"`
+	SourcePostedAtUtc      *string              `json:"source_posted_at_utc"`
+	DestinationPostedAtUtc *string              `json:"destination_posted_at_utc"`
+	PaymentMethodRaw       *string              `json:"payment_method_raw"`
+	AmountMinor            int64                `json:"amount_minor"`
+	Currency               string               `json:"currency"`
+	OccurredAtUtc          string               `json:"occurred_at_utc"`
+	Merchant               string               `json:"merchant"`
+	Remark                 *string              `json:"remark"`
+	RemarkUserEdited       bool                 `json:"remark_user_edited"`
+	Category               string               `json:"category"`
+	Tags                   []TransactionTagItem `json:"tags"`
+	ManualOverride         int                  `json:"manual_override"`
+	Reviewed               int                  `json:"reviewed"`
+	Note                   *string              `json:"note"`
+	CreatedAtUtc           string               `json:"created_at_utc"`
+	UpdatedAtUtc           string               `json:"updated_at_utc"`
+	SourceCount            int                  `json:"sourceCount"`
+	SourceRoles            []string             `json:"sourceRoles"`
+	IsForeignCurrency      bool                 `json:"isForeignCurrency"`
 }
 
 type TransactionSourceView struct {
@@ -104,6 +115,10 @@ func getLocaleConfig(gdb *gorm.DB) (tz *string, cur *string, err error) {
 }
 
 func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendingSummary, error) {
+	return GetFilteredMonthlySpendingSummary(gdb, monthParam, "", "")
+}
+
+func GetFilteredMonthlySpendingSummary(gdb *gorm.DB, monthParam, category, tag string) (*MonthlySpendingSummary, error) {
 	tzPtr, curPtr, err := getLocaleConfig(gdb)
 	if err != nil {
 		return nil, err
@@ -131,6 +146,7 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 	}
 
 	type summaryTxRow struct {
+		Kind        string  `gorm:"column:kind"`
 		AmountMinor int64   `gorm:"column:amount_minor"`
 		Currency    string  `gorm:"column:currency"`
 		Category    string  `gorm:"column:category"`
@@ -139,18 +155,26 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 		AccountName *string `gorm:"column:account_name"`
 	}
 	var monthRows []summaryTxRow
+	conds, args := transactionTaxonomyFilters(category, tag)
+	entryConditions := append([]string{"t.kind IN ('expense', 'income')"}, conds...)
 	if err := gdb.Raw(`
-		SELECT t.amount_minor, t.currency, c.name AS category, t.merchant, t.account_id, a.name AS account_name
+		SELECT
+			t.kind,
+			CASE WHEN t.kind = 'transfer' THEN t.destination_amount_minor ELSE t.amount_minor END AS amount_minor,
+			CASE WHEN t.kind = 'transfer' THEN t.destination_currency ELSE t.currency END AS currency,
+			c.name AS category, t.merchant, t.account_id, a.name AS account_name
 		FROM transactions t
 		JOIN categories c ON c.id = t.category_id
 		LEFT JOIN accounts a ON a.id = t.account_id
-		WHERE t.occurred_at_utc >= ? AND t.occurred_at_utc < ?`,
-		startUtc, endUtc,
+		LEFT JOIN accounts destination ON destination.id = t.destination_account_id
+		WHERE t.occurred_at_utc >= ? AND t.occurred_at_utc < ?
+		  AND ((`+strings.Join(entryConditions, " AND ")+`) OR (t.kind = 'transfer' AND destination.type = 'credit_card'))`,
+		append([]any{startUtc, endUtc}, args...)...,
 	).Scan(&monthRows).Error; err != nil {
 		return nil, err
 	}
 
-	var localTotal, localCount, foreignCount int64
+	var expenses, income, cardPayments, localCount, foreignCount, foreignPayments int64
 	catMap := map[string]*SpendingGroupRow{}
 	merchMap := map[string]*SpendingGroupRow{}
 	acctMap := map[string]*SpendingGroupRow{}
@@ -168,12 +192,24 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 	}
 
 	for _, r := range monthRows {
+		if r.Kind == "transfer" {
+			if r.Currency == currency {
+				cardPayments += r.AmountMinor
+			} else {
+				foreignPayments++
+			}
+			continue
+		}
 		if r.Currency != currency {
 			foreignCount++
 			continue
 		}
-		localTotal += r.AmountMinor
 		localCount++
+		if r.Kind == "income" {
+			income += r.AmountMinor
+			continue
+		}
+		expenses += r.AmountMinor
 
 		addGroup(catMap, r.Category, r.Category, r.AmountMinor, false)
 		addGroup(merchMap, strings.ToLower(strings.TrimSpace(r.Merchant)), r.Merchant, r.AmountMinor, true)
@@ -207,19 +243,43 @@ func GetMonthlySpendingSummary(gdb *gorm.DB, monthParam string) (*MonthlySpendin
 	}
 
 	return &MonthlySpendingSummary{
-		Configured:           true,
-		Month:                &month,
-		Timezone:             &tz,
-		Currency:             &currency,
-		StartUtc:             &startUtc,
-		EndUtc:               &endUtc,
-		TotalSpentMinor:      localTotal,
-		TransactionCount:     localCount + foreignCount,
-		ForeignCurrencyCount: foreignCount,
-		ByCategory:           sortGroups(catMap, 0),
-		ByMerchant:           sortGroups(merchMap, 10),
-		ByAccount:            sortGroups(acctMap, 0),
+		Configured:              true,
+		Month:                   &month,
+		Timezone:                &tz,
+		Currency:                &currency,
+		StartUtc:                &startUtc,
+		EndUtc:                  &endUtc,
+		TotalSpentMinor:         expenses,
+		IncomeMinor:             income,
+		NetSpentMinor:           expenses - income,
+		CardPaymentsMinor:       cardPayments,
+		ForeignCardPaymentCount: foreignPayments,
+		TransactionCount:        localCount + foreignCount,
+		ForeignCurrencyCount:    foreignCount,
+		ByCategory:              sortGroups(catMap, 0),
+		ByMerchant:              sortGroups(merchMap, 10),
+		ByAccount:               sortGroups(acctMap, 0),
 	}, nil
+}
+
+func transactionTaxonomyFilters(category, tag string) ([]string, []any) {
+	var conds []string
+	var args []any
+	if category != "" {
+		conds = append(conds, "t.category_id = (SELECT id FROM categories WHERE name = ?)")
+		args = append(args, category)
+	}
+	if t := strings.TrimSpace(tag); t != "" {
+		conds = append(conds, `EXISTS (
+			SELECT 1
+			FROM transaction_tags tt
+			JOIN tags tg ON tg.id = tt.tag_id
+			WHERE tt.transaction_id = t.id
+			  AND (tg.normalized_name = ? OR tg.id = ?)
+		)`)
+		args = append(args, strings.ToLower(t), t)
+	}
+	return conds, args
 }
 
 type ListTransactionsParams struct {
@@ -230,6 +290,7 @@ type ListTransactionsParams struct {
 	Category       string
 	Tag            string
 	AccountID      string
+	Kind           string
 	Search         string
 	UnreviewedOnly bool
 	ShowSkipped    *bool
@@ -343,26 +404,28 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 	conds := append([]string{}, rangeConds...)
 	args := append([]any{}, rangeArgs...)
 
-	if params.Category != "" {
-		conds = append(conds, "t.category_id = (SELECT id FROM categories WHERE name = ?)")
-		args = append(args, params.Category)
-	}
-	if t := strings.TrimSpace(params.Tag); t != "" {
-		conds = append(conds, `EXISTS (
-			SELECT 1
-			FROM transaction_tags tt
-			JOIN tags tg ON tg.id = tt.tag_id
-			WHERE tt.transaction_id = t.id
-			  AND (tg.normalized_name = ? OR tg.id = ?)
-		)`)
-		args = append(args, strings.ToLower(t), t)
+	taxonomyConds, taxonomyArgs := transactionTaxonomyFilters(params.Category, params.Tag)
+	conds = append(conds, taxonomyConds...)
+	args = append(args, taxonomyArgs...)
+	if params.Kind != "" {
+		switch params.Kind {
+		case "expense", "income", "transfer":
+			conds = append(conds, "t.kind = ?")
+			args = append(args, params.Kind)
+			if params.Kind != "expense" {
+				showSkipped := false
+				params.ShowSkipped = &showSkipped
+			}
+		default:
+			return nil, errors.New("Invalid transaction kind.")
+		}
 	}
 	if params.AccountID != "" && params.AccountID != "all" {
 		if params.AccountID == "unassigned" {
 			conds = append(conds, "t.account_id IS NULL")
 		} else {
-			conds = append(conds, "t.account_id = ?")
-			args = append(args, params.AccountID)
+			conds = append(conds, "(t.account_id = ? OR t.destination_account_id = ?)")
+			args = append(args, params.AccountID, params.AccountID)
 		}
 	}
 	if q := strings.TrimSpace(params.Search); q != "" {
@@ -406,22 +469,29 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 	}
 
 	type rawTxRow struct {
-		ID               string  `gorm:"column:id"`
-		SourceType       string  `gorm:"column:source_type"`
-		AccountID        *string `gorm:"column:account_id"`
-		AccountName      *string `gorm:"column:account_name"`
-		AmountMinor      int64   `gorm:"column:amount_minor"`
-		Currency         string  `gorm:"column:currency"`
-		OccurredAtUtc    string  `gorm:"column:occurred_at_utc"`
-		Merchant         string  `gorm:"column:merchant"`
-		Remark           *string `gorm:"column:remark"`
-		RemarkUserEdited bool    `gorm:"column:remark_user_edited"`
-		Category         string  `gorm:"column:category"`
-		ManualOverride   int     `gorm:"column:manual_override"`
-		Reviewed         int     `gorm:"column:reviewed"`
-		Note             *string `gorm:"column:note"`
-		CreatedAtUtc     string  `gorm:"column:created_at_utc"`
-		UpdatedAtUtc     string  `gorm:"column:updated_at_utc"`
+		ID                     string  `gorm:"column:id"`
+		SourceType             string  `gorm:"column:source_type"`
+		AccountID              *string `gorm:"column:account_id"`
+		AccountName            *string `gorm:"column:account_name"`
+		Kind                   string  `gorm:"column:kind"`
+		DestinationAccountID   *string `gorm:"column:destination_account_id"`
+		DestinationAccountName *string `gorm:"column:destination_account_name"`
+		DestinationAmountMinor *int64  `gorm:"column:destination_amount_minor"`
+		DestinationCurrency    *string `gorm:"column:destination_currency"`
+		SourcePostedAtUtc      *string `gorm:"column:source_posted_at_utc"`
+		DestinationPostedAtUtc *string `gorm:"column:destination_posted_at_utc"`
+		AmountMinor            int64   `gorm:"column:amount_minor"`
+		Currency               string  `gorm:"column:currency"`
+		OccurredAtUtc          string  `gorm:"column:occurred_at_utc"`
+		Merchant               string  `gorm:"column:merchant"`
+		Remark                 *string `gorm:"column:remark"`
+		RemarkUserEdited       bool    `gorm:"column:remark_user_edited"`
+		Category               string  `gorm:"column:category"`
+		ManualOverride         int     `gorm:"column:manual_override"`
+		Reviewed               int     `gorm:"column:reviewed"`
+		Note                   *string `gorm:"column:note"`
+		CreatedAtUtc           string  `gorm:"column:created_at_utc"`
+		UpdatedAtUtc           string  `gorm:"column:updated_at_utc"`
 	}
 
 	offset := (page - 1) * pageSize
@@ -431,10 +501,11 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 	query := `
 		SELECT
 			t.*, c.name AS category,
-			a.name AS account_name
+			a.name AS account_name, destination.name AS destination_account_name
 		FROM transactions t
 		JOIN categories c ON c.id = t.category_id
 		LEFT JOIN accounts a ON a.id = t.account_id
+		LEFT JOIN accounts destination ON destination.id = t.destination_account_id
 		` + whereClause + `
 		ORDER BY t.occurred_at_utc DESC, t.created_at_utc DESC, t.id DESC
 		LIMIT ? OFFSET ?`
@@ -513,27 +584,34 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 			tags = []TransactionTagItem{}
 		}
 		out = append(out, TransactionListItem{
-			ID:                r.ID,
-			SourceType:        r.SourceType,
-			AccountID:         r.AccountID,
-			AccountName:       r.AccountName,
-			PaymentMethodRaw:  pmByTx[r.ID],
-			AmountMinor:       r.AmountMinor,
-			Currency:          r.Currency,
-			OccurredAtUtc:     r.OccurredAtUtc,
-			Merchant:          r.Merchant,
-			Remark:            r.Remark,
-			RemarkUserEdited:  r.RemarkUserEdited,
-			Category:          r.Category,
-			Tags:              tags,
-			ManualOverride:    r.ManualOverride,
-			Reviewed:          r.Reviewed,
-			Note:              r.Note,
-			CreatedAtUtc:      r.CreatedAtUtc,
-			UpdatedAtUtc:      r.UpdatedAtUtc,
-			SourceCount:       len(roles),
-			SourceRoles:       roles,
-			IsForeignCurrency: r.Currency != currency,
+			ID:                     r.ID,
+			SourceType:             r.SourceType,
+			AccountID:              r.AccountID,
+			AccountName:            r.AccountName,
+			Kind:                   r.Kind,
+			DestinationAccountID:   r.DestinationAccountID,
+			DestinationAccountName: r.DestinationAccountName,
+			DestinationAmountMinor: r.DestinationAmountMinor,
+			DestinationCurrency:    r.DestinationCurrency,
+			SourcePostedAtUtc:      r.SourcePostedAtUtc,
+			DestinationPostedAtUtc: r.DestinationPostedAtUtc,
+			PaymentMethodRaw:       pmByTx[r.ID],
+			AmountMinor:            r.AmountMinor,
+			Currency:               r.Currency,
+			OccurredAtUtc:          r.OccurredAtUtc,
+			Merchant:               r.Merchant,
+			Remark:                 r.Remark,
+			RemarkUserEdited:       r.RemarkUserEdited,
+			Category:               r.Category,
+			Tags:                   tags,
+			ManualOverride:         r.ManualOverride,
+			Reviewed:               r.Reviewed,
+			Note:                   r.Note,
+			CreatedAtUtc:           r.CreatedAtUtc,
+			UpdatedAtUtc:           r.UpdatedAtUtc,
+			SourceCount:            len(roles),
+			SourceRoles:            roles,
+			IsForeignCurrency:      r.Currency != currency,
 		})
 	}
 	prevPageOldestUtc := ""
@@ -587,30 +665,39 @@ func getTransactionDetail(gdb *gorm.DB, id string, includeSourceContent bool) (*
 	}
 
 	type rawTxRow struct {
-		ID               string  `gorm:"column:id"`
-		SourceType       string  `gorm:"column:source_type"`
-		AccountID        *string `gorm:"column:account_id"`
-		AccountName      *string `gorm:"column:account_name"`
-		PaymentMethodRaw *string `gorm:"column:payment_method_raw"`
-		AmountMinor      int64   `gorm:"column:amount_minor"`
-		Currency         string  `gorm:"column:currency"`
-		OccurredAtUtc    string  `gorm:"column:occurred_at_utc"`
-		Merchant         string  `gorm:"column:merchant"`
-		Remark           *string `gorm:"column:remark"`
-		RemarkUserEdited bool    `gorm:"column:remark_user_edited"`
-		Category         string  `gorm:"column:category"`
-		ManualOverride   int     `gorm:"column:manual_override"`
-		Reviewed         int     `gorm:"column:reviewed"`
-		Note             *string `gorm:"column:note"`
-		CreatedAtUtc     string  `gorm:"column:created_at_utc"`
-		UpdatedAtUtc     string  `gorm:"column:updated_at_utc"`
+		ID                     string  `gorm:"column:id"`
+		SourceType             string  `gorm:"column:source_type"`
+		AccountID              *string `gorm:"column:account_id"`
+		AccountName            *string `gorm:"column:account_name"`
+		Kind                   string  `gorm:"column:kind"`
+		DestinationAccountID   *string `gorm:"column:destination_account_id"`
+		DestinationAccountName *string `gorm:"column:destination_account_name"`
+		DestinationAmountMinor *int64  `gorm:"column:destination_amount_minor"`
+		DestinationCurrency    *string `gorm:"column:destination_currency"`
+		SourcePostedAtUtc      *string `gorm:"column:source_posted_at_utc"`
+		DestinationPostedAtUtc *string `gorm:"column:destination_posted_at_utc"`
+		PaymentMethodRaw       *string `gorm:"column:payment_method_raw"`
+		AmountMinor            int64   `gorm:"column:amount_minor"`
+		Currency               string  `gorm:"column:currency"`
+		OccurredAtUtc          string  `gorm:"column:occurred_at_utc"`
+		Merchant               string  `gorm:"column:merchant"`
+		Remark                 *string `gorm:"column:remark"`
+		RemarkUserEdited       bool    `gorm:"column:remark_user_edited"`
+		Category               string  `gorm:"column:category"`
+		ManualOverride         int     `gorm:"column:manual_override"`
+		Reviewed               int     `gorm:"column:reviewed"`
+		Note                   *string `gorm:"column:note"`
+		CreatedAtUtc           string  `gorm:"column:created_at_utc"`
+		UpdatedAtUtc           string  `gorm:"column:updated_at_utc"`
 	}
 	var rows []rawTxRow
 	if err := gdb.Raw(`
-		SELECT t.*, c.name AS category, a.name AS account_name, `+paymentMethodSubquery+` AS payment_method_raw
+		SELECT t.*, c.name AS category, a.name AS account_name,
+			destination.name AS destination_account_name, `+paymentMethodSubquery+` AS payment_method_raw
 		FROM transactions t
 		JOIN categories c ON c.id = t.category_id
 		LEFT JOIN accounts a ON a.id = t.account_id
+		LEFT JOIN accounts destination ON destination.id = t.destination_account_id
 		WHERE t.id = ?`, id).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -656,27 +743,34 @@ func getTransactionDetail(gdb *gorm.DB, id string, includeSourceContent bool) (*
 
 	return &TransactionDetailView{
 		Transaction: TransactionListItem{
-			ID:                txRow.ID,
-			SourceType:        txRow.SourceType,
-			AccountID:         txRow.AccountID,
-			AccountName:       txRow.AccountName,
-			PaymentMethodRaw:  txRow.PaymentMethodRaw,
-			AmountMinor:       txRow.AmountMinor,
-			Currency:          txRow.Currency,
-			OccurredAtUtc:     txRow.OccurredAtUtc,
-			Merchant:          txRow.Merchant,
-			Remark:            txRow.Remark,
-			RemarkUserEdited:  txRow.RemarkUserEdited,
-			Category:          txRow.Category,
-			Tags:              tags,
-			ManualOverride:    txRow.ManualOverride,
-			Reviewed:          txRow.Reviewed,
-			Note:              txRow.Note,
-			CreatedAtUtc:      txRow.CreatedAtUtc,
-			UpdatedAtUtc:      txRow.UpdatedAtUtc,
-			SourceCount:       len(sources),
-			SourceRoles:       roles,
-			IsForeignCurrency: isForeign,
+			ID:                     txRow.ID,
+			SourceType:             txRow.SourceType,
+			AccountID:              txRow.AccountID,
+			AccountName:            txRow.AccountName,
+			Kind:                   txRow.Kind,
+			DestinationAccountID:   txRow.DestinationAccountID,
+			DestinationAccountName: txRow.DestinationAccountName,
+			DestinationAmountMinor: txRow.DestinationAmountMinor,
+			DestinationCurrency:    txRow.DestinationCurrency,
+			SourcePostedAtUtc:      txRow.SourcePostedAtUtc,
+			DestinationPostedAtUtc: txRow.DestinationPostedAtUtc,
+			PaymentMethodRaw:       txRow.PaymentMethodRaw,
+			AmountMinor:            txRow.AmountMinor,
+			Currency:               txRow.Currency,
+			OccurredAtUtc:          txRow.OccurredAtUtc,
+			Merchant:               txRow.Merchant,
+			Remark:                 txRow.Remark,
+			RemarkUserEdited:       txRow.RemarkUserEdited,
+			Category:               txRow.Category,
+			Tags:                   tags,
+			ManualOverride:         txRow.ManualOverride,
+			Reviewed:               txRow.Reviewed,
+			Note:                   txRow.Note,
+			CreatedAtUtc:           txRow.CreatedAtUtc,
+			UpdatedAtUtc:           txRow.UpdatedAtUtc,
+			SourceCount:            len(sources),
+			SourceRoles:            roles,
+			IsForeignCurrency:      isForeign,
 		},
 		Sources: sources,
 	}, nil

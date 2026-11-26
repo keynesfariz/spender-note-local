@@ -46,6 +46,7 @@ type TransactionFormFieldsProps = {
   accounts: AccountOption[]
   accountId: string
   onAccountChange: (value: string) => void
+  receivingAccount?: boolean
   missingAccountLabel?: string | null
   paymentMethod?: string | null
   date: string
@@ -70,6 +71,7 @@ export function TransactionFormFields({
   accounts,
   accountId,
   onAccountChange,
+  receivingAccount,
   missingAccountLabel,
   paymentMethod,
   date,
@@ -92,7 +94,10 @@ export function TransactionFormFields({
   )
   const accountItems = useMemo(() => {
     const items = [
-      { value: UNASSIGNED_ACCOUNT, label: "Unassigned" },
+      {
+        value: UNASSIGNED_ACCOUNT,
+        label: receivingAccount ? "Choose an account" : "Unassigned",
+      },
       ...accounts.map((account) => ({
         value: account.id,
         label: account.name,
@@ -105,7 +110,7 @@ export function TransactionFormFields({
       })
     }
     return items
-  }, [accounts, accountId, missingAccountLabel])
+  }, [accounts, accountId, missingAccountLabel, receivingAccount])
   const descriptionField = (
     <Field>
       <FieldLabel htmlFor={descriptionId}>Remark</FieldLabel>
@@ -172,7 +177,9 @@ export function TransactionFormFields({
       </Field>
 
       <Field>
-        <FieldLabel>Account</FieldLabel>
+        <FieldLabel>
+          {receivingAccount ? "Receiving account" : "Account"}
+        </FieldLabel>
         <Select
           items={accountItems}
           value={accountId}
@@ -180,7 +187,10 @@ export function TransactionFormFields({
             onAccountChange(value ?? UNASSIGNED_ACCOUNT)
           }
         >
-          <SelectTrigger className="w-full" aria-label="Account">
+          <SelectTrigger
+            className="w-full"
+            aria-label={receivingAccount ? "Receiving account" : "Account"}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

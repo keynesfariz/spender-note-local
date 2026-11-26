@@ -11,6 +11,7 @@ import (
 )
 
 type CreateManualTransactionInput struct {
+	Kind          string   `json:"kind"`
 	AmountMinor   int64    `json:"amount_minor"`
 	OccurredAtUtc string   `json:"occurred_at_utc"`
 	Merchant      string   `json:"merchant"`
@@ -166,6 +167,13 @@ func CreateManualTransaction(gdb *gorm.DB, input CreateManualTransactionInput) (
 	if curPtr == nil || *curPtr == "" {
 		return nil, errors.New("Configure your country and currency in Settings before adding transactions.")
 	}
+	kind := strings.TrimSpace(input.Kind)
+	if kind == "" {
+		kind = "expense"
+	}
+	if kind != "expense" && kind != "income" {
+		return nil, errors.New("Manual transactions must be an expense or income.")
+	}
 	if input.AmountMinor <= 0 {
 		return nil, errors.New("Amount must be greater than zero.")
 	}
@@ -174,6 +182,9 @@ func CreateManualTransaction(gdb *gorm.DB, input CreateManualTransactionInput) (
 		return nil, errors.New("Transaction date must be a valid UTC ISO-8601 timestamp.")
 	}
 	merchant := strings.TrimSpace(input.Merchant)
+	if kind == "income" && merchant == "" {
+		merchant = "Income"
+	}
 	if merchant == "" {
 		return nil, errors.New("Merchant name is required.")
 	}
@@ -203,14 +214,26 @@ func CreateManualTransaction(gdb *gorm.DB, input CreateManualTransactionInput) (
 			accountID = &trimmed
 		}
 
+		currency := *curPtr
+		if kind == "income" {
+			if accountID == nil {
+				return errors.New("Select a receiving account for income.")
+			}
+			var account db.Account
+			if err := tx.Select("currency").First(&account, "id = ?", *accountID).Error; err != nil {
+				return err
+			}
+			currency = account.Currency
+		}
 		id := uuid.NewString()
 		nowUtc := NowUtcIsoSeconds()
 		if err := tx.Create(&db.Transaction{
 			ID:             id,
 			SourceType:     "manual",
+			Kind:           kind,
 			AccountID:      accountID,
 			AmountMinor:    input.AmountMinor,
-			Currency:       *curPtr,
+			Currency:       currency,
 			OccurredAtUtc:  occurred,
 			Merchant:       merchant,
 			CategoryID:     categoryID,
@@ -267,6 +290,9 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 			return errors.New("Transaction not found.")
 		}
 
+		if current.Kind == "transfer" {
+			return errors.New("Open the transfer editor to change this transfer.")
+		}
 		amountMinor := current.AmountMinor
 		if patch.AmountMinor != nil {
 			amountMinor = *patch.AmountMinor
@@ -286,6 +312,9 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 		merchant := current.Merchant
 		if patch.Merchant != nil {
 			merchant = strings.TrimSpace(*patch.Merchant)
+		}
+		if current.Kind == "income" && merchant == "" {
+			merchant = "Income"
 		}
 		if merchant == "" {
 			return errors.New("Merchant name is required.")
@@ -336,6 +365,19 @@ func UpdateTransaction(gdb *gorm.DB, id string, patch UpdateTransactionInput) (*
 			nextCurrency = *appCurrency
 		}
 
+		if current.Kind == "income" {
+			if accountID == nil {
+				return errors.New("Select a receiving account for income.")
+			}
+			var account db.Account
+			if err := tx.Select("currency").First(&account, "id = ?", *accountID).Error; err != nil {
+				return err
+			}
+			if account.Currency != current.Currency && patch.AmountMinor == nil {
+				return errors.New("Enter an amount in the receiving account's currency.")
+			}
+			nextCurrency = account.Currency
+		}
 		remark, remarkUserEdited := applyTransactionRemark(current, merchant, patch.Remark, patch.RemarkUserEdited)
 		manualOverride := current.ManualOverride
 		if current.SourceType == "gmail" {
@@ -490,6 +532,9 @@ func DuplicateMergeTransactions(gdb *gorm.DB, keepID, dropID string) (*Transacti
 		if err := tx.Where("id = ?", dropID).First(&dropTx).Error; err != nil {
 			return errors.New("Cannot merge: one or both transactions no longer exist.")
 		}
+		if keepTx.Kind != "expense" || dropTx.Kind != "expense" {
+			return errors.New("Only expenses can be merged as duplicates.")
+		}
 		if keepTx.Currency != dropTx.Currency || !nullableStringEqual(keepTx.AccountID, dropTx.AccountID) {
 			return errors.New("Duplicate merge requires transactions with the same currency and account.")
 		}
@@ -517,8 +562,9 @@ func DuplicateMergeTransactions(gdb *gorm.DB, keepID, dropID string) (*Transacti
 		}
 
 		if err := tx.Model(&db.Transaction{}).Where("id = ?", keepID).Updates(map[string]any{
-			"reviewed":       1,
-			"updated_at_utc": nowUtc,
+			"ambiguous_source_amount": keepTx.AmbiguousSourceAmount || dropTx.AmbiguousSourceAmount,
+			"reviewed":                1,
+			"updated_at_utc":          nowUtc,
 		}).Error; err != nil {
 			return err
 		}
@@ -595,6 +641,11 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 		var rows []db.Transaction
 		if err := tx.Where("id IN ?", ids).Find(&rows).Error; err != nil {
 			return err
+		}
+		for _, row := range rows {
+			if row.Kind != "expense" {
+				return errors.New("Only expenses can be combined.")
+			}
 		}
 		if len(rows) != len(ids) {
 			return errors.New("Cannot combine: one or more selected transactions no longer exist.")
@@ -679,17 +730,18 @@ func CombineTransactions(gdb *gorm.DB, input CombineTransactionsInput) (*Transac
 		}
 
 		if err := tx.Model(&db.Transaction{}).Where("id = ?", survivorID).Updates(map[string]any{
-			"account_id":         accountID,
-			"amount_minor":       totalAmount,
-			"occurred_at_utc":    occurred,
-			"merchant":           merchant,
-			"remark":             remark,
-			"remark_user_edited": remarkUserEdited,
-			"category_id":        categoryID,
-			"manual_override":    1,
-			"reviewed":           1,
-			"note":               note,
-			"updated_at_utc":     nowUtc,
+			"account_id":              accountID,
+			"amount_minor":            totalAmount,
+			"occurred_at_utc":         occurred,
+			"merchant":                merchant,
+			"remark":                  remark,
+			"remark_user_edited":      remarkUserEdited,
+			"category_id":             categoryID,
+			"manual_override":         1,
+			"ambiguous_source_amount": true,
+			"reviewed":                1,
+			"note":                    note,
+			"updated_at_utc":          nowUtc,
 		}).Error; err != nil {
 			return err
 		}

@@ -30,13 +30,13 @@ func RecomputeTransactionFromSources(tx *gorm.DB, transactionID string, nowUtc s
 		nowUtc = NowUtcIsoSeconds()
 	}
 	var t db.Transaction
-	if err := tx.Select("id, source_type, manual_override").Where("id = ?", transactionID).First(&t).Error; err != nil {
+	if err := tx.Select("id, kind, source_type, manual_override").Where("id = ?", transactionID).First(&t).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
 		return err
 	}
-	if t.SourceType == "manual" {
+	if t.SourceType == "manual" || t.Kind != "expense" {
 		return nil
 	}
 	if t.ManualOverride == 1 {
@@ -258,6 +258,13 @@ func SplitTransactionSource(gdb *gorm.DB, transactionID, emailID string) (string
 	nowUtc := NowUtcIsoSeconds()
 	var newTxID string
 	err := gdb.Transaction(func(tx *gorm.DB) error {
+		var current db.Transaction
+		if err := tx.Select("kind, ambiguous_source_amount").First(&current, "id = ?", transactionID).Error; err != nil {
+			return err
+		}
+		if current.Kind != "expense" {
+			return errors.New("Only expenses support source splitting.")
+		}
 		var sources []db.TransactionSource
 		if err := tx.Where("transaction_id = ?", transactionID).Find(&sources).Error; err != nil {
 			return err
@@ -337,18 +344,19 @@ func SplitTransactionSource(gdb *gorm.DB, transactionID, emailID string) (string
 		}
 
 		if err := tx.Create(&db.Transaction{
-			ID:             newTxID,
-			SourceType:     "gmail",
-			AccountID:      acctID,
-			AmountMinor:    amountMinor,
-			Currency:       currency,
-			OccurredAtUtc:  occurred,
-			Merchant:       merchant,
-			CategoryID:     resolvedCategory.ID,
-			ManualOverride: 0,
-			Reviewed:       0,
-			CreatedAtUtc:   nowUtc,
-			UpdatedAtUtc:   nowUtc,
+			ID:                    newTxID,
+			SourceType:            "gmail",
+			AccountID:             acctID,
+			AmountMinor:           amountMinor,
+			Currency:              currency,
+			OccurredAtUtc:         occurred,
+			Merchant:              merchant,
+			CategoryID:            resolvedCategory.ID,
+			ManualOverride:        0,
+			AmbiguousSourceAmount: current.AmbiguousSourceAmount,
+			Reviewed:              0,
+			CreatedAtUtc:          nowUtc,
+			UpdatedAtUtc:          nowUtc,
 		}).Error; err != nil {
 			return err
 		}

@@ -26,6 +26,7 @@ import {
   resolveMagicDraft,
   useMagicEnrich,
 } from "@/components/magic-enrich"
+import { TransferFormDialog } from "@/components/transfer-form-dialog"
 import {
   TransactionForm,
   TransactionFormFields,
@@ -51,8 +52,10 @@ import { Drawer } from "@/components/ui/drawer"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { useTransactionReview } from "@/hooks/use-transaction-review"
+import { accountsQuery } from "@/lib/api/accounts"
 import { categoriesQuery } from "@/lib/api/categories"
 import { tagsQuery } from "@/lib/api/tags"
+import { invalidateTriageRelatedQueries } from "@/lib/api/triage"
 import {
   transactionInspectorQuery,
   transactionSourceBodyQuery,
@@ -61,6 +64,7 @@ import {
   deleteTransactionApi,
   invalidateTransactionRelatedQueries,
   markTransactionsReviewedApi,
+  saveTransfersApi,
   splitTransactionSourceApi,
   updateTransactionApi,
 } from "@/lib/api/transactions"
@@ -270,6 +274,9 @@ function InspectorForm({
   const queryClient = useQueryClient()
 
   const tx = detail.transaction
+  const isTransfer = tx.kind === "transfer"
+  const isIncome = tx.kind === "income"
+  const [transferEditorOpen, setTransferEditorOpen] = useState(false)
   const [remark, setRemark] = useState(tx.remark ?? tx.merchant)
   const [merchant, setMerchant] = useState(tx.merchant)
   const [remarkUserEdited, setRemarkUserEdited] = useState(
@@ -289,6 +296,11 @@ function InspectorForm({
   const [accountId, setAccountId] = useState(
     tx.account_id ?? UNASSIGNED_ACCOUNT
   )
+  const incomeAccounts = useQuery({ ...accountsQuery(), enabled: isIncome })
+  const receivingCurrency =
+    incomeAccounts.data?.find((account) => account.id === accountId)
+      ?.currency ?? tx.currency
+
   const [date, setDate] = useState(() =>
     utcToDateInputValue(tx.occurred_at_utc, timezone)
   )
@@ -297,6 +309,11 @@ function InspectorForm({
   )
   const [note, setNote] = useState(tx.note ?? "")
   const [convertToLocalCurrency, setConvertToLocalCurrency] = useState(false)
+  const amountCurrency = isIncome
+    ? receivingCurrency
+    : tx.isForeignCurrency && !convertToLocalCurrency
+      ? tx.currency
+      : localCurrency
   const [formError, setFormError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
 
@@ -404,6 +421,23 @@ function InspectorForm({
     },
   })
 
+  const dispositionMutation = useMutation({
+    mutationFn: () =>
+      saveTransfersApi([
+        {
+          action: "non_transaction",
+          expected_transaction_id: tx.id,
+          email_ids: detail.sources.map((source) => source.email_id),
+        },
+      ]),
+    onSuccess: () => {
+      invalidateTriageRelatedQueries(queryClient)
+      onTransactionMutated?.()
+      review.close()
+    },
+    onError: (err) => setFormError(err.message),
+  })
+
   const splitMutation = useMutation({
     mutationFn: splitTransactionSourceApi,
     onSuccess: () => {
@@ -456,7 +490,9 @@ function InspectorForm({
     isEnriching ||
     tagCreatePending ||
     deleteMutation.isPending ||
-    splitMutation.isPending
+    splitMutation.isPending ||
+    dispositionMutation.isPending ||
+    transferEditorOpen
 
   useImperativeHandle(
     navigationGuard,
@@ -478,9 +514,11 @@ function InspectorForm({
           "The transaction currency changed. Reopen it before editing the amount."
         )
       }
-      const targetCurrency = convertToLocalCurrency
-        ? localCurrency
-        : tx.currency
+      const targetCurrency = isIncome
+        ? receivingCurrency
+        : convertToLocalCurrency
+          ? localCurrency
+          : tx.currency
       const saveDate =
         edits.has("date") && (date !== loaded?.date || time !== loaded?.time)
 
@@ -638,15 +676,72 @@ function InspectorForm({
     )
   }
 
+  const deleteAction = (
+    <AlertDialog>
+      <AlertDialogTrigger
+        render={
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            disabled={saveDisabled}
+          />
+        }
+      >
+        Delete transaction
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this transaction?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This permanently deletes the transaction and marks any linked source
+            emails as dismissed.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={deleteMutation.isPending}
+            onClick={() => deleteMutation.mutate(tx.id)}
+          >
+            Delete forever
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+
   return (
     <div className="space-y-5">
       <div className="rounded-xl border bg-secondary/60 p-4">
         <p className="text-sm font-medium wrap-break-word text-secondary-foreground">
+          <Badge variant="outline" className="mr-2">
+            {isTransfer ? "Transfer" : isIncome ? "Income" : "Expense"}
+          </Badge>
           {tx.remark ?? tx.merchant}
         </p>
         <p className="mt-1 text-2xl font-semibold tracking-tight text-foreground tabular-nums">
           {formatMinorCurrency(tx.amount_minor, tx.currency)}
+          {isTransfer &&
+            tx.destination_amount_minor != null &&
+            tx.destination_currency &&
+            tx.currency !== tx.destination_currency && (
+              <>
+                {" "}
+                →{" "}
+                {formatMinorCurrency(
+                  tx.destination_amount_minor,
+                  tx.destination_currency
+                )}
+              </>
+            )}
         </p>
+        {isTransfer && (
+          <p className="text-sm text-muted-foreground">
+            {tx.account_name} → {tx.destination_account_name}
+          </p>
+        )}
         <p className="mt-1 text-xs text-muted-foreground">
           {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
         </p>
@@ -664,165 +759,229 @@ function InspectorForm({
         )}
       </div>
 
+      {transferEditorOpen && (
+        <TransferFormDialog
+          targets={[
+            {
+              transaction: tx,
+              title: tx.remark ?? tx.merchant,
+              cardPayment: !isTransfer,
+              emailIds: isTransfer
+                ? undefined
+                : detail.sources.map((source) => source.email_id),
+            },
+          ]}
+          timezone={timezone}
+          onClose={() => setTransferEditorOpen(false)}
+          onSuccess={() => {
+            onTransactionMutated?.()
+            review.close()
+          }}
+        />
+      )}
+
       <TransactionForm
         note={{
-          disabled: isEnriching || review.pending,
+          disabled: isTransfer || isEnriching || review.pending,
           value: note,
           onChange: (value) => editDraft("note", setNote, value),
         }}
-        noteActions={reviewActions(detailFormId)}
+        noteActions={isTransfer ? undefined : reviewActions(detailFormId)}
         sourceCount={detail.sources.length}
         details={
-          <form id={detailFormId} onSubmit={handleSave} className="space-y-4">
-            {detail.sources.length >= 1 && (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2">
-                <p className="text-xs text-muted-foreground">
-                  Fill remark, category, tags, date, time, and note from{" "}
-                  {detail.sources.length}{" "}
-                  {detail.sources.length === 1
-                    ? "attached email"
-                    : "attached emails"}
-                  .
-                </p>
-                <MagicEnrichButton
-                  isEnriching={isEnriching}
-                  disabled={saveDisabled}
-                  onClick={handleMagicEnrich}
-                />
-              </div>
-            )}
-
-            <TransactionFormFields
-              description={{
-                value: remark,
-                placeholder: tx.merchant,
-                onChange: (value) => {
-                  setRemarkUserEdited(
-                    tx.remark_user_edited ||
-                      value.trim() !== (tx.remark ?? tx.merchant).trim()
-                  )
-                  editDraft("remark", setRemark, value)
-                },
-              }}
-              inert={isEnriching || review.pending}
-              currency={
-                tx.isForeignCurrency && !convertToLocalCurrency
-                  ? tx.currency
-                  : localCurrency
-              }
-              amount={amount}
-              onAmountChange={(value) => editDraft("amount", setAmount, value)}
-              amountInputProps={{
-                onBlur: () => setAmount(groupAmountInput(amount)),
-                className: "tabular-nums",
-              }}
-              categories={categories}
-              category={category}
-              onCategoryChange={(value) =>
-                editDraft("category", setCategory, value)
-              }
-              tagPicker={{
-                tags: tags ?? [],
-                selectedTagIds,
-                onChange: (ids) => editDraft("tags", setSelectedTagIds, ids),
-                draftTagNames,
-                onDraftTagNamesChange: (names) =>
-                  editDraft("tags", setDraftTagNames, names),
-                onCreatePendingChange: setTagCreatePending,
-                disabled: isEnriching || review.pending,
-              }}
-              accounts={accounts}
-              accountId={accountId}
-              onAccountChange={(value) =>
-                editDraft("account", setAccountId, value)
-              }
-              missingAccountLabel={
-                tx.account_id === accountId ? tx.account_name : null
-              }
-              paymentMethod={tx.payment_method_raw}
-              date={date}
-              onDateChange={(value) => editDraft("date", setDate, value)}
-              dateLabel="Occurred date and time"
-              time={{
-                value: time,
-                onChange: (value) => editDraft("date", setTime, value),
-              }}
-            />
-
-            {tx.isForeignCurrency && (
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="convert-local"
-                  checked={convertToLocalCurrency}
-                  disabled={review.pending}
-                  onCheckedChange={(checked) =>
-                    editDraft(
-                      "conversion",
-                      setConvertToLocalCurrency,
-                      Boolean(checked)
-                    )
-                  }
-                />
-                <Label htmlFor="convert-local">
-                  Convert to local currency ({localCurrency})
-                </Label>
-              </div>
-            )}
-
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-              <AlertDialog>
-                <AlertDialogTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      size="sm"
-                      disabled={review.pending}
-                    />
-                  }
-                >
-                  Delete transaction
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>
-                      Delete this transaction?
-                    </AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This permanently deletes the transaction and marks any
-                      linked source emails as dismissed.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      variant="destructive"
-                      disabled={deleteMutation.isPending}
-                      onClick={() => deleteMutation.mutate(tx.id)}
-                    >
-                      Delete forever
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-
-              {reviewActions()}
+          isTransfer ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                disabled={saveDisabled}
+                onClick={() => setTransferEditorOpen(true)}
+              >
+                Edit transfer
+              </Button>
+              {deleteAction}
             </div>
-          </form>
+          ) : (
+            <form id={detailFormId} onSubmit={handleSave} className="space-y-4">
+              {detail.sources.length >= 1 && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2">
+                  <p className="text-xs text-muted-foreground">
+                    Fill remark, category, tags, date, time, and note from{" "}
+                    {detail.sources.length}{" "}
+                    {detail.sources.length === 1
+                      ? "attached email"
+                      : "attached emails"}
+                    .
+                  </p>
+                  <MagicEnrichButton
+                    isEnriching={isEnriching}
+                    disabled={saveDisabled}
+                    onClick={handleMagicEnrich}
+                  />
+                </div>
+              )}
+
+              <TransactionFormFields
+                description={{
+                  value: remark,
+                  placeholder: tx.merchant,
+                  onChange: (value) => {
+                    setRemarkUserEdited(
+                      tx.remark_user_edited ||
+                        value.trim() !== (tx.remark ?? tx.merchant).trim()
+                    )
+                    editDraft("remark", setRemark, value)
+                  },
+                }}
+                inert={isEnriching || review.pending}
+                currency={amountCurrency}
+                amount={amount}
+                onAmountChange={(value) =>
+                  editDraft("amount", setAmount, value)
+                }
+                amountInputProps={{
+                  onBlur: () => setAmount(groupAmountInput(amount)),
+                  className: "tabular-nums",
+                }}
+                categories={categories}
+                category={category}
+                onCategoryChange={(value) =>
+                  editDraft("category", setCategory, value)
+                }
+                tagPicker={{
+                  tags: tags ?? [],
+                  selectedTagIds,
+                  onChange: (ids) => editDraft("tags", setSelectedTagIds, ids),
+                  draftTagNames,
+                  onDraftTagNamesChange: (names) =>
+                    editDraft("tags", setDraftTagNames, names),
+                  onCreatePendingChange: setTagCreatePending,
+                  disabled: isEnriching || review.pending,
+                }}
+                accounts={accounts}
+                receivingAccount={isIncome}
+                accountId={accountId}
+                onAccountChange={(value) => {
+                  if (isIncome) {
+                    const next = incomeAccounts.data?.find(
+                      (account) => account.id === value
+                    )
+                    if (!next) return
+                    if (next.currency !== receivingCurrency)
+                      editDraft("amount", setAmount, "")
+                  }
+                  editDraft("account", setAccountId, value)
+                }}
+                missingAccountLabel={
+                  tx.account_id === accountId ? tx.account_name : null
+                }
+                paymentMethod={tx.payment_method_raw}
+                date={date}
+                onDateChange={(value) => editDraft("date", setDate, value)}
+                dateLabel="Occurred date and time"
+                time={{
+                  value: time,
+                  onChange: (value) => editDraft("date", setTime, value),
+                }}
+              />
+
+              {tx.isForeignCurrency && !isIncome && (
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="convert-local"
+                    checked={convertToLocalCurrency}
+                    disabled={review.pending}
+                    onCheckedChange={(checked) =>
+                      editDraft(
+                        "conversion",
+                        setConvertToLocalCurrency,
+                        Boolean(checked)
+                      )
+                    }
+                  />
+                  <Label htmlFor="convert-local">
+                    Convert to local currency ({localCurrency})
+                  </Label>
+                </div>
+              )}
+
+              {!isIncome && detail.sources.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={saveDisabled || hasDraft}
+                    onClick={() => setTransferEditorOpen(true)}
+                  >
+                    Mark as card payment
+                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger
+                      render={
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={saveDisabled || hasDraft}
+                        />
+                      }
+                    >
+                      Mark as non-transaction
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>
+                          Mark as non-transaction?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Use this for a statement notice or another email that
+                          did not record a movement of money. The expense will
+                          be removed.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          disabled={dispositionMutation.isPending}
+                          onClick={() => dispositionMutation.mutate()}
+                        >
+                          Mark as non-transaction
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                  {hasDraft && (
+                    <p className="basis-full text-xs text-muted-foreground">
+                      Save your edits before reclassifying this expense.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                {deleteAction}
+
+                {reviewActions()}
+              </div>
+            </form>
+          )
         }
         sources={
           detail.sources.length > 0 ? (
             <>
-              {tx.manual_override === 1 && detail.sources.length > 1 && (
-                <Alert>
-                  <AlertDescription>
-                    This transaction has a locked amount (edited or combined).
-                    Splitting an email creates a separate transaction without
-                    reducing this transaction&apos;s amount — adjust the amount
-                    manually if needed.
-                  </AlertDescription>
-                </Alert>
-              )}
+              {!isTransfer &&
+                !isIncome &&
+                tx.manual_override === 1 &&
+                detail.sources.length > 1 && (
+                  <Alert>
+                    <AlertDescription>
+                      This transaction has a locked amount (edited or combined).
+                      Splitting an email creates a separate transaction without
+                      reducing this transaction&apos;s amount — adjust the
+                      amount manually if needed.
+                    </AlertDescription>
+                  </Alert>
+                )}
               <ul className="space-y-3">
                 {detail.sources.map((source) => (
                   <li key={source.id}>
@@ -831,7 +990,7 @@ function InspectorForm({
                       transactionId={tx.id}
                       timezone={timezone}
                       onSplit={
-                        detail.sources.length > 1
+                        !isTransfer && !isIncome && detail.sources.length > 1
                           ? () =>
                               splitMutation.mutate({
                                 transactionId: tx.id,

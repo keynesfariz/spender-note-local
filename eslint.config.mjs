@@ -28,6 +28,14 @@ const eslintConfig = defineConfig([
           selector: 'ImportDeclaration[source.value="react"] > ImportSpecifier[imported.name="FormEvent"]',
           message: "Use React's SubmitEvent<HTMLFormElement> for form submissions, or the event type specific to the handler.",
         },
+        {
+          selector: 'JSXOpeningElement[name.name="select"]',
+          message: "Use the shared shadcn Select from @/components/ui/select.",
+        },
+        {
+          selector: 'JSXOpeningElement[name.name=/^(input|Input)$/] > JSXAttribute[name.name="type"][value.value=/^(date|datetime-local)$/]',
+          message: "Use DatePicker from @/components/date-picker for calendar fields.",
+        },
       ],
     },
   },

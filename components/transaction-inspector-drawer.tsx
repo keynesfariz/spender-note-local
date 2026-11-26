@@ -7,8 +7,6 @@ import {
   ChevronRightIcon,
 } from "lucide-react"
 import {
-  useCallback,
-  useEffect,
   useId,
   useImperativeHandle,
   useLayoutEffect,
@@ -101,6 +99,35 @@ type DraftField =
   | "date"
   | "note"
   | "conversion"
+
+function loadDraft(tx: TransactionListItem, timezone?: string | null) {
+  const date = utcToDateInputValue(tx.occurred_at_utc, timezone)
+  const time = utcToTimeInputValue(tx.occurred_at_utc, timezone)
+  return {
+    baseline: {
+      key: `${tx.updated_at_utc}|${timezone ?? ""}`,
+      currency: tx.currency,
+      date,
+      time,
+      timezone,
+    },
+    edits: new Set<DraftField>(),
+    remark: tx.remark ?? tx.merchant,
+    merchant: tx.merchant,
+    remarkUserEdited: tx.remark_user_edited,
+    amount: groupAmountInput(minorToDecimalInput(tx.amount_minor, tx.currency)),
+    category: tx.category,
+    selectedTagIds: (tx.tags ?? []).map((tag) => tag.id),
+    draftTagNames: [] as string[],
+    accountId: tx.account_id ?? UNASSIGNED_ACCOUNT,
+    date,
+    time,
+    note: tx.note ?? "",
+    convertToLocalCurrency: false,
+  }
+}
+
+type DraftValues = Omit<ReturnType<typeof loadDraft>, "baseline" | "edits">
 
 function SourceEmailBody({
   transactionId,
@@ -280,38 +307,30 @@ function InspectorForm({
   const isTransfer = tx.kind === "transfer"
   const isIncome = tx.kind === "income"
   const [transferEditorOpen, setTransferEditorOpen] = useState(false)
-  const [remark, setRemark] = useState(tx.remark ?? tx.merchant)
-  const [merchant, setMerchant] = useState(tx.merchant)
-  const [remarkUserEdited, setRemarkUserEdited] = useState(
-    tx.remark_user_edited
-  )
+  const [draft, setDraft] = useState(() => loadDraft(tx, timezone))
+  const {
+    baseline,
+    edits,
+    remark,
+    merchant,
+    remarkUserEdited,
+    amount,
+    category,
+    selectedTagIds,
+    draftTagNames,
+    accountId,
+    date,
+    time,
+    note,
+    convertToLocalCurrency,
+  } = draft
+  const hasDraft = edits.size > 0
   const detailFormId = useId()
-  const [amount, setAmount] = useState(() =>
-    groupAmountInput(minorToDecimalInput(tx.amount_minor, tx.currency))
-  )
-  const [category, setCategory] = useState(tx.category)
-  const [selectedTagIds, setSelectedTagIds] = useState(() =>
-    (tx.tags ?? []).map((tag) => tag.id)
-  )
-  const [draftTagNames, setDraftTagNames] = useState<string[]>([])
   const [tagCreatePending, setTagCreatePending] = useState(false)
-  const [hasDraft, setHasDraft] = useState(false)
-  const [accountId, setAccountId] = useState(
-    tx.account_id ?? UNASSIGNED_ACCOUNT
-  )
   const incomeAccounts = useQuery({ ...accountsQuery(), enabled: isIncome })
   const receivingCurrency =
     incomeAccounts.data?.find((account) => account.id === accountId)
       ?.currency ?? tx.currency
-
-  const [date, setDate] = useState(() =>
-    utcToDateInputValue(tx.occurred_at_utc, timezone)
-  )
-  const [time, setTime] = useState(() =>
-    utcToTimeInputValue(tx.occurred_at_utc, timezone)
-  )
-  const [note, setNote] = useState(tx.note ?? "")
-  const [convertToLocalCurrency, setConvertToLocalCurrency] = useState(false)
   const amountCurrency = isIncome
     ? receivingCurrency
     : tx.isForeignCurrency && !convertToLocalCurrency
@@ -319,59 +338,12 @@ function InspectorForm({
       : localCurrency
   const [formError, setFormError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
-
   const { isEnriching, runEnrichment } = useMagicEnrich()
-  const lastLoadedTxRef = useRef({
-    key: `${tx.updated_at_utc}|${timezone ?? ""}`,
-    currency: tx.currency,
-    date,
-    time,
-    timezone,
-  })
-  const editedFields = useRef(new Set<DraftField>())
 
-  const syncFormFromTransaction = useCallback(
-    (tx: TransactionListItem) => {
-      const nextKey = `${tx.updated_at_utc}|${timezone ?? ""}`
-      const date = utcToDateInputValue(tx.occurred_at_utc, timezone)
-      const time = utcToTimeInputValue(tx.occurred_at_utc, timezone)
-      lastLoadedTxRef.current = {
-        key: nextKey,
-        currency: tx.currency,
-        date,
-        time,
-        timezone,
-      }
-      editedFields.current.clear()
-      setRemark(tx.remark ?? tx.merchant)
-      setMerchant(tx.merchant)
-      setRemarkUserEdited(tx.remark_user_edited)
-      setAmount(
-        groupAmountInput(minorToDecimalInput(tx.amount_minor, tx.currency))
-      )
-      setCategory(tx.category)
-      setSelectedTagIds((tx.tags ?? []).map((t) => t.id))
-      setDraftTagNames([])
-      setHasDraft(false)
-      setAccountId(tx.account_id ?? UNASSIGNED_ACCOUNT)
-      setDate(date)
-      setTime(time)
-      setNote(tx.note ?? "")
-      setConvertToLocalCurrency(false)
-    },
-    [timezone]
-  )
-
-  useEffect(() => {
-    const nextKey = `${tx.updated_at_utc}|${timezone ?? ""}`
-    if (
-      editedFields.current.size === 0 &&
-      !isEnriching &&
-      lastLoadedTxRef.current.key !== nextKey
-    ) {
-      syncFormFromTransaction(tx)
-    }
-  }, [tx, timezone, isEnriching, syncFormFromTransaction])
+  const sourceKey = `${tx.updated_at_utc}|${timezone ?? ""}`
+  if (!hasDraft && !isEnriching && baseline.key !== sourceKey) {
+    setDraft(loadDraft(tx, timezone))
+  }
 
   const invalidateAll = () => {
     invalidateTransactionRelatedQueries(queryClient)
@@ -393,7 +365,7 @@ function InspectorForm({
   const updateMutation = useMutation({
     mutationFn: updateTransactionApi,
     onSuccess: (updatedTx) => {
-      syncFormFromTransaction(updatedTx)
+      setDraft(loadDraft(updatedTx, timezone))
       patchInspector(() => updatedTx)
       patchTagsQueryCache(
         queryClient,
@@ -478,14 +450,16 @@ function InspectorForm({
     },
   })
 
-  function editDraft<Value>(
+  function editDraft(
     field: DraftField,
-    setter: (value: Value) => void,
-    value: Value
+    values:
+      Partial<DraftValues> | ((current: DraftValues) => Partial<DraftValues>)
   ) {
-    editedFields.current.add(field)
-    setHasDraft(true)
-    setter(value)
+    setDraft((current) => ({
+      ...current,
+      ...(typeof values === "function" ? values(current) : values),
+      edits: new Set([...current.edits, field]),
+    }))
   }
 
   const saveDisabled =
@@ -509,10 +483,8 @@ function InspectorForm({
     setFormError(null)
     setStatusMessage(null)
     try {
-      const edits = editedFields.current
-      const loaded = lastLoadedTxRef.current
       const saveAmount = edits.has("amount") || convertToLocalCurrency
-      if (saveAmount && loaded?.currency !== tx.currency) {
+      if (saveAmount && baseline.currency !== tx.currency) {
         throw new Error(
           "The transaction currency changed. Reopen it before editing the amount."
         )
@@ -523,7 +495,7 @@ function InspectorForm({
           ? localCurrency
           : tx.currency
       const saveDate =
-        edits.has("date") && (date !== loaded?.date || time !== loaded?.time)
+        edits.has("date") && (date !== baseline.date || time !== baseline.time)
 
       if (saveDate && (!date.trim() || !time.trim())) {
         throw new Error("Enter the occurred date and time before saving.")
@@ -550,7 +522,7 @@ function InspectorForm({
             : null
           : undefined,
         occurred_at_utc: saveDate
-          ? dateTimeInputToUtcIso(date, time || "00:00", loaded?.timezone)
+          ? dateTimeInputToUtcIso(date, time || "00:00", baseline.timezone)
           : undefined,
         note: edits.has("note") ? note.trim() || null : undefined,
         convertToLocalCurrency: saveAmount ? convertToLocalCurrency : undefined,
@@ -585,24 +557,28 @@ function InspectorForm({
           preview,
           queryClient,
           tags ?? [],
-          lastLoadedTxRef.current?.timezone
+          baseline.timezone
         )
 
         if (changed.has("Remark")) {
-          setRemarkUserEdited(next.remarkUserEdited)
-          editDraft("remark", setRemark, next.remark)
+          editDraft("remark", {
+            remark: next.remark,
+            remarkUserEdited: next.remarkUserEdited,
+          })
         }
         if (changed.has("Merchant for reports")) {
-          editDraft("merchant", setMerchant, next.merchant)
+          editDraft("merchant", { merchant: next.merchant })
         }
         if (changed.has("Category"))
-          editDraft("category", setCategory, next.category)
-        if (changed.has("Note")) editDraft("note", setNote, next.note)
-        if (changed.has("Date")) editDraft("date", setDate, next.date)
-        if (changed.has("Time")) editDraft("date", setTime, next.time)
+          editDraft("category", { category: next.category })
+        if (changed.has("Note")) editDraft("note", { note: next.note })
+        if (changed.has("Date")) editDraft("date", { date: next.date })
+        if (changed.has("Time")) editDraft("date", { time: next.time })
         if (changed.has("Tags")) {
-          editDraft("tags", setSelectedTagIds, next.selectedTagIds)
-          editDraft("tags", setDraftTagNames, next.draftTagNames)
+          editDraft("tags", {
+            selectedTagIds: next.selectedTagIds,
+            draftTagNames: next.draftTagNames,
+          })
         }
         setStatusMessage(message)
       },
@@ -762,7 +738,7 @@ function InspectorForm({
         note={{
           disabled: isTransfer || isEnriching || review.pending,
           value: note,
-          onChange: (value) => editDraft("note", setNote, value),
+          onChange: (value) => editDraft("note", { note: value }),
         }}
         noteActions={isTransfer ? undefined : reviewActions(detailFormId)}
         details={
@@ -802,35 +778,51 @@ function InspectorForm({
                   value: remark,
                   placeholder: tx.merchant,
                   onChange: (value) => {
-                    setRemarkUserEdited(
-                      tx.remark_user_edited ||
-                        value.trim() !== (tx.remark ?? tx.merchant).trim()
-                    )
-                    editDraft("remark", setRemark, value)
+                    editDraft("remark", {
+                      remark: value,
+                      remarkUserEdited:
+                        tx.remark_user_edited ||
+                        value.trim() !== (tx.remark ?? tx.merchant).trim(),
+                    })
                   },
                 }}
                 inert={isEnriching || review.pending}
                 currency={amountCurrency}
                 amount={amount}
                 onAmountChange={(value) =>
-                  editDraft("amount", setAmount, value)
+                  editDraft("amount", { amount: value })
                 }
                 amountInputProps={{
-                  onBlur: () => setAmount(groupAmountInput(amount)),
+                  onBlur: () =>
+                    setDraft((current) => ({
+                      ...current,
+                      amount: groupAmountInput(current.amount),
+                    })),
                   className: "tabular-nums",
                 }}
                 categories={categories}
                 category={category}
                 onCategoryChange={(value) =>
-                  editDraft("category", setCategory, value)
+                  editDraft("category", { category: value })
                 }
                 tagPicker={{
                   tags: tags ?? [],
                   selectedTagIds,
-                  onChange: (ids) => editDraft("tags", setSelectedTagIds, ids),
+                  onChange: (ids) =>
+                    editDraft("tags", (current) => ({
+                      selectedTagIds:
+                        typeof ids === "function"
+                          ? ids(current.selectedTagIds)
+                          : ids,
+                    })),
                   draftTagNames,
                   onDraftTagNamesChange: (names) =>
-                    editDraft("tags", setDraftTagNames, names),
+                    editDraft("tags", (current) => ({
+                      draftTagNames:
+                        typeof names === "function"
+                          ? names(current.draftTagNames)
+                          : names,
+                    })),
                   onCreatePendingChange: setTagCreatePending,
                   disabled: isEnriching || review.pending,
                 }}
@@ -844,20 +836,20 @@ function InspectorForm({
                     )
                     if (!next) return
                     if (next.currency !== receivingCurrency)
-                      editDraft("amount", setAmount, "")
+                      editDraft("amount", { amount: "" })
                   }
-                  editDraft("account", setAccountId, value)
+                  editDraft("account", { accountId: value })
                 }}
                 missingAccountLabel={
                   tx.account_id === accountId ? tx.account_name : null
                 }
                 paymentMethod={tx.payment_method_raw}
                 date={date}
-                onDateChange={(value) => editDraft("date", setDate, value)}
+                onDateChange={(value) => editDraft("date", { date: value })}
                 dateLabel="Occurred date and time"
                 time={{
                   value: time,
-                  onChange: (value) => editDraft("date", setTime, value),
+                  onChange: (value) => editDraft("date", { time: value }),
                 }}
               />
 
@@ -868,11 +860,9 @@ function InspectorForm({
                     checked={convertToLocalCurrency}
                     disabled={review.pending}
                     onCheckedChange={(checked) =>
-                      editDraft(
-                        "conversion",
-                        setConvertToLocalCurrency,
-                        Boolean(checked)
-                      )
+                      editDraft("conversion", {
+                        convertToLocalCurrency: Boolean(checked),
+                      })
                     }
                   />
                   <Label htmlFor="convert-local">
@@ -954,10 +944,10 @@ function InspectorForm({
                   detail.sources.length > 1 && (
                     <Alert>
                       <AlertDescription>
-                        This transaction has a locked amount (edited or combined).
-                        Splitting an email creates a separate transaction without
-                        reducing this transaction&apos;s amount — adjust the
-                        amount manually if needed.
+                        This transaction has a locked amount (edited or
+                        combined). Splitting an email creates a separate
+                        transaction without reducing this transaction&apos;s
+                        amount — adjust the amount manually if needed.
                       </AlertDescription>
                     </Alert>
                   )}

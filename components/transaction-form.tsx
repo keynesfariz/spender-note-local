@@ -1,11 +1,18 @@
-import { MailIcon, StickyNote, StickyNoteCheck } from "lucide-react"
+import {
+  CircleExclamationPoint,
+  Clipboard,
+  ClipboardCheck,
+  MailIcon,
+} from "lucide-react"
 import { useId, useMemo, type ComponentProps, type ReactNode } from "react"
 
 import { CategoryField } from "@/components/category-field"
 import { DatePicker } from "@/components/date-picker"
+import { IconTooltip } from "@/components/icon-tooltip"
+import type { MagicField } from "@/components/magic-enrich"
 import { TagMultiSelect } from "@/components/tag-multi-select"
 import { Badge } from "@/components/ui/badge"
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -51,6 +58,7 @@ type TransactionFormFieldsProps = {
   dateAriaLabel?: string
   time?: ComponentProps<typeof DatePicker>["time"]
   inert?: boolean
+  validFields?: ReadonlySet<MagicField>
 }
 
 export function TransactionFormFields({
@@ -76,6 +84,7 @@ export function TransactionFormFields({
   dateAriaLabel = dateLabel,
   time,
   inert,
+  validFields,
 }: TransactionFormFieldsProps) {
   const amountId = useId()
   const descriptionId = useId()
@@ -102,7 +111,10 @@ export function TransactionFormFields({
 
   return (
     <div className="grid gap-4 sm:grid-cols-2" inert={inert}>
-      <Field className="sm:col-span-2">
+      <Field
+        className="sm:col-span-2"
+        data-valid={validFields?.has("Remark") || undefined}
+      >
         <FieldLabel htmlFor={descriptionId}>Remark</FieldLabel>
         <Input
           id={descriptionId}
@@ -127,7 +139,12 @@ export function TransactionFormFields({
       </Field>
       <Field>
         <FieldLabel>
-          {receivingAccount ? "Receiving account" : "Account"}
+          <span>{receivingAccount ? "Receiving account" : "Account"}</span>
+          {paymentMethod ? (
+            <IconTooltip label={`Extracted payment method: ${paymentMethod}`}>
+              <CircleExclamationPoint className="size-3.5" />
+            </IconTooltip>
+          ) : null}
         </FieldLabel>
         <Select
           items={accountItems}
@@ -150,14 +167,13 @@ export function TransactionFormFields({
             ))}
           </SelectContent>
         </Select>
-        {paymentMethod && (
-          <FieldDescription>
-            Extracted payment method: {paymentMethod}
-          </FieldDescription>
-        )}
       </Field>
 
-      <Field>
+      <Field
+        data-valid={
+          validFields?.has("Date") || validFields?.has("Time") || undefined
+        }
+      >
         <FieldLabel htmlFor={dateId}>{dateLabel}</FieldLabel>
         <DatePicker
           id={dateId}
@@ -173,9 +189,13 @@ export function TransactionFormFields({
         categories={categories}
         value={category}
         onChange={onCategoryChange}
+        valid={validFields?.has("Category")}
       />
 
-      <Field className="sm:col-span-2">
+      <Field
+        className="sm:col-span-2"
+        data-valid={validFields?.has("Tags") || undefined}
+      >
         <FieldLabel>Tags</FieldLabel>
         {tagPicker && <TagMultiSelect key={tagPickerKey} {...tagPicker} />}
       </Field>
@@ -187,15 +207,17 @@ function TransactionNoteField({
   value,
   onChange,
   disabled,
+  valid,
 }: {
   value: string
   onChange: (value: string) => void
   disabled?: boolean
+  valid?: boolean
 }) {
   const id = useId()
 
   return (
-    <Field>
+    <Field data-valid={valid || undefined}>
       <FieldLabel htmlFor={id}>Note</FieldLabel>
       <Textarea
         id={id}
@@ -230,7 +252,7 @@ export function TransactionForm({
       >
         <TabsTrigger value="details">Details</TabsTrigger>
         <TabsTrigger value="note">
-          {note.value.trim() ? <StickyNoteCheck /> : <StickyNote />}
+          {note.value.trim() ? <ClipboardCheck /> : <Clipboard />}
           <span>Note</span>
         </TabsTrigger>
         {sourceTab ? (

@@ -20,10 +20,12 @@ export function CategoryField({
   categories,
   value,
   onChange,
+  valid,
 }: {
   categories?: readonly CategorySummary[]
   value: string
   onChange: (value: string) => void
+  valid?: boolean
 }) {
   const id = useId()
   const icons = useMemo(() => buildCategoryIconMap(categories), [categories])
@@ -33,7 +35,7 @@ export function CategoryField({
   )
 
   return (
-    <Field>
+    <Field data-valid={valid || undefined}>
       <FieldLabel htmlFor={id}>Category</FieldLabel>
       <Select
         items={options}

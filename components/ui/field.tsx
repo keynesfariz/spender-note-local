@@ -52,7 +52,7 @@ function FieldGroup({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 const fieldVariants = cva(
-  "group/field flex w-full gap-3 data-[invalid=true]:text-destructive",
+  "group/field flex w-full gap-3 data-[invalid=true]:text-destructive data-[valid=true]:text-emerald-600 dark:data-[valid=true]:text-emerald-400 data-[valid=true]:**:data-[slot=input]:border-emerald-500 data-[valid=true]:**:data-[slot=input]:ring-[3px] data-[valid=true]:**:data-[slot=input]:ring-emerald-500/25 data-[valid=true]:**:data-[slot=textarea]:border-emerald-500 data-[valid=true]:**:data-[slot=textarea]:ring-[3px] data-[valid=true]:**:data-[slot=textarea]:ring-emerald-500/25 data-[valid=true]:**:data-[slot=select-trigger]:border-emerald-500 data-[valid=true]:**:data-[slot=select-trigger]:ring-[3px] data-[valid=true]:**:data-[slot=select-trigger]:ring-emerald-500/25 data-[valid=true]:**:data-[slot=popover-trigger]:border-emerald-500 data-[valid=true]:**:data-[slot=popover-trigger]:ring-[3px] data-[valid=true]:**:data-[slot=popover-trigger]:ring-emerald-500/25",
   {
     variants: {
       orientation: {

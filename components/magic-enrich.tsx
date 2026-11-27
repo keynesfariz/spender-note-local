@@ -1,9 +1,10 @@
 "use client"
 
 import type { QueryClient } from "@tanstack/react-query"
-import { Loader2Icon, SparklesIcon } from "lucide-react"
+import { CircleAlertIcon, Loader2Icon, SparklesIcon } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 
+import { IconTooltip } from "@/components/icon-tooltip"
 import { Button } from "@/components/ui/button"
 import { tagsQuery } from "@/lib/api/tags"
 import { enrichTransactionsApi } from "@/lib/api/transactions"
@@ -145,6 +146,15 @@ export function patchTagsQueryCache(
   return missingOrAdded
 }
 
+export type MagicField =
+  | "Remark"
+  | "Merchant for reports"
+  | "Category"
+  | "Date"
+  | "Time"
+  | "Note"
+  | "Tags"
+
 type MagicDraft = {
   remark: string
   merchant: string
@@ -186,7 +196,7 @@ export function resolveMagicDraft(
     selectedTagIds: nextSelectedTagIds,
     draftTagNames: nextDraftTagNames,
   }
-  const changed = new Set<string>()
+  const changed = new Set<MagicField>()
   if (draft.remark.trim() !== next.remark.trim()) changed.add("Remark")
   if (draft.merchant !== next.merchant) changed.add("Merchant for reports")
   if (draft.category !== next.category) changed.add("Category")
@@ -280,6 +290,46 @@ export function useMagicEnrich() {
   )
 
   return { isEnriching, abortEnrichment, runEnrichment }
+}
+
+export function MagicEnrichControl({
+  isEnriching,
+  disabled = false,
+  onClick,
+  description,
+  statusMessage,
+}: {
+  isEnriching: boolean
+  disabled?: boolean
+  onClick: () => void
+  description: string
+  statusMessage?: string | null
+}) {
+  const tooltipLabel = statusMessage || description
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <MagicEnrichButton
+        isEnriching={isEnriching}
+        disabled={disabled}
+        onClick={onClick}
+      />
+      <IconTooltip label={tooltipLabel}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className={
+            statusMessage
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-muted-foreground"
+          }
+          aria-label={tooltipLabel}
+        >
+          <CircleAlertIcon className="size-4" aria-hidden="true" />
+        </Button>
+      </IconTooltip>
+    </div>
+  )
 }
 
 export function MagicEnrichButton({

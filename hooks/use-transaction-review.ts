@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { useCallback, useLayoutEffect, useRef, useState } from "react"
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 
 import { transactionsQuery } from "@/lib/api/transactions"
 import type { PaginatedTransactionsResponse } from "@/lib/api/types.generated"
@@ -24,6 +24,7 @@ type ReviewSession = {
   pending: boolean
   error?: string
   savedPosition?: ReviewPosition
+  resolvedPosition?: ReviewPosition
 }
 
 type ReviewAction =
@@ -57,6 +58,20 @@ export function useTransactionReview({
     }
   }, [scope])
 
+  const isDateFiltered = params.ledgerRange !== "all"
+  const reviewParams = useMemo<LedgerParams>(
+    () =>
+      isDateFiltered
+        ? {
+            ...params,
+            ledgerRange: "all",
+            startDate: undefined,
+            endDate: undefined,
+          }
+        : params,
+    [isDateFiltered, params]
+  )
+
   const select = useCallback((next: Selection | null) => {
     openSelection.current = next
     setSession(next ? { selection: next, pending: false } : null)
@@ -64,19 +79,102 @@ export function useTransactionReview({
 
   const open = useCallback(
     (id: string) => {
-      select({
+      const nextSelection: Selection = {
         id,
         scope,
-        position: page ? getReviewPosition(page, id) : null,
+        position: !isDateFiltered && page ? getReviewPosition(page, id) : null,
         dayBoundary: page?.ledger?.nextDayUtc,
-      })
+      }
+      select(nextSelection)
+
+      if (!isDateFiltered) return
+
+      const targetRow = page?.items.find((row) => row.id === id)
+      void (async () => {
+        const fetchReviewPage = (pageNumber: number) =>
+          queryClient.fetchQuery(
+            transactionsQuery({ ...reviewParams, page: pageNumber })
+          )
+
+        const applyFound = (found: ReviewPosition) => {
+          setSession((previous) =>
+            previous?.selection === nextSelection
+              ? { ...previous, resolvedPosition: found }
+              : previous
+          )
+        }
+
+        const firstPage = await fetchReviewPage(1)
+        if (openSelection.current !== nextSelection) return
+        const foundFirst = getReviewPosition(firstPage, id)
+        if (foundFirst) {
+          applyFound(foundFirst)
+          return
+        }
+
+        const totalPages = Math.ceil(firstPage.totalCount / firstPage.pageSize)
+        if (totalPages <= 1) return
+
+        if (!targetRow) {
+          for (let pageNumber = 2; pageNumber <= totalPages; pageNumber += 1) {
+            if (openSelection.current !== nextSelection) return
+            const result = await fetchReviewPage(pageNumber)
+            if (openSelection.current !== nextSelection) return
+            const found = getReviewPosition(result, id)
+            if (found) {
+              applyFound(found)
+              return
+            }
+          }
+          return
+        }
+
+        const compareDesc = (
+          a: Pick<typeof targetRow, "occurred_at_utc" | "created_at_utc" | "id">,
+          b: Pick<typeof targetRow, "occurred_at_utc" | "created_at_utc" | "id">
+        ) => {
+          if (a.occurred_at_utc !== b.occurred_at_utc) {
+            return a.occurred_at_utc > b.occurred_at_utc ? -1 : 1
+          }
+          if (a.created_at_utc !== b.created_at_utc) {
+            return a.created_at_utc > b.created_at_utc ? -1 : 1
+          }
+          if (a.id !== b.id) return a.id > b.id ? -1 : 1
+          return 0
+        }
+
+        let low = 2
+        let high = totalPages
+        while (low <= high && openSelection.current === nextSelection) {
+          const mid = Math.floor((low + high) / 2)
+          const result = await fetchReviewPage(mid)
+          if (openSelection.current !== nextSelection) return
+          const found = getReviewPosition(result, id)
+          if (found) {
+            applyFound(found)
+            return
+          }
+          const firstItem = result.items[0]
+          const lastItem = result.items[result.items.length - 1]
+          if (!firstItem || !lastItem) return
+          if (compareDesc(targetRow, firstItem) < 0) {
+            high = mid - 1
+          } else if (compareDesc(targetRow, lastItem) > 0) {
+            low = mid + 1
+          } else {
+            return
+          }
+        }
+      })()
     },
-    [page, scope, select]
+    [isDateFiltered, page, queryClient, reviewParams, scope, select]
   )
 
   const heldPosition = session?.savedPosition ?? null
   const livePosition =
-    page && selection ? getReviewPosition(page, selection.id) : null
+    !isDateFiltered && page && selection
+      ? getReviewPosition(page, selection.id)
+      : null
   const stillInPlace =
     livePosition &&
     heldPosition &&
@@ -87,6 +185,7 @@ export function useTransactionReview({
     selection?.scope === scope
       ? ((stillInPlace ? livePosition : heldPosition) ??
         livePosition ??
+        session?.resolvedPosition ??
         selection.position)
       : null
 
@@ -111,10 +210,11 @@ export function useTransactionReview({
 
     const loadPage = async (number: number) => {
       const result = await queryClient.fetchQuery({
-        ...transactionsQuery({ ...params, page: number }),
+        ...transactionsQuery({ ...reviewParams, page: number }),
         staleTime: 0,
       })
       if (
+        !isDateFiltered &&
         isRelativeRange &&
         current.dayBoundary &&
         result.ledger?.nextDayUtc !== current.dayBoundary
@@ -128,7 +228,8 @@ export function useTransactionReview({
 
     function move(destination: ReviewPosition) {
       if (!isCurrent()) return
-      if (page?.page !== destination.page) onPageChange(destination.page)
+      if (!isDateFiltered && page?.page !== destination.page)
+        onPageChange(destination.page)
       select({
         id: destination.row.id,
         scope,
@@ -225,7 +326,7 @@ export function useTransactionReview({
     error: session?.error,
     open,
     close: () => {
-      if (openSelection.current === selection) select(null)
+      if (selection) select(null)
     },
     navigate: (direction: ReviewDirection) => run({ direction }),
     write: (write: () => Promise<unknown>, advance: boolean) =>

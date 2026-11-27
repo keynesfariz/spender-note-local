@@ -6,11 +6,15 @@ import { useEffect, useId, useMemo, useState, type SubmitEvent } from "react"
 import { CategoryField } from "@/components/category-field"
 import { DatePicker } from "@/components/date-picker"
 import {
-  MagicEnrichButton,
+  MagicEnrichControl,
   resolveMagicDraft,
   useMagicEnrich,
 } from "@/components/magic-enrich"
 import { TagMultiSelect } from "@/components/tag-multi-select"
+import {
+  TransactionForm,
+  UNASSIGNED_ACCOUNT,
+} from "@/components/transaction-form"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -25,7 +29,6 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import {
   Select,
   SelectContent,
@@ -53,8 +56,6 @@ import {
   utcToTimeInputValue,
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
-
-const UNASSIGNED_ACCOUNT = "__unassigned__"
 
 export type ManualMergeMode = "duplicate" | "combine"
 
@@ -88,7 +89,6 @@ export function ManualMergeDialog({
   const [merchant, setMerchant] = useState("")
   const [remarkUserEdited, setRemarkUserEdited] = useState(false)
   const remarkId = useId()
-  const noteId = useId()
   const [category, setCategory] = useState<string>(DEFAULT_CATEGORY)
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [draftTagNames, setDraftTagNames] = useState<string[]>([])
@@ -99,6 +99,9 @@ export function ManualMergeDialog({
   const [note, setNote] = useState("")
   const [formError, setFormError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [magicChangedFields, setMagicChangedFields] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
 
   const { isEnriching, abortEnrichment, runEnrichment } = useMagicEnrich()
 
@@ -159,6 +162,7 @@ export function ManualMergeDialog({
     setTagCreatePending(false)
     setFormError(null)
     setStatusMessage(null)
+    setMagicChangedFields(new Set())
     setKeepId("")
     setDraftTagNames((prev) => (prev.length === 0 ? prev : []))
 
@@ -274,9 +278,11 @@ export function ManualMergeDialog({
           setDraftTagNames(next.draftTagNames)
         }
         setStatusMessage(message)
+        setMagicChangedFields(changed)
       },
       onError: (msg) => {
         setStatusMessage(null)
+        setMagicChangedFields(new Set())
         setFormError(msg)
       },
     })
@@ -427,124 +433,133 @@ export function ManualMergeDialog({
 
           {mode === "combine" && (
             <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/40 p-3">
-                <div>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-secondary/60 p-4">
+                <div className="min-w-0 flex-1">
                   <p className="text-xs text-muted-foreground">
                     Combined total ({transactions.length} transactions)
                   </p>
-                  <p className="text-2xl font-semibold tabular-nums">
+                  <p className="mt-1 text-2xl font-semibold tracking-tight text-foreground tabular-nums">
                     {formatMinorCurrency(summedAmount, sharedCurrency)}
                   </p>
                 </div>
                 {hasSourceEmails && (
-                  <MagicEnrichButton
+                  <MagicEnrichControl
                     isEnriching={isEnriching}
                     disabled={isPending || tagCreatePending}
                     onClick={handleMagicEnrich}
+                    description="Fill remark, category, tags, date, time, and note from attached emails."
+                    statusMessage={statusMessage}
                   />
                 )}
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2" inert={isEnriching}>
-                <Field className="sm:col-span-2">
-                  <FieldLabel htmlFor={remarkId}>Remark</FieldLabel>
-                  <Input
-                    id={remarkId}
-                    value={remark}
-                    onChange={(e) => {
-                      const value = e.target.value
-                      const primary = sortedByOccurred[0]
-                      setRemarkUserEdited(
-                        Boolean(primary?.remark_user_edited) ||
-                          value.trim() !==
-                            (primary?.remark ?? primary?.merchant ?? "").trim()
-                      )
-                      setRemark(value)
-                    }}
-                  />
-                </Field>
-
-                <CategoryField
-                  categories={catListQuery.data}
-                  value={category}
-                  onChange={setCategory}
-                />
-
-                <Field>
-                  <FieldLabel>Account</FieldLabel>
-                  <Select
-                    items={accountItems}
-                    value={accountId}
-                    onValueChange={(v) => setAccountId(v ?? UNASSIGNED_ACCOUNT)}
+              <TransactionForm
+                note={{
+                  disabled: isEnriching || isPending,
+                  value: note,
+                  onChange: setNote,
+                  valid: magicChangedFields.has("Note"),
+                }}
+                details={
+                  <div
+                    className="grid gap-4 sm:grid-cols-2"
+                    inert={isEnriching}
                   >
-                    <SelectTrigger className="w-full" aria-label="Account">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {accountItems.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
-                          {item.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
+                    <Field
+                      className="sm:col-span-2"
+                      data-valid={magicChangedFields.has("Remark") || undefined}
+                    >
+                      <FieldLabel htmlFor={remarkId}>Remark</FieldLabel>
+                      <Input
+                        id={remarkId}
+                        value={remark}
+                        onChange={(e) => {
+                          const value = e.target.value
+                          const primary = sortedByOccurred[0]
+                          setRemarkUserEdited(
+                            Boolean(primary?.remark_user_edited) ||
+                              value.trim() !==
+                                (
+                                  primary?.remark ??
+                                  primary?.merchant ??
+                                  ""
+                                ).trim()
+                          )
+                          setRemark(value)
+                        }}
+                      />
+                    </Field>
 
-                <Field className="sm:col-span-2">
-                  <FieldLabel>Tags</FieldLabel>
-                  <TagMultiSelect
-                    key={selectionKey}
-                    tags={tagListQuery.data ?? []}
-                    selectedTagIds={selectedTagIds}
-                    onChange={setSelectedTagIds}
-                    draftTagNames={draftTagNames}
-                    onDraftTagNamesChange={setDraftTagNames}
-                    onCreatePendingChange={setTagCreatePending}
-                    disabled={isEnriching || isPending}
-                  />
-                </Field>
+                    <Field className="sm:col-span-2">
+                      <FieldLabel>Account</FieldLabel>
+                      <Select
+                        items={accountItems}
+                        value={accountId}
+                        onValueChange={(v) =>
+                          setAccountId(v ?? UNASSIGNED_ACCOUNT)
+                        }
+                      >
+                        <SelectTrigger className="w-full" aria-label="Account">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {accountItems.map((item) => (
+                            <SelectItem key={item.value} value={item.value}>
+                              {item.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
 
-                <Field>
-                  <FieldLabel>Date</FieldLabel>
-                  <DatePicker
-                    value={date}
-                    onChange={setDate}
-                    ariaLabel="Combined transaction date"
-                  />
-                </Field>
+                    <Field
+                      data-valid={
+                        magicChangedFields.has("Date") ||
+                        magicChangedFields.has("Time") ||
+                        undefined
+                      }
+                    >
+                      <FieldLabel>Occurred date and time</FieldLabel>
+                      <DatePicker
+                        value={date}
+                        onChange={setDate}
+                        ariaLabel="Combined transaction date and time"
+                        time={{
+                          value: time,
+                          onChange: setTime,
+                        }}
+                        disabled={isEnriching}
+                      />
+                    </Field>
 
-                <Field>
-                  <FieldLabel>Time</FieldLabel>
-                  <Input
-                    type="time"
-                    required
-                    aria-label="Combined transaction time"
-                    value={time}
-                    onChange={(e) => setTime(e.target.value)}
-                  />
-                </Field>
+                    <CategoryField
+                      categories={catListQuery.data}
+                      value={category}
+                      onChange={setCategory}
+                      valid={magicChangedFields.has("Category")}
+                    />
 
-                <Field className="sm:col-span-2">
-                  <FieldLabel htmlFor={noteId}>Note</FieldLabel>
-                  <Textarea
-                    id={noteId}
-                    rows={4}
-                    placeholder="Optional note"
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                  />
-                </Field>
-              </div>
+                    <Field
+                      className="sm:col-span-2"
+                      data-valid={magicChangedFields.has("Tags") || undefined}
+                    >
+                      <FieldLabel>Tags</FieldLabel>
+                      <TagMultiSelect
+                        key={selectionKey}
+                        tags={tagListQuery.data ?? []}
+                        selectedTagIds={selectedTagIds}
+                        onChange={setSelectedTagIds}
+                        draftTagNames={draftTagNames}
+                        onDraftTagNamesChange={setDraftTagNames}
+                        onCreatePendingChange={setTagCreatePending}
+                        disabled={isEnriching || isPending}
+                      />
+                    </Field>
+                  </div>
+                }
+              />
             </div>
           )}
-
-          <div role="status" className="empty:absolute">
-            {statusMessage && (
-              <Alert role="presentation">
-                <AlertDescription>{statusMessage}</AlertDescription>
-              </Alert>
-            )}
-          </div>
 
           {formError && (
             <Alert variant="destructive">

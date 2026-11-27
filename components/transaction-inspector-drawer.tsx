@@ -2,9 +2,13 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
+  CheckIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  EllipsisIcon,
+  SaveIcon,
+  Trash2Icon,
 } from "lucide-react"
 import {
   useId,
@@ -12,17 +16,18 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type ReactNode,
   type Ref,
   type SubmitEvent,
 } from "react"
 
 import { DetailDrawerContent } from "@/components/detail-drawer-content"
+import { IconTooltip } from "@/components/icon-tooltip"
 import {
-  MagicEnrichButton,
+  MagicEnrichControl,
   patchTagsQueryCache,
   resolveMagicDraft,
   useMagicEnrich,
+  type MagicField,
 } from "@/components/magic-enrich"
 import { DestructiveConfirmationContent } from "@/components/destructive-confirmation-content"
 import { ReviewedIcon } from "@/components/reviewed"
@@ -46,9 +51,16 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { ButtonGroup } from "@/components/ui/button-group"
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Drawer } from "@/components/ui/drawer"
+import { Drawer, DrawerFooter } from "@/components/ui/drawer"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { useTransactionReview } from "@/hooks/use-transaction-review"
@@ -87,7 +99,7 @@ import {
   utcToDateInputValue,
   utcToTimeInputValue,
 } from "@/lib/format"
-import { getReviewAction, type ReviewDirection } from "@/lib/transaction-review"
+import { type ReviewDirection } from "@/lib/transaction-review"
 
 type DraftField =
   | "remark"
@@ -307,6 +319,8 @@ function InspectorForm({
   const isTransfer = tx.kind === "transfer"
   const isIncome = tx.kind === "income"
   const [transferEditorOpen, setTransferEditorOpen] = useState(false)
+  const [nonTransactionDialogOpen, setNonTransactionDialogOpen] =
+    useState(false)
   const [draft, setDraft] = useState(() => loadDraft(tx, timezone))
   const {
     baseline,
@@ -338,6 +352,10 @@ function InspectorForm({
       : localCurrency
   const [formError, setFormError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [magicStatus, setMagicStatus] = useState<string | null>(null)
+  const [magicChangedFields, setMagicChangedFields] = useState<
+    ReadonlySet<MagicField>
+  >(() => new Set())
   const { isEnriching, runEnrichment } = useMagicEnrich()
 
   const sourceKey = `${tx.updated_at_utc}|${timezone ?? ""}`
@@ -373,6 +391,8 @@ function InspectorForm({
         updatedTx.updated_at_utc
       )
       setFormError(null)
+      setMagicStatus(null)
+      setMagicChangedFields(new Set())
       setStatusMessage("Transaction updated.")
       invalidateAll()
     },
@@ -477,8 +497,7 @@ function InspectorForm({
     [hasDraft, saveDisabled]
   )
 
-  function handleSave(event: SubmitEvent<HTMLFormElement>) {
-    event.preventDefault()
+  function submitTransaction(advance: boolean) {
     if (saveDisabled) return
     setFormError(null)
     setStatusMessage(null)
@@ -503,8 +522,6 @@ function InspectorForm({
 
       const saveMerchant = edits.has("merchant")
       const saveRemark = edits.has("remark") || saveMerchant
-      const advance =
-        event.nativeEvent.submitter?.getAttribute("value") === "save-and-next"
       const patch = {
         id: tx.id,
         remark: saveRemark ? remark.trim() : undefined,
@@ -533,6 +550,13 @@ function InspectorForm({
     }
   }
 
+  function handleSave(event: SubmitEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const advance =
+      event.nativeEvent.submitter?.getAttribute("value") === "save-and-next"
+    submitTransaction(advance)
+  }
+
   function handleMagicEnrich() {
     if (saveDisabled) return
     runEnrichment({
@@ -540,6 +564,8 @@ function InspectorForm({
       onStart: () => {
         setFormError(null)
         setStatusMessage(null)
+        setMagicStatus(null)
+        setMagicChangedFields(new Set())
       },
       onSuccess: (preview) => {
         const { next, changed, message } = resolveMagicDraft(
@@ -580,7 +606,8 @@ function InspectorForm({
             draftTagNames: next.draftTagNames,
           })
         }
-        setStatusMessage(message)
+        setMagicStatus(message)
+        setMagicChangedFields(changed)
       },
       onError: (msg) => {
         setFormError(msg)
@@ -589,86 +616,88 @@ function InspectorForm({
   }
 
   const reviewed = tx.reviewed === 1
-  const reviewAction = getReviewAction(hasDraft, reviewed, review.next)
-  const saveAndAdvance = reviewAction === "save-and-next"
-  const markAndAdvance = reviewAction === "mark-and-next"
 
-  function handleMarkReviewed(advance: boolean) {
+  function handleMarkReviewed() {
     setFormError(null)
     setStatusMessage(null)
-    void review.write(() => markReviewedMutation.mutateAsync(), advance)
+    void review.write(() => markReviewedMutation.mutateAsync(), false)
   }
 
   function reviewActions(form?: string) {
     const skipNativeValidation = Boolean(form)
-    let secondaryAction: ReactNode = null
-    if (saveAndAdvance) {
-      secondaryAction = (
-        <Button
-          type="submit"
-          form={form}
-          formNoValidate={skipNativeValidation}
-          value="save-and-next"
-          disabled={saveDisabled}
-        >
-          Save changes &amp; next
-        </Button>
-      )
-    } else if (reviewAction) {
-      const label = markAndAdvance ? "Mark reviewed & next" : "Mark reviewed"
-      secondaryAction = (
-        <Button
-          type="button"
-          variant={markAndAdvance ? "default" : "outline"}
-          disabled={saveDisabled}
-          onClick={() => handleMarkReviewed(markAndAdvance)}
-        >
-          {markReviewedMutation.isPending ? "Marking..." : label}
-        </Button>
-      )
-    }
-
+    const canAdvance = review.next
+    const hasSecondaryActions = !reviewed || canAdvance
     return (
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex items-center gap-2">
         {reviewed ? <ReviewedIcon /> : null}
+        {hasSecondaryActions ? (
+          <ButtonGroup>
+            {!reviewed ? (
+              <IconTooltip label="Mark reviewed">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Mark reviewed"
+                  disabled={saveDisabled}
+                  onClick={handleMarkReviewed}
+                >
+                  <CheckIcon className="size-4" aria-hidden="true" />
+                </Button>
+              </IconTooltip>
+            ) : null}
+            {canAdvance ? (
+              <IconTooltip label="Save changes">
+                <Button
+                  type="submit"
+                  form={form}
+                  formNoValidate={skipNativeValidation}
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Save changes"
+                  disabled={saveDisabled}
+                >
+                  <SaveIcon className="size-4" aria-hidden="true" />
+                </Button>
+              </IconTooltip>
+            ) : null}
+          </ButtonGroup>
+        ) : null}
         <Button
           type="submit"
           form={form}
           formNoValidate={skipNativeValidation}
-          variant={saveAndAdvance || markAndAdvance ? "outline" : "default"}
+          value={canAdvance ? "save-and-next" : undefined}
+          size="sm"
           disabled={saveDisabled}
         >
-          {updateMutation.isPending ? "Saving..." : "Save changes"}
+          {updateMutation.isPending
+            ? "Saving..."
+            : canAdvance
+              ? "Save changes & next"
+              : "Save changes"}
         </Button>
-        {secondaryAction}
-        {markAndAdvance && review.error ? (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={saveDisabled}
-            onClick={() => handleMarkReviewed(false)}
-          >
-            Mark reviewed
-          </Button>
-        ) : null}
       </div>
     )
   }
 
   const deleteAction = (
     <AlertDialog>
-      <AlertDialogTrigger
-        render={
-          <Button
-            type="button"
-            variant="destructive"
-            size="sm"
-            disabled={saveDisabled}
-          />
-        }
-      >
-        Delete transaction
-      </AlertDialogTrigger>
+      <IconTooltip label="Delete transaction">
+        <AlertDialogTrigger
+          render={
+            <Button
+              type="button"
+              variant="destructive"
+              size="icon-sm"
+              aria-label="Delete transaction"
+              disabled={saveDisabled}
+            />
+          }
+        >
+          <Trash2Icon className="size-4" aria-hidden="true" />
+        </AlertDialogTrigger>
+      </IconTooltip>
       <DestructiveConfirmationContent
         title="Delete this transaction?"
         description="This permanently deletes the transaction and marks any linked source emails as dismissed."
@@ -679,26 +708,39 @@ function InspectorForm({
     </AlertDialog>
   )
 
+  const magicEnrichDescription = `Fill remark, category, tags, date, time, and note from ${detail.sources.length} ${detail.sources.length === 1 ? "attached email" : "attached emails"}.`
+
   return (
     <div className="space-y-5">
-      <div className="rounded-xl border bg-secondary/60 p-4">
-        <p className="text-sm font-medium wrap-break-word text-secondary-foreground">
-          <Badge variant="outline" className="mr-2">
-            {transactionKindLabel(tx.kind)}
-          </Badge>
-          {tx.remark ?? tx.merchant}
-        </p>
-        <p className="mt-1 text-2xl font-semibold tracking-tight text-foreground tabular-nums">
-          {formatTransactionAmount(tx)}
-        </p>
-        {isTransfer && (
-          <p className="text-sm text-muted-foreground">
-            {tx.account_name} → {tx.destination_account_name}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-secondary/60 p-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium wrap-break-word text-secondary-foreground">
+            <Badge variant="outline" className="mr-2">
+              {transactionKindLabel(tx.kind)}
+            </Badge>
+            {tx.remark ?? tx.merchant}
           </p>
+          <p className="mt-1 text-2xl font-semibold tracking-tight text-foreground tabular-nums">
+            {formatTransactionAmount(tx)}
+          </p>
+          {isTransfer && (
+            <p className="text-sm text-muted-foreground">
+              {tx.account_name} → {tx.destination_account_name}
+            </p>
+          )}
+          <p className="mt-1 text-xs text-muted-foreground">
+            {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
+          </p>
+        </div>
+        {!isTransfer && detail.sources.length >= 1 && (
+          <MagicEnrichControl
+            isEnriching={isEnriching}
+            disabled={saveDisabled}
+            onClick={handleMagicEnrich}
+            description={magicEnrichDescription}
+            statusMessage={magicStatus}
+          />
         )}
-        <p className="mt-1 text-xs text-muted-foreground">
-          {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
-        </p>
       </div>
       {formError && (
         <Alert variant="destructive">
@@ -739,6 +781,7 @@ function InspectorForm({
           disabled: isTransfer || isEnriching || review.pending,
           value: note,
           onChange: (value) => editDraft("note", { note: value }),
+          valid: magicChangedFields.has("Note"),
         }}
         noteActions={isTransfer ? undefined : reviewActions(detailFormId)}
         details={
@@ -755,24 +798,6 @@ function InspectorForm({
             </div>
           ) : (
             <form id={detailFormId} onSubmit={handleSave} className="space-y-4">
-              {detail.sources.length >= 1 && (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2">
-                  <p className="text-xs text-muted-foreground">
-                    Fill remark, category, tags, date, time, and note from{" "}
-                    {detail.sources.length}{" "}
-                    {detail.sources.length === 1
-                      ? "attached email"
-                      : "attached emails"}
-                    .
-                  </p>
-                  <MagicEnrichButton
-                    isEnriching={isEnriching}
-                    disabled={saveDisabled}
-                    onClick={handleMagicEnrich}
-                  />
-                </div>
-              )}
-
               <TransactionFormFields
                 description={{
                   value: remark,
@@ -851,6 +876,7 @@ function InspectorForm({
                   value: time,
                   onChange: (value) => editDraft("date", { time: value }),
                 }}
+                validFields={magicChangedFields}
               />
 
               {tx.isForeignCurrency && !isIncome && (
@@ -871,65 +897,77 @@ function InspectorForm({
                 </div>
               )}
 
-              {!isIncome && detail.sources.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={saveDisabled || hasDraft}
-                    onClick={() => setTransferEditorOpen(true)}
-                  >
-                    Mark as card payment
-                  </Button>
-                  <AlertDialog>
-                    <AlertDialogTrigger
-                      render={
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={saveDisabled || hasDraft}
-                        />
-                      }
+              <div className="space-y-2 pt-2">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    {deleteAction}
+                    {!isIncome && detail.sources.length > 0 && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon-sm"
+                              aria-label="More actions"
+                              disabled={saveDisabled || hasDraft}
+                            />
+                          }
+                        >
+                          <EllipsisIcon className="size-4" aria-hidden="true" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent side="top" align="start">
+                          <DropdownMenuItem
+                            onClick={() => setTransferEditorOpen(true)}
+                          >
+                            Mark as card payment
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => setNonTransactionDialogOpen(true)}
+                          >
+                            Mark as non-transaction
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
+
+                  {reviewActions()}
+                </div>
+
+                {!isIncome && detail.sources.length > 0 && hasDraft && (
+                  <p className="text-xs text-muted-foreground">
+                    Save your edits before reclassifying this expense.
+                  </p>
+                )}
+              </div>
+
+              <AlertDialog
+                open={nonTransactionDialogOpen}
+                onOpenChange={setNonTransactionDialogOpen}
+              >
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Mark as non-transaction?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Use this for a statement notice or another email that did
+                      not record a movement of money. The expense will be
+                      removed.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={dispositionMutation.isPending}
+                      onClick={() => dispositionMutation.mutate()}
                     >
                       Mark as non-transaction
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>
-                          Mark as non-transaction?
-                        </AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Use this for a statement notice or another email that
-                          did not record a movement of money. The expense will
-                          be removed.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                          disabled={dispositionMutation.isPending}
-                          onClick={() => dispositionMutation.mutate()}
-                        >
-                          Mark as non-transaction
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                  {hasDraft && (
-                    <p className="basis-full text-xs text-muted-foreground">
-                      Save your edits before reclassifying this expense.
-                    </p>
-                  )}
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                {deleteAction}
-
-                {reviewActions()}
-              </div>
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </form>
           )
         }
@@ -1041,13 +1079,13 @@ export function TransactionInspectorDrawer({
         title="Transaction details"
         description="Inspect attached source emails, mark reviewed, or edit transaction fields."
         scrollResetKey={transactionId}
-        headerActions={
-          <div className="mt-3 space-y-2">
+        footer={
+          <DrawerFooter className="items-center border-t px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
             <nav
               ref={navigation}
               tabIndex={-1}
               aria-label="Transaction navigation"
-              className="flex flex-wrap items-center gap-2"
+              className="flex flex-wrap items-center justify-center gap-2"
             >
               <Button
                 type="button"
@@ -1075,11 +1113,11 @@ export function TransactionInspectorDrawer({
               </Button>
             </nav>
             {review.error ? (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-center text-sm text-destructive">
                 {review.error}
               </p>
             ) : null}
-          </div>
+          </DrawerFooter>
         }
       >
         {transactionId && (

@@ -258,3 +258,78 @@ func TestListTransactions_TransferKindMatchesEitherAccount(t *testing.T) {
 		t.Fatalf("missing transfer sides in detail: %+v", item)
 	}
 }
+
+func TestListTransactions_SourceTypeFilter(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	nowUtc := NowUtcIsoSeconds()
+
+	manualReviewed, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
+		AmountMinor:   15000,
+		OccurredAtUtc: "2026-11-20T05:00:00Z",
+		Merchant:      "Manual Cafe",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	catID, err := validateTransactionCategoryID(gdb, DefaultCategory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gmailTx := db.Transaction{
+		ID:            "tx-gmail-1",
+		SourceType:    "gmail",
+		Kind:          "expense",
+		AmountMinor:   25000,
+		Currency:      "IDR",
+		OccurredAtUtc: "2026-11-20T06:00:00Z",
+		Merchant:      "Gmail Store",
+		CategoryID:    catID,
+		Reviewed:      0,
+		CreatedAtUtc:  nowUtc,
+		UpdatedAtUtc:  nowUtc,
+	}
+	manualUnreviewed := db.Transaction{
+		ID:            "tx-manual-unreviewed",
+		SourceType:    "manual",
+		Kind:          "expense",
+		AmountMinor:   35000,
+		Currency:      "IDR",
+		OccurredAtUtc: "2026-11-20T07:00:00Z",
+		Merchant:      "Imported Cafe",
+		CategoryID:    catID,
+		Reviewed:      0,
+		CreatedAtUtc:  nowUtc,
+		UpdatedAtUtc:  nowUtc,
+	}
+	if err := gdb.Create(&gmailTx).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&manualUnreviewed).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	allRes, err := ListTransactions(gdb, ListTransactionsParams{SourceType: "all"})
+	if err != nil || allRes.TotalCount != 3 {
+		t.Fatalf("all source filter = %+v, %v; want 3", allRes, err)
+	}
+
+	gmailRes, err := ListTransactions(gdb, ListTransactionsParams{SourceType: "gmail"})
+	if err != nil || gmailRes.TotalCount != 1 || gmailRes.Items[0].ID != gmailTx.ID {
+		t.Fatalf("gmail source filter = %+v, %v; want %s", gmailRes, err, gmailTx.ID)
+	}
+
+	manualRes, err := ListTransactions(gdb, ListTransactionsParams{SourceType: "manual"})
+	if err != nil || manualRes.TotalCount != 2 {
+		t.Fatalf("manual source filter = %+v, %v; want 2 (including %s)", manualRes, err, manualReviewed.ID)
+	}
+
+	unreviewedManualRes, err := ListTransactions(gdb, ListTransactionsParams{SourceType: "manual", UnreviewedOnly: true})
+	if err != nil || unreviewedManualRes.TotalCount != 1 || unreviewedManualRes.Items[0].ID != manualUnreviewed.ID {
+		t.Fatalf("manual+unreviewed filter = %+v, %v; want %s", unreviewedManualRes, err, manualUnreviewed.ID)
+	}
+
+	if _, err := ListTransactions(gdb, ListTransactionsParams{SourceType: "csv"}); err == nil {
+		t.Fatalf("expected error for invalid sourceType")
+	}
+}

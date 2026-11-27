@@ -29,7 +29,10 @@ import { DateRangePicker } from "@/components/date-picker"
 import { LocaleSetupAlert } from "@/components/locale-setup-alert"
 import type { ManualMergeMode } from "@/components/manual-merge-dialog"
 import { PageLayout } from "@/components/PageLayout"
-import { TransactionList } from "@/components/transaction-list"
+import {
+  TransactionList,
+  type TransactionSourceFilter,
+} from "@/components/transaction-list"
 import type { TransferTarget } from "@/components/transfer-form-dialog"
 import { TriageUndoToast } from "@/components/triage-undo-toast"
 import { Badge } from "@/components/ui/badge"
@@ -131,6 +134,9 @@ export function TransactionsView() {
     category: parseAsString.withDefault(""),
     tag: parseAsString.withDefault(""),
     accountId: parseAsString.withDefault("all"),
+    source: parseAsStringLiteral(["all", "gmail", "manual"] as const).withDefault(
+      "all"
+    ),
     unreviewed: parseAsBoolean.withDefault(false),
     tab: parseAsStringLiteral(["transactions", "skipped"] as const).withDefault(
       "transactions"
@@ -174,6 +180,7 @@ export function TransactionsView() {
     category: filters.category || undefined,
     tag: filters.tag || undefined,
     accountId: filters.accountId === "all" ? undefined : filters.accountId,
+    sourceType: filters.source === "all" ? undefined : filters.source,
     search: filters.search.trim() || undefined,
     unreviewedOnly: filters.unreviewed || undefined,
   }
@@ -382,29 +389,25 @@ export function TransactionsView() {
     deleteTransactionsMutation.reset()
   }
 
-  const handleCategoryChange = (value: string) => {
-    void setFilters({ category: value, page: 1 })
+  const updateFilters = (patch: Partial<typeof filters>) => {
+    void setFilters({ ...patch, page: 1 })
     clearSelection()
     deleteTransactionsMutation.reset()
   }
 
-  const handleTagChange = (value: string) => {
-    void setFilters({ tag: value, page: 1 })
-    clearSelection()
-    deleteTransactionsMutation.reset()
-  }
+  const handleCategoryChange = (value: string) =>
+    updateFilters({ category: value })
 
-  const handleAccountIdChange = (value: string) => {
-    void setFilters({ accountId: value, page: 1 })
-    clearSelection()
-    deleteTransactionsMutation.reset()
-  }
+  const handleTagChange = (value: string) => updateFilters({ tag: value })
 
-  const handleUnreviewedOnlyChange = (value: boolean) => {
-    void setFilters({ unreviewed: value, page: 1 })
-    clearSelection()
-    deleteTransactionsMutation.reset()
-  }
+  const handleAccountIdChange = (value: string) =>
+    updateFilters({ accountId: value })
+
+  const handleSourceChange = (value: TransactionSourceFilter) =>
+    updateFilters({ source: value })
+
+  const handleUnreviewedOnlyChange = (value: boolean) =>
+    updateFilters({ unreviewed: value })
 
   const handleResetFilters = () => {
     setSearchResetKey((key) => key + 1)
@@ -413,6 +416,7 @@ export function TransactionsView() {
       category: null,
       tag: null,
       accountId: null,
+      source: null,
       unreviewed: null,
       page: 1,
     })
@@ -640,6 +644,8 @@ export function TransactionsView() {
               onTagChange={handleTagChange}
               accountId={filters.accountId}
               onAccountIdChange={handleAccountIdChange}
+              source={filters.source}
+              onSourceChange={handleSourceChange}
               unreviewedOnly={filters.unreviewed}
               onUnreviewedOnlyChange={handleUnreviewedOnlyChange}
               onResetFilters={handleResetFilters}

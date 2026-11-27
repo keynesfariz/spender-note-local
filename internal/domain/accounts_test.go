@@ -48,9 +48,9 @@ func TestListAccountOptions_PreservesSummaryOrderAndCurrentNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []AccountOption{
-		{ID: secondID, Name: "First alphabetically"},
-		{ID: firstID, Name: "Renamed card"},
-		{ID: newestID, Name: "A more recent card"},
+		{ID: secondID, Name: "First alphabetically", Type: "credit_card", Currency: "IDR"},
+		{ID: firstID, Name: "Renamed card", Type: "credit_card", Currency: "IDR"},
+		{ID: newestID, Name: "A more recent card", Type: "credit_card", Currency: "IDR"},
 	}
 	if !reflect.DeepEqual(options, want) {
 		t.Fatalf("options = %#v, want %#v", options, want)

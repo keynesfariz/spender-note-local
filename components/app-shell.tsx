@@ -11,7 +11,7 @@ import { IconTooltip } from "@/components/icon-tooltip"
 import { SyncToast } from "@/components/sync-toast"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { accountsQuery } from "@/lib/api/accounts"
+import { accountOptionsQuery, accountsQuery } from "@/lib/api/accounts"
 import { categoriesQuery } from "@/lib/api/categories"
 import {
   gmailStatusQuery,
@@ -29,6 +29,7 @@ import type { SyncStatusView } from "@/lib/api/types.generated"
 
 const NAV_ITEMS = [
   { href: "/transactions", label: "Transactions" },
+  { href: "/import", label: "Import" },
   { href: "/accounts", label: "Accounts" },
   { href: "/categories", label: "Categories & Tags" },
   { href: "/settings", label: "Settings" },
@@ -56,6 +57,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       case "/transactions":
         void queryClient.prefetchQuery(localeQuery())
         void queryClient.prefetchQuery(transactionsQuery(DEFAULT_LEDGER_PARAMS))
+        break
+      case "/import":
+        void queryClient.prefetchQuery(localeQuery())
+        void queryClient.prefetchQuery(accountOptionsQuery())
+        void queryClient.prefetchQuery(categoriesQuery())
+        void queryClient.prefetchQuery(tagsQuery())
         break
       case "/accounts":
         void queryClient.prefetchQuery(localeQuery())

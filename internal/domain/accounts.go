@@ -49,8 +49,10 @@ type AccountSummary struct {
 }
 
 type AccountOption struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Currency string `json:"currency"`
 }
 
 func isValidAccountType(t string) bool {
@@ -158,7 +160,7 @@ func ListAccounts(gdb *gorm.DB) ([]AccountSummary, error) {
 
 func ListAccountOptions(gdb *gorm.DB) ([]AccountOption, error) {
 	options := []AccountOption{}
-	err := gdb.Model(&db.Account{}).Select("id", "name").
+	err := gdb.Model(&db.Account{}).Select("id", "name", "type", "currency").
 		Order("created_at_utc ASC, name ASC").Find(&options).Error
 	return options, err
 }

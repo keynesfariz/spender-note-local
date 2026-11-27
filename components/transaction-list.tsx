@@ -126,6 +126,15 @@ function getMergeEligibility(selected: TransactionListItem[]): {
   }
 }
 
+export const TRANSACTION_SOURCE_OPTIONS = [
+  { value: "all", label: "All sources" },
+  { value: "gmail", label: "Gmail" },
+  { value: "manual", label: "Manual" },
+] as const
+
+export type TransactionSourceFilter =
+  (typeof TRANSACTION_SOURCE_OPTIONS)[number]["value"]
+
 export function TransactionList({
   transactions,
   accounts,
@@ -141,6 +150,8 @@ export function TransactionList({
   onTagChange,
   accountId,
   onAccountIdChange,
+  source,
+  onSourceChange,
   unreviewedOnly,
   onUnreviewedOnlyChange,
   onResetFilters,
@@ -178,6 +189,8 @@ export function TransactionList({
   onTagChange: (value: string) => void
   accountId: string
   onAccountIdChange: (value: string) => void
+  source: TransactionSourceFilter
+  onSourceChange: (value: TransactionSourceFilter) => void
   unreviewedOnly: boolean
   onUnreviewedOnlyChange: (value: boolean) => void
   onResetFilters: () => void
@@ -278,7 +291,7 @@ export function TransactionList({
   return (
     <Card>
       <CardHeader className="space-y-3">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))_auto]">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto]">
           <DebouncedSearchInput
             key={searchResetKey}
             label="Search transactions"
@@ -348,6 +361,23 @@ export function TransactionList({
             </SelectContent>
           </Select>
 
+          <Select
+            items={TRANSACTION_SOURCE_OPTIONS}
+            value={source}
+            onValueChange={(value) => onSourceChange(value ?? "all")}
+          >
+            <SelectTrigger className="w-full" aria-label="Filter by source">
+              <SelectValue placeholder="All sources" />
+            </SelectTrigger>
+            <SelectContent>
+              {TRANSACTION_SOURCE_OPTIONS.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:col-span-2 lg:col-span-1">
             <div className="flex items-center gap-2">
               <Checkbox
@@ -369,6 +399,7 @@ export function TransactionList({
                 !category &&
                 !tag &&
                 accountId === "all" &&
+                source === "all" &&
                 !unreviewedOnly
               }
             >

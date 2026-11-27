@@ -27,6 +27,7 @@ func GET(w http.ResponseWriter, r *http.Request) {
 		Tag:            q.Get("tag"),
 		AccountID:      q.Get("accountId"),
 		Kind:           q.Get("kind"),
+		SourceType:     q.Get("sourceType"),
 		Search:         q.Get("search"),
 		UnreviewedOnly: q.Get("unreviewedOnly") == "true" || q.Get("unreviewedOnly") == "1",
 		Page:           page,

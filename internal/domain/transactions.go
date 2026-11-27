@@ -332,6 +332,7 @@ type ListTransactionsParams struct {
 	Tag            string
 	AccountID      string
 	Kind           string
+	SourceType     string
 	Search         string
 	UnreviewedOnly bool
 	Page           int
@@ -447,6 +448,15 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 			args = append(args, params.Kind)
 		default:
 			return nil, errors.New("Invalid transaction kind.")
+		}
+	}
+	if src := strings.TrimSpace(params.SourceType); src != "" && src != "all" {
+		switch src {
+		case "gmail", "manual":
+			conds = append(conds, "t.source_type = ?")
+			args = append(args, src)
+		default:
+			return nil, errors.New("Invalid transaction source.")
 		}
 	}
 	if params.AccountID != "" && params.AccountID != "all" {

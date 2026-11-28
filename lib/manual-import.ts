@@ -70,7 +70,9 @@ function buildManualImportExampleJson(currency: string): string {
   )
 }
 
-export function buildManualImportPrompt(input: ManualImportPromptInput): string {
+export function buildManualImportPrompt(
+  input: ManualImportPromptInput
+): string {
   const categoriesList =
     input.categories.length > 0 ? input.categories.join(", ") : DEFAULT_CATEGORY
   const tagsList = input.tags.length > 0 ? input.tags.join(", ") : "(none)"
@@ -258,8 +260,7 @@ export function parseManualImportJson(
         : typeof obj.remark === "string"
           ? obj.remark.trim()
           : ""
-    const merchant =
-      !rawMerchant && kind === "income" ? "Income" : rawMerchant
+    const merchant = !rawMerchant && kind === "income" ? "Income" : rawMerchant
 
     const rawCategory =
       typeof obj.category === "string" ? obj.category.trim() : ""
@@ -290,7 +291,9 @@ export function parseManualImportJson(
 
     const errors: string[] = []
     if (!kindValid) {
-      errors.push(`Unsupported kind "${String(obj.kind)}" (use expense or income).`)
+      errors.push(
+        `Unsupported kind "${String(obj.kind)}" (use expense or income).`
+      )
     }
     if (!currencyValid) {
       errors.push(`Invalid currency "${rawCurrency}".`)
@@ -325,15 +328,15 @@ export function parseManualImportJson(
       note,
       payload: valid
         ? {
-            kind,
-            amount_minor: amountMinor!,
-            currency: rawCurrency,
-            occurred_at_utc: ts.occurredAtUtc!,
-            merchant,
-            category: resolvedCategory,
-            tag_names: matchedTags,
-            note: note || undefined,
-          }
+          kind,
+          amount_minor: amountMinor!,
+          currency: rawCurrency,
+          occurred_at_utc: ts.occurredAtUtc!,
+          merchant,
+          category: resolvedCategory,
+          tag_names: matchedTags,
+          note: note || undefined,
+        }
         : undefined,
     }
   })

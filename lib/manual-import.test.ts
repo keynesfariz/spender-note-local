@@ -1,10 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import {
-  buildManualImportPrompt,
-  parseManualImportJson,
-} from "./manual-import"
+import { buildManualImportPrompt, parseManualImportJson } from "./manual-import"
 
 test("buildManualImportPrompt includes account, locale, categories, tags, custom instructions, and valid JSON example", () => {
   const prompt = buildManualImportPrompt({
@@ -82,7 +79,12 @@ test("parseManualImportJson flags invalid rows while keeping valid rows selectab
   const payload = JSON.stringify([
     { date: "2026-11-15", amount: 10000, kind: "expense", merchant: "A" },
     { date: "2026-11-15", amount: 0, kind: "expense", merchant: "Bad Amount" },
-    { date: "2026-11-15", amount: 20000, kind: "transfer", merchant: "Bad Kind" },
+    {
+      date: "2026-11-15",
+      amount: 20000,
+      kind: "transfer",
+      merchant: "Bad Kind",
+    },
     { date: "2026-11-15", amount: 30000, kind: "income", merchant: "Salary" },
   ])
 

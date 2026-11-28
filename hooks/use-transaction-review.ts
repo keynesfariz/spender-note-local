@@ -64,11 +64,11 @@ export function useTransactionReview({
     () =>
       isDateFiltered
         ? {
-            ...params,
-            ledgerRange: "all",
-            startDate: undefined,
-            endDate: undefined,
-          }
+          ...params,
+          ledgerRange: "all",
+          startDate: undefined,
+          endDate: undefined,
+        }
         : params,
     [isDateFiltered, params]
   )
@@ -132,7 +132,10 @@ export function useTransactionReview({
         }
 
         const compareDesc = (
-          a: Pick<typeof targetRow, "occurred_at_utc" | "created_at_utc" | "id">,
+          a: Pick<
+            typeof targetRow,
+            "occurred_at_utc" | "created_at_utc" | "id"
+          >,
           b: Pick<typeof targetRow, "occurred_at_utc" | "created_at_utc" | "id">
         ) => {
           if (a.occurred_at_utc !== b.occurred_at_utc) {

@@ -1,28 +1,16 @@
 "use client"
 
+import { GmailConnectionCard } from "./gmail-connection-card"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useMemo, useState, type SubmitEvent } from "react"
 
 import { DatePicker } from "@/components/date-picker"
 import { DestructiveConfirmationContent } from "@/components/destructive-confirmation-content"
 import { IconTooltip } from "@/components/icon-tooltip"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/ui/badge"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { AlertDialog, AlertDialogTrigger } from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -197,117 +185,21 @@ export function GmailSendersTab({
 
   return (
     <>
-      <Card>
-        <CardHeader>
-          <CardTitle>Gmail Connection</CardTitle>
-          <CardDescription>
-            Read-only access (gmail.readonly) to fetch alerts and receipts from
-            configured senders.
-          </CardDescription>
-          <CardAction className="flex items-center gap-2">
-            {gmail.data?.status === "connected" ? (
-              <>
-                <Badge variant="secondary">
-                  Connected: {gmail.data.email_address}
-                </Badge>
-                <AlertDialog>
-                  <AlertDialogTrigger
-                    render={
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={disconnectGmailMutation.isPending}
-                      />
-                    }
-                  >
-                    Disconnect Gmail
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>
-                        Disconnect Gmail account?
-                      </AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Spender will stop syncing alerts and receipts from{" "}
-                        {gmail.data.email_address ?? "your Gmail account"} until
-                        you reconnect.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        variant="destructive"
-                        onClick={() => disconnectGmailMutation.mutate()}
-                      >
-                        Disconnect Gmail account
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </>
-            ) : (
-              <a
-                href="/api/gmail/auth"
-                className={buttonVariants({ size: "sm" })}
-              >
-                {gmail.data?.status === "expired"
-                  ? "Reconnect Gmail"
-                  : "Connect Gmail"}
-              </a>
-            )}
-          </CardAction>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {gmail.data && !gmail.data.oauthConfigured && (
-            <Alert>
-              <AlertDescription>
-                Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env before
-                connecting Gmail.
-              </AlertDescription>
-            </Alert>
-          )}
-          {gmailError && (
-            <Alert variant="destructive">
-              <AlertDescription>{gmailError}</AlertDescription>
-            </Alert>
-          )}
-
-          <Separator />
-
-          <form
-            className="flex flex-wrap items-end gap-3"
-            onSubmit={(e) => {
-              e.preventDefault()
-              setSyncSettingsMessage(null)
-              syncSettingsMutation.mutate({ sync_batch_limit: batchLimit })
-            }}
-          >
-            <Field className="w-44">
-              <FieldLabel>Emails per sync batch</FieldLabel>
-              <Input
-                type="number"
-                min={1}
-                max={500}
-                step={1}
-                value={batchLimit}
-                onChange={(e) => setBatchLimitDraft(Number(e.target.value))}
-              />
-            </Field>
-            <Button
-              type="submit"
-              size="sm"
-              disabled={syncSettingsMutation.isPending}
-            >
-              {syncSettingsMutation.isPending
-                ? "Saving..."
-                : "Save batch limit"}
-            </Button>
-            {syncSettingsMessage && (
-              <p className="text-sm">{syncSettingsMessage}</p>
-            )}
-          </form>
-        </CardContent>
-      </Card>
+      <GmailConnectionCard
+        gmail={gmail.data}
+        gmailError={gmailError}
+        disconnectPending={disconnectGmailMutation.isPending}
+        onDisconnect={() => disconnectGmailMutation.mutate()}
+        batchLimit={batchLimit}
+        setBatchLimitDraft={setBatchLimitDraft}
+        onSaveBatchLimit={(event) => {
+          event.preventDefault()
+          setSyncSettingsMessage(null)
+          syncSettingsMutation.mutate({ sync_batch_limit: batchLimit })
+        }}
+        batchLimitPending={syncSettingsMutation.isPending}
+        syncSettingsMessage={syncSettingsMessage}
+      />
 
       <Card>
         <CardHeader>
@@ -492,7 +384,9 @@ export function GmailSendersTab({
                           title={`Remove ${sender.email}?`}
                           description={`This permanently removes ${sender.email} and its sync cursor from your trusted senders list.`}
                           confirmLabel="Remove sender permanently"
-                          onConfirm={() => deleteSenderMutation.mutate(sender.id)}
+                          onConfirm={() =>
+                            deleteSenderMutation.mutate(sender.id)
+                          }
                         />
                       </AlertDialog>
                     </div>

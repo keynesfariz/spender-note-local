@@ -30,12 +30,12 @@ The initial pending-state guard covered Save and Combine. It protected the submi
 
 ## Solution
 
-- In both hosts, disable the Magic button and return early from `handleMagicEnrich` while `tagCreatePending` is true. Keep the picker disabled while enrichment is running. See [Transaction details](../../../components/transaction-inspector-drawer.tsx) and [Combine](../../../components/manual-merge-dialog.tsx).
-- In `TagMultiSelect`, the mutation-level callbacks maintain the shared tag cache. The per-call callbacks select the returned ID and release the initiating form's pending state. This keeps the library update independent of the form session. See [tag picker](../../../components/tag-multi-select.tsx).
+- In both hosts, disable the Magic button and return early from `handleMagicEnrich` while `tagCreatePending` is true. Keep the picker disabled while enrichment is running. See [Transaction details](../../../components/transactions/transaction-inspector-form.tsx) and [Combine](../../../components/transactions/manual-merge-dialog.tsx).
+- In `TagMultiSelect`, the mutation-level callbacks maintain the shared tag cache. The per-call callbacks select the returned ID and release the initiating form's pending state. This keeps the library update independent of the form session. See [tag picker](../../../components/tags/tag-multi-select.tsx).
 
 ## Why This Works
 
-Each host's `handleMagicEnrich` supplies a callback that reads the selected tag IDs from the render that started enrichment. `resolveMagicDraft` merges suggestions into those IDs and the host replaces the selection when the preview changes Tags. An ID appended by a pending tag creation can be absent from that earlier selection. After a successful create, the guard lets Magic start only once the new ID is in the selection. If Magic runs first, disabling the picker prevents a new create from starting. See [enrichment draft resolution](../../../components/magic-enrich.tsx).
+Each host's `handleMagicEnrich` supplies a callback that reads the selected tag IDs from the render that started enrichment. `resolveMagicDraft` merges suggestions into those IDs and the host replaces the selection when the preview changes Tags. An ID appended by a pending tag creation can be absent from that earlier selection. After a successful create, the guard lets Magic start only once the new ID is in the selection. If Magic runs first, disabling the picker prevents a new create from starting. See [enrichment draft resolution](../../../components/transactions/magic-enrich-draft.ts#L158).
 
 ## Prevention
 

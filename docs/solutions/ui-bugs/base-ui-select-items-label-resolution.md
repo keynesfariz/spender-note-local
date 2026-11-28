@@ -70,8 +70,8 @@ const ACCOUNT_TYPE_OPTIONS: ReadonlyArray<{
 ```
 
 3. **Handle async/missing IDs and empty states:**
-   - In `components/transaction-inspector-dialog.tsx` and `components/manual-merge-dialog.tsx`, append a fallback entry to `accountItems` using the transaction's `account_name` (or `'Unknown account'`) whenever `accountId` is neither `UNASSIGNED_ACCOUNT` nor present in `accounts`.
-   - Normalize empty unselected values to `null` (`value={countryCode || null}`, `value={targetId || null}`, etc.) to match Base UI's `null` empty-value convention, and provide `placeholder` on `<SelectValue />` where an empty state is reachable (such as `components/merge-account-dialog.tsx`).
+   - In `components/transaction-inspector-dialog.tsx` and `components/transactions/manual-merge-dialog.tsx`, append a fallback entry to `accountItems` using the transaction's `account_name` (or `'Unknown account'`) whenever `accountId` is neither `UNASSIGNED_ACCOUNT` nor present in `accounts`.
+   - Normalize empty unselected values to `null` (`value={countryCode || null}`, `value={targetId || null}`, etc.) to match Base UI's `null` empty-value convention, and provide `placeholder` on `<SelectValue />` where an empty state is reachable (such as `components/accounts/merge-account-dialog.tsx`).
 
 ## Why This Works
 - In `node_modules/@base-ui/react/select/value/SelectValue.mjs`, `SelectValue` resolves the displayed label via `resolveSelectedLabel(value, items, itemToStringLabel)`.

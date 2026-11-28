@@ -1,41 +1,25 @@
 "use client"
 
+import { TransactionListFilters } from "./transaction-list-filters"
 import { useQuery } from "@tanstack/react-query"
 import {
   ArrowRightLeftIcon,
   CheckCircle2Icon,
-  Clock3Icon,
   CopyIcon,
   MergeIcon,
-  PencilIcon,
-  RotateCcwIcon,
   Trash2Icon,
 } from "lucide-react"
-import { memo, useMemo } from "react"
+import { useMemo } from "react"
 
-import { DynamicIcon } from "@/components/dynamic-icon"
 import { PaginationControls } from "@/components/pagination-controls"
 
-import { CategoryBadge } from "@/components/category-badge"
-import { DebouncedSearchInput } from "@/components/debounced-search-input"
 import { DestructiveConfirmationContent } from "@/components/destructive-confirmation-content"
 import { IconTooltip } from "@/components/icon-tooltip"
-import { ReviewedIcon } from "@/components/reviewed"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogTrigger } from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { categoriesQuery } from "@/lib/api/categories"
 import { tagsQuery } from "@/lib/api/tags"
@@ -47,18 +31,7 @@ import {
   buildCategoryIconMap,
   buildCategorySelectOptions,
 } from "@/lib/categories"
-import {
-  formatTransactionAmount,
-  formatUtcInTimezone,
-  transactionKindLabel,
-} from "@/lib/format"
-
-function sourceBadgeLabel(tx: TransactionListItem): string {
-  if (tx.sourceCount > 1) return `${tx.sourceCount} emails`
-  if (tx.sourceCount === 1) return "1 email"
-  if (tx.source_type === "manual") return "Manual"
-  return "0 emails"
-}
+import { TransactionRow } from "./transaction-row"
 
 function getMergeEligibility(selected: TransactionListItem[]): {
   canDuplicate: boolean
@@ -126,14 +99,7 @@ function getMergeEligibility(selected: TransactionListItem[]): {
   }
 }
 
-export const TRANSACTION_SOURCE_OPTIONS = [
-  { value: "all", label: "All sources" },
-  { value: "gmail", label: "Gmail" },
-  { value: "manual", label: "Manual" },
-] as const
-
-export type TransactionSourceFilter =
-  (typeof TRANSACTION_SOURCE_OPTIONS)[number]["value"]
+import { type TransactionSourceFilter } from "./transaction-list-filters"
 
 export function TransactionList({
   transactions,
@@ -291,123 +257,26 @@ export function TransactionList({
   return (
     <Card>
       <CardHeader className="space-y-3">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto]">
-          <DebouncedSearchInput
-            key={searchResetKey}
-            label="Search transactions"
-            placeholder="Search remarks, merchants, or notes..."
-            value={search}
-            onSearch={onSearchChange}
-          />
-
-          <Select
-            items={categoryFilterItems}
-            value={category}
-            onValueChange={(value) => onCategoryChange(value ?? "")}
-          >
-            <SelectTrigger className="w-full" aria-label="Filter by category">
-              <SelectValue placeholder="All categories" />
-            </SelectTrigger>
-            <SelectContent>
-              {categoryFilterItems.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.value === "" ? (
-                    item.label
-                  ) : (
-                    <span className="flex items-center gap-2">
-                      <DynamicIcon
-                        name={categoryIconMap.get(item.value)}
-                        className="size-3.5 text-muted-foreground"
-                      />
-                      <span>{item.label}</span>
-                    </span>
-                  )}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            items={tagFilterItems}
-            value={tag}
-            onValueChange={(value) => onTagChange(value ?? "")}
-          >
-            <SelectTrigger className="w-full" aria-label="Filter by tag">
-              <SelectValue placeholder="All tags" />
-            </SelectTrigger>
-            <SelectContent>
-              {tagFilterItems.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            items={accountFilterItems}
-            value={accountId}
-            onValueChange={(value) => onAccountIdChange(value ?? "all")}
-          >
-            <SelectTrigger className="w-full" aria-label="Filter by account">
-              <SelectValue placeholder="All accounts" />
-            </SelectTrigger>
-            <SelectContent>
-              {accountFilterItems.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            items={TRANSACTION_SOURCE_OPTIONS}
-            value={source}
-            onValueChange={(value) => onSourceChange(value ?? "all")}
-          >
-            <SelectTrigger className="w-full" aria-label="Filter by source">
-              <SelectValue placeholder="All sources" />
-            </SelectTrigger>
-            <SelectContent>
-              {TRANSACTION_SOURCE_OPTIONS.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:col-span-2 lg:col-span-1">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="unreviewed-filter"
-                checked={unreviewedOnly}
-                onCheckedChange={(checked) =>
-                  onUnreviewedOnlyChange(Boolean(checked))
-                }
-              />
-              <Label htmlFor="unreviewed-filter">Needs review</Label>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onResetFilters}
-              disabled={
-                !search &&
-                !category &&
-                !tag &&
-                accountId === "all" &&
-                source === "all" &&
-                !unreviewedOnly
-              }
-            >
-              <RotateCcwIcon aria-hidden="true" />
-              Reset filters
-            </Button>
-          </div>
-        </div>
+        <TransactionListFilters
+          search={search}
+          searchResetKey={searchResetKey}
+          onSearchChange={onSearchChange}
+          category={category}
+          onCategoryChange={onCategoryChange}
+          tag={tag}
+          onTagChange={onTagChange}
+          accountId={accountId}
+          onAccountIdChange={onAccountIdChange}
+          source={source}
+          onSourceChange={onSourceChange}
+          unreviewedOnly={unreviewedOnly}
+          onUnreviewedOnlyChange={onUnreviewedOnlyChange}
+          onResetFilters={onResetFilters}
+          categoryFilterItems={categoryFilterItems}
+          tagFilterItems={tagFilterItems}
+          accountFilterItems={accountFilterItems}
+          categoryIconMap={categoryIconMap}
+        />
 
         <div className="space-y-2 rounded-lg border bg-muted/40 px-3 py-3">
           <div
@@ -633,115 +502,3 @@ export function TransactionList({
     </Card>
   )
 }
-
-const TransactionRow = memo(function TransactionRow({
-  tx,
-  categoryIcon,
-  timezone,
-  isSelected,
-  separated,
-  actionsDisabled,
-  onToggleRow,
-  onSelectTransaction,
-  onMarkReviewed,
-}: {
-  tx: TransactionListItem
-  categoryIcon: string | undefined
-  timezone: string | null | undefined
-  isSelected: boolean
-  separated: boolean
-  actionsDisabled: boolean
-  onToggleRow: (id: string, checked: boolean) => void
-  onSelectTransaction: (id: string) => void
-  onMarkReviewed: (ids: string[]) => void
-}) {
-  const title = tx.remark ?? tx.merchant
-  const isTransfer = tx.kind === "transfer"
-  const kindLabel = transactionKindLabel(tx.kind)
-  const formattedAmount = formatTransactionAmount(tx)
-  return (
-    <li>
-      {separated && <Separator className="my-1" />}
-      <div
-        data-selected={isSelected}
-        className="flex items-center gap-2 rounded-lg p-3 transition-colors hover:bg-muted data-[selected=true]:bg-secondary/60 data-[selected=true]:hover:bg-secondary"
-      >
-        <Checkbox
-          aria-label={`Select ${kindLabel.toLowerCase()} ${title} (${formattedAmount})`}
-          checked={isSelected}
-          onCheckedChange={(checked) => onToggleRow(tx.id, Boolean(checked))}
-        />
-        <Button
-          type="button"
-          variant="ghost"
-          aria-label={`Inspect ${kindLabel.toLowerCase()} ${title} (${formattedAmount})${tx.manual_override === 1 ? ", edited" : ""}`}
-          onClick={() => onSelectTransaction(tx.id)}
-          className="grid h-auto min-w-0 flex-1 grid-cols-1 items-center gap-x-4 gap-y-2 px-2 text-left font-normal whitespace-normal hover:bg-transparent sm:grid-cols-[minmax(0,1fr)_auto] dark:hover:bg-transparent"
-        >
-          <span className="min-w-0 space-y-1">
-            <span className="flex items-center gap-2">
-              <span className="truncate font-semibold">{title}</span>
-              {tx.manual_override === 1 && (
-                <IconTooltip label="Edited">
-                  <span className="text-muted-foreground">
-                    <PencilIcon className="size-3" aria-hidden="true" />
-                  </span>
-                </IconTooltip>
-              )}
-            </span>
-            <span className="block text-xs text-muted-foreground">
-              {tx.account_name ??
-                (tx.payment_method_raw
-                  ? `Unassigned (${tx.payment_method_raw})`
-                  : "Unassigned")}{" "}
-              {isTransfer && (
-                <> → {tx.destination_account_name ?? "Unknown account"}</>
-              )}
-              {" · "}
-              {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
-            </span>
-          </span>
-          <span className="flex flex-wrap items-center gap-1.5 sm:col-start-1 sm:row-start-2">
-            <Badge variant="outline">{kindLabel}</Badge>
-            <CategoryBadge category={tx.category} icon={categoryIcon} />
-            {(tx.tags ?? []).map((tag) => (
-              <Badge
-                key={tag.id}
-                variant="outline"
-                className="text-muted-foreground"
-              >
-                #{tag.name}
-              </Badge>
-            ))}
-          </span>
-          <span className="min-w-0 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:text-right">
-            <span className="block font-semibold break-all tabular-nums">
-              {formattedAmount}
-            </span>
-            <span className="block text-xs text-muted-foreground">
-              {sourceBadgeLabel(tx)}
-              {tx.isForeignCurrency ? ` · Foreign (${tx.currency})` : ""}
-            </span>
-          </span>
-        </Button>
-        {tx.reviewed === 1 ? (
-          <ReviewedIcon />
-        ) : (
-          <IconTooltip label="Needs review · Mark reviewed">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={`Mark ${title} as reviewed`}
-              disabled={actionsDisabled}
-              onClick={() => onMarkReviewed([tx.id])}
-              className="rounded-full bg-amber-100 text-amber-800 hover:bg-amber-200 hover:text-amber-950 dark:bg-amber-950 dark:text-amber-300 dark:hover:bg-amber-900"
-            >
-              <Clock3Icon className="size-4" aria-hidden="true" />
-            </Button>
-          </IconTooltip>
-        )}
-      </div>
-    </li>
-  )
-})

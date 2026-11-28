@@ -1,6 +1,6 @@
 import { Suspense } from "react"
 
-import { SettingsView } from "@/components/settings-view"
+import { SettingsView } from "@/components/settings/settings-view"
 import { Skeleton } from "@/components/ui/skeleton"
 
 export default function SettingsPage() {

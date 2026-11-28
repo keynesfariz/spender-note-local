@@ -23,17 +23,10 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { mergeAccountsApi } from "@/lib/api/accounts"
-import {
-  type AccountSummary,
-  type AccountType,
-} from "@/lib/api/types.generated"
+import { type AccountSummary } from "@/lib/api/types.generated"
 import { formatMinorCurrency } from "@/lib/format"
 
-const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
-  credit_card: "Credit Card",
-  debit_card: "Debit Card",
-  digital_wallet: "Digital Wallet",
-}
+import { ACCOUNT_TYPE_LABELS } from "./account-type-labels"
 
 export function MergeAccountDialog({
   open,

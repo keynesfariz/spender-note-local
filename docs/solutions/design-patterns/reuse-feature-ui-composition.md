@@ -26,9 +26,9 @@ Several views repeated the page title, subtitle, and responsive action layout. T
 
 ## Examples
 
-[PageLayout](../../../components/PageLayout.tsx) renders the heading, optional subtitle, optional wrapping action row, and page content. [AccountsView](../../../components/accounts-view.tsx) supplies the Transfer and Add account controls through `actions`, while [SettingsView](../../../components/settings-view.tsx) omits the slot.
+[PageLayout](../../../components/PageLayout.tsx) renders the heading, optional subtitle, optional wrapping action row, and page content. [AccountsView](../../../components/accounts/accounts-view.tsx) supplies the Transfer and Add account controls through `actions`, while [SettingsView](../../../components/settings/settings-view.tsx) omits the slot.
 
-[ReviewedIcon](../../../components/reviewed.tsx) keeps the Reviewed tooltip and screen-reader text with the icon. The [transaction list](../../../components/transaction-list.tsx) and [inspector](../../../components/transaction-inspector-drawer.tsx) decide when to render it. The list also owns the separate Mark reviewed button for transactions that need review.
+[ReviewedIcon](../../../components/transactions/reviewed.tsx) keeps the Reviewed tooltip and screen-reader text with the icon. The [transaction list](../../../components/transactions/transaction-list.tsx) and [inspector](../../../components/transactions/transaction-inspector-drawer.tsx) decide when to render it. The list also owns the separate Mark reviewed button for transactions that need review.
 
 ## Related
 

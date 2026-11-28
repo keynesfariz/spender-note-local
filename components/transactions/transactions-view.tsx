@@ -1,5 +1,6 @@
 "use client"
 
+import { TransactionDateNavigation } from "./transaction-date-navigation"
 import { useHasOpened } from "@/hooks/use-has-opened"
 import { useTransactionReview } from "@/hooks/use-transaction-review"
 import {
@@ -9,12 +10,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query"
-import {
-  CheckCircle2Icon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  Clock3Icon,
-} from "lucide-react"
+import { CheckCircle2Icon, Clock3Icon } from "lucide-react"
 import dynamic from "next/dynamic"
 import {
   parseAsBoolean,
@@ -25,16 +21,13 @@ import {
 } from "nuqs"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
-import { DateRangePicker } from "@/components/date-picker"
-import { LocaleSetupAlert } from "@/components/locale-setup-alert"
-import type { ManualMergeMode } from "@/components/manual-merge-dialog"
+import { LocaleSetupAlert } from "@/components/locale/locale-setup-alert"
+import type { ManualMergeMode } from "@/components/transactions/manual-merge-dialog"
 import { PageLayout } from "@/components/PageLayout"
-import {
-  TransactionList,
-  type TransactionSourceFilter,
-} from "@/components/transaction-list"
-import type { TransferTarget } from "@/components/transfer-form-dialog"
-import { TriageUndoToast } from "@/components/triage-undo-toast"
+import { TransactionList } from "@/components/transactions/transaction-list"
+import { type TransactionSourceFilter } from "./transaction-list-filters"
+import type { TransferTarget } from "@/components/transfer/transfer-form-dialog"
+import { TriageUndoToast } from "@/components/transactions/triage-undo-toast"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -65,40 +58,44 @@ import {
 import { getTodayDateString, shiftDateRange } from "@/lib/format"
 
 const TransferFormDialog = dynamic(() =>
-  import("@/components/transfer-form-dialog").then(
+  import("@/components/transfer/transfer-form-dialog").then(
     (mod) => mod.TransferFormDialog
   )
 )
 
 const AddTransactionDialog = dynamic(() =>
-  import("@/components/add-transaction-dialog").then(
+  import("@/components/transactions/add-transaction-dialog").then(
     (mod) => mod.AddTransactionDialog
   )
 )
 const ManualMergeDialog = dynamic(() =>
-  import("@/components/manual-merge-dialog").then(
+  import("@/components/transactions/manual-merge-dialog").then(
     (mod) => mod.ManualMergeDialog
   )
 )
 const TransactionInspectorDrawer = dynamic(() =>
-  import("@/components/transaction-inspector-drawer").then(
+  import("@/components/transactions/transaction-inspector-drawer").then(
     (mod) => mod.TransactionInspectorDrawer
   )
 )
 const SkippedTransactionsList = dynamic(
   () =>
-    import("@/components/skipped-transactions-list").then(
+    import("@/components/transactions/skipped-transactions-list").then(
       (mod) => mod.SkippedTransactionsList
     ),
   { loading: () => <Skeleton className="h-48 w-full" /> }
 )
 
 function preloadAddTransactionDialog() {
-  void import("@/components/add-transaction-dialog").catch(() => {})
+  void import("@/components/transactions/add-transaction-dialog").catch(
+    () => {}
+  )
 }
 
 function preloadSkippedTransactionsList() {
-  void import("@/components/skipped-transactions-list").catch(() => {})
+  void import("@/components/transactions/skipped-transactions-list").catch(
+    () => {}
+  )
 }
 
 const EMPTY_ACCOUNTS: AccountOption[] = []
@@ -134,9 +131,11 @@ export function TransactionsView() {
     category: parseAsString.withDefault(""),
     tag: parseAsString.withDefault(""),
     accountId: parseAsString.withDefault("all"),
-    source: parseAsStringLiteral(["all", "gmail", "manual"] as const).withDefault(
-      "all"
-    ),
+    source: parseAsStringLiteral([
+      "all",
+      "gmail",
+      "manual",
+    ] as const).withDefault("all"),
     unreviewed: parseAsBoolean.withDefault(false),
     tab: parseAsStringLiteral(["transactions", "skipped"] as const).withDefault(
       "transactions"
@@ -541,44 +540,13 @@ export function TransactionsView() {
           </TabsList>
 
           <TabsContent value="transactions" className="space-y-6">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={isAllDates}
-                onClick={() => handleShiftRange(-1)}
-              >
-                <ChevronLeftIcon className="mr-1 size-4" />
-                Previous
-              </Button>
-
-              <DateRangePicker
-                from={activeRange.from}
-                to={activeRange.to}
-                onChange={updateRange}
-              />
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={isAllDates}
-                onClick={() => handleShiftRange(1)}
-              >
-                Next
-                <ChevronRightIcon className="ml-1 size-4" />
-              </Button>
-
-              <Button
-                type="button"
-                variant={isAllDates ? "default" : "outline"}
-                size="sm"
-                onClick={handleToggleAllDates}
-              >
-                All dates
-              </Button>
-            </div>
+            <TransactionDateNavigation
+              isAllDates={isAllDates}
+              handleShiftRange={handleShiftRange}
+              activeRange={activeRange}
+              updateRange={updateRange}
+              handleToggleAllDates={handleToggleAllDates}
+            />
             <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2">
               <p
                 role="status"

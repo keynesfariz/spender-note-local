@@ -30,7 +30,7 @@ The original confirm handler started navigation. Moving away hid the controlled 
 
 ## Solution
 
-Clear the pending discard in the confirm handler before calling navigation. Keep the transaction ID guard for the request that is currently pending. [TransactionInspectorDrawer](../../../components/transaction-inspector-drawer.tsx)
+Clear the pending discard in the confirm handler before calling navigation. Keep the transaction ID guard for the request that is currently pending. [TransactionInspectorDrawer](../../../components/transactions/transaction-inspector-drawer.tsx)
 
 ```tsx
 onClick={() => {
@@ -43,7 +43,7 @@ onClick={() => {
 
 `AlertDialogAction` renders the project's `Button`, so its click handler owns any state change needed to close a controlled alert. `AlertDialogCancel` uses the close primitive. [Alert dialog wrappers](../../../components/ui/alert-dialog.tsx)
 
-In `TransactionInspectorDrawer`, the render derives `discardDirection` from the pending request and the current transaction ID. Clearing the request on confirmation makes that value empty even if the same transaction becomes current again. The confirmed direction is still available in the handler's closure. [TransactionInspectorDrawer](../../../components/transaction-inspector-drawer.tsx)
+In `TransactionInspectorDrawer`, the render derives `discardDirection` from the pending request and the current transaction ID. Clearing the request on confirmation makes that value empty even if the same transaction becomes current again. The confirmed direction is still available in the handler's closure. [TransactionInspectorDrawer](../../../components/transactions/transaction-inspector-drawer.tsx)
 
 ## Prevention
 

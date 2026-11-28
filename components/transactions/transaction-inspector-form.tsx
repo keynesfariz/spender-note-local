@@ -1,42 +1,30 @@
-"use client"
-
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  EllipsisIcon,
-  SaveIcon,
-  Trash2Icon,
-} from "lucide-react"
+  resolveMagicDraft,
+  patchTagsQueryCache,
+  type MagicField,
+} from "./magic-enrich-draft"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { EllipsisIcon, Trash2Icon } from "lucide-react"
 import {
   useId,
   useImperativeHandle,
-  useLayoutEffect,
-  useRef,
   useState,
   type Ref,
   type SubmitEvent,
 } from "react"
-
-import { DetailDrawerContent } from "@/components/detail-drawer-content"
 import { IconTooltip } from "@/components/icon-tooltip"
 import {
   MagicEnrichControl,
-  patchTagsQueryCache,
-  resolveMagicDraft,
   useMagicEnrich,
-  type MagicField,
-} from "@/components/magic-enrich"
+} from "@/components/transactions/magic-enrich"
 import { DestructiveConfirmationContent } from "@/components/destructive-confirmation-content"
-import { ReviewedIcon } from "@/components/reviewed"
+import { InspectorReviewActions } from "./inspector-review-actions"
 import {
   TransactionForm,
   TransactionFormFields,
   UNASSIGNED_ACCOUNT,
-} from "@/components/transaction-form"
-import { TransferFormDialog } from "@/components/transfer-form-dialog"
+} from "@/components/transactions/transaction-form"
+import { TransferFormDialog } from "@/components/transfer/transfer-form-dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -51,10 +39,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ButtonGroup } from "@/components/ui/button-group"
-import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Drawer, DrawerFooter } from "@/components/ui/drawer"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -67,10 +52,7 @@ import type { useTransactionReview } from "@/hooks/use-transaction-review"
 import { accountsQuery } from "@/lib/api/accounts"
 import { categoriesQuery } from "@/lib/api/categories"
 import { tagsQuery } from "@/lib/api/tags"
-import {
-  transactionInspectorQuery,
-  transactionSourceBodyQuery,
-} from "@/lib/api/transaction-inspector"
+import { transactionInspectorQuery } from "@/lib/api/transaction-inspector"
 import {
   deleteTransactionApi,
   invalidateTransactionRelatedQueries,
@@ -84,7 +66,6 @@ import {
   type AccountOption,
   type CategorySummary,
   type TagSummary,
-  type TransactionInspectorSource,
   type TransactionInspectorView,
   type TransactionListItem,
 } from "@/lib/api/types.generated"
@@ -101,7 +82,7 @@ import {
   buildInspectorPatch,
   type InspectorDraftField,
 } from "@/lib/transaction-inspector-patch"
-import { type ReviewDirection } from "@/lib/transaction-review"
+import { SourceEmail } from "./transaction-source-email"
 
 function loadDraft(tx: TransactionListItem, timezone?: string | null) {
   const date = utcToDateInputValue(tx.occurred_at_utc, timezone)
@@ -132,114 +113,9 @@ function loadDraft(tx: TransactionListItem, timezone?: string | null) {
 
 type DraftValues = Omit<ReturnType<typeof loadDraft>, "baseline" | "edits">
 
-function SourceEmailBody({
-  transactionId,
-  emailId,
-}: {
-  transactionId: string
-  emailId: string
-}) {
-  const body = useQuery(transactionSourceBodyQuery(transactionId, emailId))
+export type Review = ReturnType<typeof useTransactionReview>
 
-  if (body.isPending) {
-    return (
-      <p role="status" className="text-xs text-muted-foreground">
-        Loading email…
-      </p>
-    )
-  }
-
-  if (body.isError) {
-    return (
-      <div className="space-y-2">
-        <p role="alert" className="text-xs text-destructive">
-          {body.error.message}
-        </p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => void body.refetch()}
-        >
-          Retry
-        </Button>
-      </div>
-    )
-  }
-
-  return (
-    <pre className="max-h-64 overflow-auto rounded-md border bg-muted p-3 font-mono text-xs wrap-break-word whitespace-pre-wrap">
-      {body.data.cleaned_text}
-    </pre>
-  )
-}
-
-function SourceEmail({
-  source,
-  transactionId,
-  timezone,
-  onSplit,
-  splitDisabled,
-}: {
-  source: TransactionInspectorSource
-  transactionId: string
-  timezone: string | null | undefined
-  onSplit?: () => void
-  splitDisabled: boolean
-}) {
-  const [open, setOpen] = useState(false)
-
-  return (
-    <Card>
-      <CardContent className="space-y-2 text-sm">
-        <details
-          className="group"
-          onToggle={(event) => setOpen(event.currentTarget.open)}
-        >
-          <summary className="flex cursor-pointer list-none items-start gap-3 rounded outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-            <div className="min-w-0 flex-1 wrap-break-word">
-              <p className="font-medium">
-                {source.subject || "Untitled email"}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {source.from_address} ·{" "}
-                {formatUtcInTimezone(source.received_at_utc, timezone)}
-              </p>
-            </div>
-            <span className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180">
-              <ChevronDownIcon className="size-4" aria-hidden />
-            </span>
-          </summary>
-          <div className="mt-3 space-y-3">
-            <p className="text-xs text-muted-foreground">
-              Role: {source.role} · State: {source.match_state}
-            </p>
-            {open ? (
-              <SourceEmailBody
-                transactionId={transactionId}
-                emailId={source.email_id}
-              />
-            ) : null}
-            {onSplit ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={splitDisabled}
-                onClick={onSplit}
-              >
-                Split email
-              </Button>
-            ) : null}
-          </div>
-        </details>
-      </CardContent>
-    </Card>
-  )
-}
-
-type Review = ReturnType<typeof useTransactionReview>
-type NavigationGuard = { hasDraft: boolean; busy: boolean }
+export type NavigationGuard = { hasDraft: boolean; busy: boolean }
 
 type InspectorProps = {
   transactionId: string
@@ -251,7 +127,7 @@ type InspectorProps = {
   navigationGuard: Ref<NavigationGuard>
 }
 
-function InspectorBody(props: InspectorProps) {
+export function InspectorBody(props: InspectorProps) {
   const detailQuery = useQuery(transactionInspectorQuery(props.transactionId))
   const { data: categories } = useQuery(categoriesQuery())
   const { data: tags } = useQuery(tagsQuery())
@@ -585,64 +461,6 @@ function InspectorForm({
     void review.write(() => markReviewedMutation.mutateAsync(), false)
   }
 
-  function reviewActions(form?: string) {
-    const skipNativeValidation = Boolean(form)
-    const canAdvance = review.next
-    const hasSecondaryActions = !reviewed || canAdvance
-    return (
-      <div className="flex items-center gap-2">
-        {reviewed ? <ReviewedIcon /> : null}
-        {hasSecondaryActions ? (
-          <ButtonGroup>
-            {!reviewed ? (
-              <IconTooltip label="Mark reviewed">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon-sm"
-                  aria-label="Mark reviewed"
-                  disabled={saveDisabled}
-                  onClick={handleMarkReviewed}
-                >
-                  <CheckIcon className="size-4" aria-hidden="true" />
-                </Button>
-              </IconTooltip>
-            ) : null}
-            {canAdvance ? (
-              <IconTooltip label="Save changes">
-                <Button
-                  type="submit"
-                  form={form}
-                  formNoValidate={skipNativeValidation}
-                  variant="outline"
-                  size="icon-sm"
-                  aria-label="Save changes"
-                  disabled={saveDisabled}
-                >
-                  <SaveIcon className="size-4" aria-hidden="true" />
-                </Button>
-              </IconTooltip>
-            ) : null}
-          </ButtonGroup>
-        ) : null}
-        <Button
-          type="submit"
-          form={form}
-          formNoValidate={skipNativeValidation}
-          value={canAdvance ? "save-and-next" : undefined}
-          size="sm"
-          disabled={saveDisabled}
-        >
-          {updateMutation.isPending
-            ? "Saving..."
-            : canAdvance
-              ? "Save changes & next"
-              : "Save changes"}
-        </Button>
-      </div>
-    )
-  }
-
   const deleteAction = (
     <AlertDialog>
       <IconTooltip label="Delete transaction">
@@ -745,7 +563,18 @@ function InspectorForm({
           onChange: (value) => editDraft("note", { note: value }),
           valid: magicChangedFields.has("Note"),
         }}
-        noteActions={isTransfer ? undefined : reviewActions(detailFormId)}
+        noteActions={
+          isTransfer ? undefined : (
+            <InspectorReviewActions
+              form={detailFormId}
+              canAdvance={review.next}
+              reviewed={reviewed}
+              saveDisabled={saveDisabled}
+              onMarkReviewed={handleMarkReviewed}
+              saving={updateMutation.isPending}
+            />
+          )
+        }
         details={
           isTransfer ? (
             <div className="flex flex-wrap gap-2">
@@ -894,7 +723,13 @@ function InspectorForm({
                     )}
                   </div>
 
-                  {reviewActions()}
+                  <InspectorReviewActions
+                    canAdvance={review.next}
+                    reviewed={reviewed}
+                    saveDisabled={saveDisabled}
+                    onMarkReviewed={handleMarkReviewed}
+                    saving={updateMutation.isPending}
+                  />
                 </div>
 
                 {!isIncome && detail.sources.length > 0 && hasDraft && (
@@ -977,151 +812,5 @@ function InspectorForm({
         }}
       />
     </div>
-  )
-}
-
-export function TransactionInspectorDrawer({
-  review,
-  accounts,
-  localCurrency,
-  timezone,
-  onTransactionMutated,
-}: {
-  review: Review
-  accounts: AccountOption[]
-  localCurrency: string
-  timezone: string | null | undefined
-  onTransactionMutated?: () => void
-}) {
-  const { transactionId } = review
-  const navigationGuard = useRef<NavigationGuard>(null)
-  const navigation = useRef<HTMLElement>(null)
-  const previousTransactionId = useRef(transactionId)
-  const [discard, setDiscard] = useState<{
-    id: string
-    direction: ReviewDirection
-  } | null>(null)
-  const discardDirection =
-    discard?.id === transactionId ? discard.direction : null
-
-  useLayoutEffect(() => {
-    const previousId = previousTransactionId.current
-    previousTransactionId.current = transactionId
-    if (
-      transactionId &&
-      previousId &&
-      transactionId !== previousId &&
-      !navigation.current?.contains(document.activeElement)
-    ) {
-      navigation.current?.focus({ preventScroll: true })
-    }
-  }, [transactionId])
-
-  function navigate(direction: ReviewDirection) {
-    if (!transactionId || navigationGuard.current?.busy) return
-    if (navigationGuard.current?.hasDraft) {
-      setDiscard({ id: transactionId, direction })
-      return
-    }
-    void review.navigate(direction)
-  }
-
-  return (
-    <Drawer
-      swipeDirection="right"
-      open={transactionId !== null}
-      onOpenChange={(open) => {
-        if (!open) {
-          setDiscard(null)
-          review.close()
-        }
-      }}
-    >
-      <DetailDrawerContent
-        title="Transaction details"
-        description="Inspect attached source emails, mark reviewed, or edit transaction fields."
-        scrollResetKey={transactionId}
-        footer={
-          <DrawerFooter className="items-center border-t px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
-            <nav
-              ref={navigation}
-              tabIndex={-1}
-              aria-label="Transaction navigation"
-              className="flex flex-wrap items-center justify-center gap-2"
-            >
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="aria-disabled:opacity-50"
-                disabled={!review.previous || review.pending}
-                focusableWhenDisabled
-                onClick={() => navigate("previous")}
-              >
-                <ChevronLeftIcon aria-hidden="true" data-icon="inline-start" />
-                Previous
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="aria-disabled:opacity-50"
-                disabled={!review.next || review.pending}
-                focusableWhenDisabled
-                onClick={() => navigate("next")}
-              >
-                Next
-                <ChevronRightIcon aria-hidden="true" data-icon="inline-end" />
-              </Button>
-            </nav>
-            {review.error ? (
-              <p role="alert" className="text-center text-sm text-destructive">
-                {review.error}
-              </p>
-            ) : null}
-          </DrawerFooter>
-        }
-      >
-        {transactionId && (
-          <InspectorBody
-            key={transactionId}
-            transactionId={transactionId}
-            accounts={accounts}
-            localCurrency={localCurrency}
-            timezone={timezone}
-            onTransactionMutated={onTransactionMutated}
-            review={review}
-            navigationGuard={navigationGuard}
-          />
-        )}
-        <AlertDialog
-          open={discardDirection !== null}
-          onOpenChange={(open) => {
-            if (!open) setDiscard(null)
-          }}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Your changes to this transaction will be lost if you move on.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Keep editing</AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                onClick={() => {
-                  setDiscard(null)
-                  if (discardDirection) void review.navigate(discardDirection)
-                }}
-              >
-                Discard and move
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </DetailDrawerContent>
-    </Drawer>
   )
 }

@@ -43,9 +43,9 @@ Use this pattern when adding controls to a feature form or introducing a second 
 
 ## Examples
 
-[AccountsView](../../../components/accounts-view.tsx) uses one [AccountFormDialog](../../../components/account-form-dialog.tsx) for create and edit. The create and edit transaction flows both render [TransactionForm and TransactionFormFields](../../../components/transaction-form.tsx) and supply their own draft and save behavior.
+[AccountsView](../../../components/accounts/accounts-view.tsx) uses one [AccountFormDialog](../../../components/accounts/account-form-dialog.tsx) for create and edit. The create and edit transaction flows both render [TransactionForm and TransactionFormFields](../../../components/transactions/transaction-form.tsx) and supply their own draft and save behavior.
 
-[Accounts Transfer](../../../components/accounts-view.tsx) passes a `DrawerTrigger` to [TransferFormDialog](../../../components/transfer-form-dialog.tsx). The form uses `DatePicker` for transaction time and both posting times. The posting fields are clearable, and blank posting times fall back to the transaction time. When callers supply success or close callbacks, the transfer form handles them after the drawer finishes closing.
+[Accounts Transfer](../../../components/accounts/accounts-view.tsx) passes a `DrawerTrigger` to [TransferFormDialog](../../../components/transfer/transfer-form-dialog.tsx). The form uses `DatePicker` for transaction time and both posting times. The posting fields are clearable, and blank posting times fall back to the transaction time. When callers supply success or close callbacks, the transfer form handles them after the drawer finishes closing.
 
 ## Related
 

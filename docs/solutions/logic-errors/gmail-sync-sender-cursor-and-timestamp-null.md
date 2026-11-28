@@ -22,7 +22,7 @@ When a sender has more unfetched Gmail messages than `app_settings.sync_batch_li
 
 ## Symptoms
 - Multiple `sync_runs` finish with `status = 'completed'`, `fetched_count > 0`, and `has_more_emails = 1`, yet `senders.last_sync_at_utc` and `senders.last_internal_date_ms` remain `NULL`.
-- The Settings UI (`components/settings-view.tsx`) shows `Never synced` for a sender that already has extracted `raw_emails`.
+- The Settings UI (`components/settings/settings-view.tsx`) shows `Never synced` for a sender that already has extracted `raw_emails`.
 - When `sync_batch_limit` is small (e.g., `5`), the first enabled sender alphabetically (`runFullSyncJob` orders enabled senders by `email ASC`) consumes the entire run's `remainingBudget`, so later senders are not reached until earlier ones catch up.
 
 ## What Didn't Work

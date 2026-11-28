@@ -70,10 +70,10 @@ The same pattern applies to plain `<a>` elements (such as full-page OAuth redire
 
 Updated all 6 affected link-button call sites across:
 - `components/app-shell.tsx` (`AppShell` primary nav links and expired-Gmail reconnect link)
-- `components/accounts-view.tsx` (`AccountsView` setup link to `/settings`)
-- `components/dashboard-view.tsx` (`DashboardView` setup link to `/settings`)
-- `components/settings-view.tsx` (`SettingsView` Gmail OAuth connect/reconnect link)
-- `components/sync-toast.tsx` (`SyncToast` link to `/settings`)
+- `components/accounts/accounts-view.tsx` (`AccountsView` setup link to `/settings`)
+- `components/dashboard/dashboard-view.tsx` (`DashboardView` setup link to `/settings`)
+- `components/settings/gmail-connection-card.tsx` (`GmailConnectionCard` Gmail OAuth connect/reconnect link)
+- `components/sync/sync-toast.tsx` (`SyncToast` link to `/settings`)
 
 ## Why This Works
 - `Button` in `components/ui/button.tsx` wraps `ButtonPrimitive` from `@base-ui/react/button`.

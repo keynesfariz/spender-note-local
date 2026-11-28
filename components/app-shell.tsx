@@ -8,7 +8,7 @@ import { usePathname } from "next/navigation"
 import { useState, type ReactNode } from "react"
 
 import { IconTooltip } from "@/components/icon-tooltip"
-import { SyncToast } from "@/components/sync-toast"
+import { SyncToast } from "@/components/sync/sync-toast"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { accountOptionsQuery, accountsQuery } from "@/lib/api/accounts"

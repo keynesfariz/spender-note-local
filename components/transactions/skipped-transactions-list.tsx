@@ -2,7 +2,7 @@
 
 import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { CategoryBadge } from "@/components/category-badge"
+import { CategoryBadge } from "@/components/categories/category-badge"
 import { PaginationControls } from "@/components/pagination-controls"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"

@@ -1,5 +1,7 @@
 "use client"
 
+import { ImportPreviewTable } from "./import-preview-table"
+import { ImportJsonInput } from "./import-json-input"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertCircleIcon,
@@ -8,13 +10,11 @@ import {
   CheckCircle2Icon,
   CheckIcon,
   CopyIcon,
-  FileUpIcon,
   RotateCcwIcon,
   SparklesIcon,
 } from "lucide-react"
 import Link from "next/link"
 import {
-  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -24,10 +24,9 @@ import {
   type ChangeEvent,
 } from "react"
 
-import { LocaleSetupAlert } from "@/components/locale-setup-alert"
+import { LocaleSetupAlert } from "@/components/locale/locale-setup-alert"
 import { PageLayout } from "@/components/PageLayout"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import {
   Card,
@@ -37,16 +36,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { accountOptionsQuery } from "@/lib/api/accounts"
 import { categoriesQuery } from "@/lib/api/categories"
@@ -56,135 +47,20 @@ import {
   importManualTransactionsApi,
   invalidateTransactionRelatedQueries,
 } from "@/lib/api/transactions"
-import { formatMinorCurrency } from "@/lib/format"
+import { AccountSelect } from "./import-account-select"
 import {
   buildManualImportPrompt,
   parseManualImportJson,
-  type ParsedManualImportRow,
   type ParseManualImportResult,
 } from "@/lib/manual-import"
 
 type WizardStep = 1 | 2 | 3
-
-type AccountSelectItem = {
-  value: string
-  label: string
-}
 
 const WIZARD_STEPS: ReadonlyArray<{ step: WizardStep; label: string }> = [
   { step: 1, label: "Generate prompt" },
   { step: 2, label: "Upload or paste JSON" },
   { step: 3, label: "Preview & import" },
 ]
-
-function AccountSelect({
-  id,
-  className,
-  items,
-  value,
-  onValueChange,
-  disabled,
-}: {
-  id: string
-  className?: string
-  items: AccountSelectItem[]
-  value: string
-  onValueChange: (value: string) => void
-  disabled?: boolean
-}) {
-  return (
-    <Select
-      items={items}
-      disabled={disabled}
-      value={value}
-      onValueChange={(val) => onValueChange(val ?? "")}
-    >
-      <SelectTrigger id={id} className={className}>
-        <SelectValue placeholder="Select account" />
-      </SelectTrigger>
-      <SelectContent>
-        {items.map((item) => (
-          <SelectItem key={item.value} value={item.value}>
-            {item.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  )
-}
-
-const ImportPreviewRow = memo(function ImportPreviewRow({
-  row,
-  isChecked,
-  disabled,
-  onToggle,
-}: {
-  row: ParsedManualImportRow
-  isChecked: boolean
-  disabled: boolean
-  onToggle: (index: number, checked: boolean) => void
-}) {
-  return (
-    <tr
-      className={
-        row.valid ? undefined : "bg-destructive/5 text-muted-foreground"
-      }
-    >
-      <td className="px-3 py-2.5 align-top">
-        <Checkbox
-          aria-label={`Select row ${row.index + 1}`}
-          checked={isChecked}
-          disabled={disabled || !row.valid}
-          onCheckedChange={(checked) => onToggle(row.index, Boolean(checked))}
-        />
-      </td>
-      <td className="px-3 py-2.5 align-top text-xs whitespace-nowrap">
-        {row.dateDisplay}
-      </td>
-      <td className="px-3 py-2.5 align-top">
-        <div className="font-medium text-foreground">{row.merchant}</div>
-        {row.note && (
-          <div className="text-xs text-muted-foreground">{row.note}</div>
-        )}
-        {row.error && (
-          <div className="mt-1 text-xs font-medium text-destructive">
-            {row.error}
-          </div>
-        )}
-      </td>
-      <td className="px-3 py-2.5 align-top">
-        <Badge variant={row.kind === "income" ? "secondary" : "outline"}>
-          {row.kind}
-        </Badge>
-      </td>
-      <td className="px-3 py-2.5 align-top">
-        <div className="flex flex-wrap items-center gap-1">
-          <Badge variant="outline">{row.resolvedCategory}</Badge>
-          {!row.categoryMatched && row.rawCategory && (
-            <span className="text-xs text-muted-foreground">
-              (was &ldquo;{row.rawCategory}&rdquo;)
-            </span>
-          )}
-          {row.matchedTags.map((tag) => (
-            <Badge key={tag} variant="secondary">
-              {tag}
-            </Badge>
-          ))}
-          {row.droppedTags.length > 0 && (
-            <span className="text-xs text-muted-foreground">
-              dropped: {row.droppedTags.join(", ")}
-            </span>
-          )}
-        </div>
-      </td>
-      <td className="px-3 py-2.5 text-right align-top font-medium whitespace-nowrap tabular-nums">
-        {row.valid
-          ? formatMinorCurrency(row.amountMinor, row.currency)
-          : `${row.amountDisplay} ${row.currency}`}
-      </td>
-    </tr>
-  )
-})
 
 export function ManualImportView() {
   const queryClient = useQueryClient()
@@ -604,71 +480,18 @@ export function ManualImportView() {
       )}
 
       {step === 2 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <FileUpIcon className="size-4 text-muted-foreground" />
-              2. Upload or paste JSON result
-            </CardTitle>
-            <CardDescription>
-              Upload the <code>.json</code> file (auto-advances to preview) or
-              paste the JSON block returned by your chat model.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="json-file-upload">Upload JSON file</Label>
-              <Input
-                id="json-file-upload"
-                type="file"
-                accept=".json,application/json"
-                onChange={handleFileUpload}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="json-paste-input">Or paste JSON directly</Label>
-              <Textarea
-                id="json-paste-input"
-                rows={10}
-                className="font-mono text-xs"
-                placeholder='{"transactions": [...]}'
-                value={rawJson}
-                onChange={(e) => updateRawJson(e.target.value)}
-              />
-            </div>
-
-            {isReadingFile && <p role="status">Reading JSON file…</p>}
-
-            {fileError && (
-              <Alert variant="destructive">
-                <AlertCircleIcon className="size-4" />
-                <AlertDescription>{fileError}</AlertDescription>
-              </Alert>
-            )}
-
-            {parsedResult?.error && (
-              <Alert variant="destructive">
-                <AlertCircleIcon className="size-4" />
-                <AlertTitle>Could not parse JSON</AlertTitle>
-                <AlertDescription>{parsedResult.error}</AlertDescription>
-              </Alert>
-            )}
-          </CardContent>
-          <CardFooter className="flex items-center justify-between border-t pt-4">
-            <Button type="button" variant="outline" onClick={() => setStep(1)}>
-              <ArrowLeftIcon className="mr-1.5 size-4" />
-              Back
-            </Button>
-            <Button type="button" disabled={!canValidate} onClick={openPreview}>
-              Next: Preview{" "}
-              {canPreview && parsedResult
-                ? `(${parsedResult.rows.length})`
-                : ""}
-              <ArrowRightIcon className="ml-1.5 size-4" />
-            </Button>
-          </CardFooter>
-        </Card>
+        <ImportJsonInput
+          handleFileUpload={handleFileUpload}
+          rawJson={rawJson}
+          updateRawJson={updateRawJson}
+          isReadingFile={isReadingFile}
+          fileError={fileError}
+          parsedResult={parsedResult}
+          canValidate={canValidate}
+          openPreview={openPreview}
+          canPreview={canPreview}
+          onBack={() => setStep(1)}
+        />
       )}
 
       {step === 3 && importedCount !== null && (
@@ -749,42 +572,15 @@ export function ManualImportView() {
               </Alert>
             )}
 
-            <div className="overflow-x-auto rounded-md border">
-              <table className="w-full text-sm">
-                <thead className="border-b bg-muted/40 text-left text-xs font-medium text-muted-foreground">
-                  <tr>
-                    <th className="w-10 px-3 py-2.5">
-                      <Checkbox
-                        aria-label="Select all valid rows"
-                        checked={allValidSelected}
-                        disabled={
-                          importMutation.isPending || validRows.length === 0
-                        }
-                        onCheckedChange={(checked) =>
-                          toggleAllValid(Boolean(checked))
-                        }
-                      />
-                    </th>
-                    <th className="px-3 py-2.5">Date</th>
-                    <th className="px-3 py-2.5">Merchant</th>
-                    <th className="px-3 py-2.5">Kind</th>
-                    <th className="px-3 py-2.5">Category &amp; Tags</th>
-                    <th className="px-3 py-2.5 text-right">Amount</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {parsedResult.rows.map((row) => (
-                    <ImportPreviewRow
-                      key={row.index}
-                      row={row}
-                      disabled={importMutation.isPending}
-                      isChecked={row.valid && !deselectedIndices.has(row.index)}
-                      onToggle={toggleRowSelection}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ImportPreviewTable
+              allValidSelected={allValidSelected}
+              importPending={importMutation.isPending}
+              validCount={validRows.length}
+              toggleAllValid={toggleAllValid}
+              rows={parsedResult.rows}
+              deselectedIndices={deselectedIndices}
+              toggleRowSelection={toggleRowSelection}
+            />
           </CardContent>
           <CardFooter className="flex items-center justify-between border-t pt-4">
             <Button

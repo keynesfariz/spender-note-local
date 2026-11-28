@@ -1,22 +1,22 @@
 "use client"
 
+import { resolveMagicDraft } from "./magic-enrich-draft"
+import { DuplicateTransactionPicker } from "./duplicate-transaction-picker"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useId, useMemo, useState, type SubmitEvent } from "react"
 
-import { CategoryField } from "@/components/category-field"
+import { CategoryField } from "@/components/categories/category-field"
 import { DatePicker } from "@/components/date-picker"
 import {
   MagicEnrichControl,
-  resolveMagicDraft,
   useMagicEnrich,
-} from "@/components/magic-enrich"
-import { TagMultiSelect } from "@/components/tag-multi-select"
+} from "@/components/transactions/magic-enrich"
 import {
   TransactionForm,
+  TransactionTagsField,
   UNASSIGNED_ACCOUNT,
-} from "@/components/transaction-form"
+} from "@/components/transactions/transaction-form"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -51,11 +51,9 @@ import { DEFAULT_CATEGORY } from "@/lib/categories"
 import {
   dateTimeInputToUtcIso,
   formatMinorCurrency,
-  formatUtcInTimezone,
   utcToDateInputValue,
   utcToTimeInputValue,
 } from "@/lib/format"
-import { cn } from "@/lib/utils"
 
 export type ManualMergeMode = "duplicate" | "combine"
 
@@ -373,62 +371,12 @@ export function ManualMergeDialog({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {mode === "duplicate" && (
-            <div
-              role="radiogroup"
-              aria-label="Choose transaction to keep"
-              className="space-y-2"
-            >
-              {transactions.map((tx) => {
-                const selected = keepId === tx.id
-                return (
-                  <label
-                    key={tx.id}
-                    className={cn(
-                      "flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors",
-                      selected
-                        ? "border-primary bg-primary/5 ring-1 ring-primary"
-                        : "hover:bg-muted/50"
-                    )}
-                  >
-                    <input
-                      type="radio"
-                      name="keep-transaction"
-                      value={tx.id}
-                      checked={selected}
-                      onChange={() => setKeepId(tx.id)}
-                      className="mt-1 size-4 accent-primary"
-                    />
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="truncate font-medium">
-                          {tx.remark ?? tx.merchant}
-                        </span>
-                        <span className="font-medium tabular-nums">
-                          {formatMinorCurrency(tx.amount_minor, tx.currency)}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                        <Badge variant="secondary">{tx.category}</Badge>
-                        <Badge variant="outline">
-                          {tx.sourceCount > 0
-                            ? `${tx.sourceCount} ${tx.sourceCount === 1 ? "email" : "emails"}`
-                            : "Manual"}
-                        </Badge>
-                        <span>
-                          {tx.account_name ?? "Unassigned"} ·{" "}
-                          {formatUtcInTimezone(tx.occurred_at_utc, timezone)}
-                        </span>
-                      </div>
-                      {tx.note && (
-                        <p className="text-xs text-muted-foreground">
-                          Note: {tx.note}
-                        </p>
-                      )}
-                    </div>
-                  </label>
-                )
-              })}
-            </div>
+            <DuplicateTransactionPicker
+              transactions={transactions}
+              keepId={keepId}
+              setKeepId={setKeepId}
+              timezone={timezone}
+            />
           )}
 
           {mode === "combine" && (
@@ -539,22 +487,19 @@ export function ManualMergeDialog({
                       valid={magicChangedFields.has("Category")}
                     />
 
-                    <Field
-                      className="sm:col-span-2"
-                      data-valid={magicChangedFields.has("Tags") || undefined}
-                    >
-                      <FieldLabel>Tags</FieldLabel>
-                      <TagMultiSelect
-                        key={selectionKey}
-                        tags={tagListQuery.data ?? []}
-                        selectedTagIds={selectedTagIds}
-                        onChange={setSelectedTagIds}
-                        draftTagNames={draftTagNames}
-                        onDraftTagNamesChange={setDraftTagNames}
-                        onCreatePendingChange={setTagCreatePending}
-                        disabled={isEnriching || isPending}
-                      />
-                    </Field>
+                    <TransactionTagsField
+                      valid={magicChangedFields.has("Tags")}
+                      pickerKey={selectionKey}
+                      picker={{
+                        tags: tagListQuery.data ?? [],
+                        selectedTagIds,
+                        onChange: setSelectedTagIds,
+                        draftTagNames,
+                        onDraftTagNamesChange: setDraftTagNames,
+                        onCreatePendingChange: setTagCreatePending,
+                        disabled: isEnriching || isPending,
+                      }}
+                    />
                   </div>
                 }
               />

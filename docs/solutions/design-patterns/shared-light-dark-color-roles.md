@@ -21,7 +21,7 @@ The initial warm dark palette used espresso surfaces and cream primary buttons. 
 
 Define shared accent colors in [the global stylesheet](../../../app/globals.css) and let each theme set their intensity through semantic tokens. Cream marks the spending summary and selection, mint identifies wallets, and peach identifies credit cards. In dark mode, mix each accent into the card surface to keep the hue visible without making the surface bright. Keep primary actions near-neutral in both modes and reserve blue for links and focus.
 
-For example, the monthly summary uses `bg-summary` in [MonthlySummary](../../../components/monthly-summary.tsx). The stylesheet maps `--summary` to `--secondary` in both modes. That token uses cream directly in light mode and a cream tint over the dark card surface in dark mode. Account icons follow the same approach through `bg-wallet` and `bg-credit` in [AccountsView](../../../components/accounts-view.tsx).
+For example, the monthly summary uses `bg-summary` in [MonthlySummary](../../../components/dashboard/monthly-summary.tsx). The stylesheet maps `--summary` to `--secondary` in both modes. That token uses cream directly in light mode and a cream tint over the dark card surface in dark mode. Account icons follow the same approach through `bg-wallet` and `bg-credit` in [AccountsView](../../../components/accounts/accounts-view.tsx).
 
 ## When to apply
 

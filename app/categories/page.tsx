@@ -1,6 +1,6 @@
 import { Suspense } from "react"
 
-import { CategoriesTagsView } from "@/components/categories-tags-view"
+import { CategoriesTagsView } from "@/components/categories/categories-tags-view"
 
 export default function CategoriesPage() {
   return (

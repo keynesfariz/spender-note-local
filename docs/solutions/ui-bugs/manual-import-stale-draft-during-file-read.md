@@ -25,7 +25,7 @@ The input revision establishes which read may apply its result. The previous dra
 
 ## Solution
 
-The wizard tracks whether the latest file read is pending and disables Preview and submission eligibility during that interval. A newer edit or reset supersedes the read. If the latest read fails, the wizard clears the pending state, displays an error, and preserves the previous draft for recovery. [Manual Import wizard](../../../components/manual-import-view.tsx#L285)
+The wizard tracks whether the latest file read is pending and disables Preview and submission eligibility during that interval. A newer edit or reset supersedes the read. If the latest read fails, the wizard clears the pending state, displays an error, and preserves the previous draft for recovery. [Manual Import wizard](../../../components/import/manual-import-view.tsx#L274)
 
 ## Prevention
 

@@ -9,7 +9,7 @@ import {
   TransactionForm,
   TransactionFormFields,
   UNASSIGNED_ACCOUNT,
-} from "@/components/transaction-form"
+} from "@/components/transactions/transaction-form"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Field, FieldLabel } from "@/components/ui/field"
 import {

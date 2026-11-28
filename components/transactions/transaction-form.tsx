@@ -6,11 +6,11 @@ import {
 } from "lucide-react"
 import { useId, useMemo, type ComponentProps, type ReactNode } from "react"
 
-import { CategoryField } from "@/components/category-field"
+import { CategoryField } from "@/components/categories/category-field"
 import { DatePicker } from "@/components/date-picker"
 import { IconTooltip } from "@/components/icon-tooltip"
-import type { MagicField } from "@/components/magic-enrich"
-import { TagMultiSelect } from "@/components/tag-multi-select"
+import type { MagicField } from "./magic-enrich-draft"
+import { TagMultiSelect } from "@/components/tags/tag-multi-select"
 import { Badge } from "@/components/ui/badge"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -192,14 +192,29 @@ export function TransactionFormFields({
         valid={validFields?.has("Category")}
       />
 
-      <Field
-        className="sm:col-span-2"
-        data-valid={validFields?.has("Tags") || undefined}
-      >
-        <FieldLabel>Tags</FieldLabel>
-        {tagPicker && <TagMultiSelect key={tagPickerKey} {...tagPicker} />}
-      </Field>
+      <TransactionTagsField
+        valid={validFields?.has("Tags")}
+        picker={tagPicker}
+        pickerKey={tagPickerKey}
+      />
     </div>
+  )
+}
+
+export function TransactionTagsField({
+  valid,
+  picker,
+  pickerKey,
+}: {
+  valid?: boolean
+  picker?: ComponentProps<typeof TagMultiSelect>
+  pickerKey?: string | null
+}) {
+  return (
+    <Field className="sm:col-span-2" data-valid={valid || undefined}>
+      <FieldLabel>Tags</FieldLabel>
+      {picker && <TagMultiSelect key={pickerKey} {...picker} />}
+    </Field>
   )
 }
 

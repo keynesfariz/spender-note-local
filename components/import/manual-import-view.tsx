@@ -486,10 +486,10 @@ export function ManualImportView() {
           updateRawJson={updateRawJson}
           isReadingFile={isReadingFile}
           fileError={fileError}
-          parsedResult={parsedResult}
+          parseError={parsedResult?.error}
           canValidate={canValidate}
           openPreview={openPreview}
-          canPreview={canPreview}
+          previewCount={canPreview ? parsedResult?.rows.length : undefined}
           onBack={() => setStep(1)}
         />
       )}

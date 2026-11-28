@@ -26,7 +26,6 @@ import {
   buildTransferItem,
 } from "./transfer-draft"
 import { TransferFields } from "./transfer-fields"
-export type { TransferTarget } from "./transfer-draft"
 
 export function TransferFormDialog({
   targets,

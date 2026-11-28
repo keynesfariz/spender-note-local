@@ -7,7 +7,7 @@ import {
 } from "@/lib/api/types.generated"
 import { utcToDateInputValue, utcToTimeInputValue } from "@/lib/format"
 
-export function mergeEnrichedPreviewTags(
+function mergeEnrichedPreviewTags(
   preview: TransactionEnrichmentPreview,
   currentSelectedTagIds: string[],
   knownTags: TagSummary[]
@@ -46,7 +46,6 @@ export function mergeEnrichedPreviewTags(
         selectedSet.add(known.id)
         nextSelected.push(known.id)
       }
-      selectedNamesLower.add(lower)
       continue
     }
 
@@ -113,23 +112,22 @@ export function patchTagsQueryCache(
       missingOrAdded = true
       return prev
     }
-    const next = [...prev]
+    let next: TagSummary[] | undefined
     const knownIds = new Set(prev.map((tag) => tag.id))
-    let changed = false
     for (const tag of tags) {
       if (!knownIds.has(tag.id)) {
         knownIds.add(tag.id)
+        next ??= [...prev]
         next.push({
           id: tag.id,
           name: tag.name,
           transaction_count: 1,
           created_at_utc: fallbackCreatedAtUtc,
         })
-        changed = true
         missingOrAdded = true
       }
     }
-    return changed ? next.sort((a, b) => a.name.localeCompare(b.name)) : prev
+    return next ? next.sort((a, b) => a.name.localeCompare(b.name)) : prev
   })
   return missingOrAdded
 }

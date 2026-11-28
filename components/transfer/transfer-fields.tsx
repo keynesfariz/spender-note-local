@@ -15,12 +15,28 @@ import {
   SkippedPaymentEvidence,
   TransferMatchPicker,
 } from "./transfer-match-picker"
-import {
-  type Draft,
-  type TransferTarget,
-  TRANSFER_ACTION_OPTIONS,
-  dateTimePickerProps,
-} from "./transfer-draft"
+import type { Draft, TransferTarget } from "./transfer-draft"
+
+const TRANSFER_ACTION_OPTIONS = [
+  { value: "record", label: "Record transfer" },
+  { value: "match", label: "Match an existing transfer" },
+] as const
+
+function dateTimePickerProps(
+  current: Draft["dateTime"],
+  onChange: (value: Draft["dateTime"]) => void
+) {
+  return {
+    value: current.date,
+    onChange: (date: string) =>
+      onChange({ date, time: date ? current.time : "" }),
+    time: {
+      value: current.time,
+      onChange: (time: string) => onChange({ ...current, time }),
+      step: 1,
+    },
+  }
+}
 
 export const TransferFields = memo(function TransferFields({
   index,

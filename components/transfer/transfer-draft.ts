@@ -23,11 +23,6 @@ export type TransferTarget = {
   cardPayment?: boolean
 }
 
-export const TRANSFER_ACTION_OPTIONS = [
-  { value: "record", label: "Record transfer" },
-  { value: "match", label: "Match an existing transfer" },
-] as const
-
 type LocalDateTime = {
   date: string
   time: string
@@ -68,22 +63,6 @@ function toUtc(
       return original
   }
   return dateTimeInputToUtcIso(value.date, value.time, timezone)
-}
-
-export function dateTimePickerProps(
-  current: LocalDateTime,
-  onChange: (value: LocalDateTime) => void
-) {
-  return {
-    value: current.date,
-    onChange: (date: string) =>
-      onChange({ date, time: date ? current.time : "" }),
-    time: {
-      value: current.time,
-      onChange: (time: string) => onChange({ ...current, time }),
-      step: 1,
-    },
-  }
 }
 
 export function initialDraft(

@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-export const TRANSACTION_SOURCE_OPTIONS = [
+const TRANSACTION_SOURCE_OPTIONS = [
   { value: "all", label: "All sources" },
   { value: "gmail", label: "Gmail" },
   { value: "manual", label: "Manual" },
@@ -96,56 +96,29 @@ export function TransactionListFilters({
         </SelectContent>
       </Select>
 
-      <Select
+      <PlainTransactionFilter
         items={tagFilterItems}
         value={tag}
         onValueChange={(value) => onTagChange(value ?? "")}
-      >
-        <SelectTrigger className="w-full" aria-label="Filter by tag">
-          <SelectValue placeholder="All tags" />
-        </SelectTrigger>
-        <SelectContent>
-          {tagFilterItems.map((item) => (
-            <SelectItem key={item.value} value={item.value}>
-              {item.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+        label="Filter by tag"
+        placeholder="All tags"
+      />
 
-      <Select
+      <PlainTransactionFilter
         items={accountFilterItems}
         value={accountId}
         onValueChange={(value) => onAccountIdChange(value ?? "all")}
-      >
-        <SelectTrigger className="w-full" aria-label="Filter by account">
-          <SelectValue placeholder="All accounts" />
-        </SelectTrigger>
-        <SelectContent>
-          {accountFilterItems.map((item) => (
-            <SelectItem key={item.value} value={item.value}>
-              {item.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+        label="Filter by account"
+        placeholder="All accounts"
+      />
 
-      <Select
+      <PlainTransactionFilter
         items={TRANSACTION_SOURCE_OPTIONS}
         value={source}
         onValueChange={(value) => onSourceChange(value ?? "all")}
-      >
-        <SelectTrigger className="w-full" aria-label="Filter by source">
-          <SelectValue placeholder="All sources" />
-        </SelectTrigger>
-        <SelectContent>
-          {TRANSACTION_SOURCE_OPTIONS.map((item) => (
-            <SelectItem key={item.value} value={item.value}>
-              {item.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+        label="Filter by source"
+        placeholder="All sources"
+      />
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:col-span-2 lg:col-span-1">
         <div className="flex items-center gap-2">
@@ -177,5 +150,34 @@ export function TransactionListFilters({
         </Button>
       </div>
     </div>
+  )
+}
+
+function PlainTransactionFilter<Value extends string>({
+  items,
+  value,
+  onValueChange,
+  label,
+  placeholder,
+}: {
+  items: readonly { value: Value; label: string }[]
+  value: Value
+  onValueChange: (value: Value | null) => void
+  label: string
+  placeholder: string
+}) {
+  return (
+    <Select items={items} value={value} onValueChange={onValueChange}>
+      <SelectTrigger className="w-full" aria-label={label}>
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent>
+        {items.map((item) => (
+          <SelectItem key={item.value} value={item.value}>
+            {item.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }

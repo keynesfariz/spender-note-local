@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { enrichTransactionsApi } from "@/lib/api/transactions"
 import { type TransactionEnrichmentPreview } from "@/lib/api/types.generated"
 
-export function isAbortError(err: unknown): boolean {
+function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === "AbortError"
 }
 
@@ -127,7 +127,7 @@ export function MagicEnrichControl({
   )
 }
 
-export function MagicEnrichButton({
+function MagicEnrichButton({
   isEnriching,
   disabled = false,
   onClick,

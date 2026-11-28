@@ -26,7 +26,7 @@ import type { ManualMergeMode } from "@/components/transactions/manual-merge-dia
 import { PageLayout } from "@/components/PageLayout"
 import { TransactionList } from "@/components/transactions/transaction-list"
 import { type TransactionSourceFilter } from "./transaction-list-filters"
-import type { TransferTarget } from "@/components/transfer/transfer-form-dialog"
+import type { TransferTarget } from "@/components/transfer/transfer-draft"
 import { TriageUndoToast } from "@/components/transactions/triage-undo-toast"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"

@@ -1,5 +1,6 @@
 "use client"
 
+import { ACCOUNT_TYPE_LABELS } from "./account-type-labels"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   useId,
@@ -52,14 +53,15 @@ interface IdentifierDraft {
 
 type AccountTab = "details" | "identifiers"
 
-const ACCOUNT_TYPE_OPTIONS: ReadonlyArray<{
-  value: AccountType
-  label: string
-}> = [
-  { value: "credit_card", label: "Credit Card" },
-  { value: "debit_card", label: "Debit Card" },
-  { value: "digital_wallet", label: "Digital Wallet" },
+const ACCOUNT_TYPES: readonly AccountType[] = [
+  "credit_card",
+  "debit_card",
+  "digital_wallet",
 ]
+const ACCOUNT_TYPE_OPTIONS = ACCOUNT_TYPES.map((value) => ({
+  value,
+  label: ACCOUNT_TYPE_LABELS[value],
+}))
 
 export function AccountFormDialog({
   open,

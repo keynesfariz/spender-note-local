@@ -18,7 +18,6 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { type ParseManualImportResult } from "@/lib/manual-import"
 
 export function ImportJsonInput({
   handleFileUpload,
@@ -26,10 +25,10 @@ export function ImportJsonInput({
   updateRawJson,
   isReadingFile,
   fileError,
-  parsedResult,
+  parseError,
   canValidate,
   openPreview,
-  canPreview,
+  previewCount,
   onBack,
 }: {
   handleFileUpload: (event: ChangeEvent<HTMLInputElement>) => void
@@ -37,10 +36,10 @@ export function ImportJsonInput({
   updateRawJson: (nextJson: string) => void
   isReadingFile: boolean
   fileError: string
-  parsedResult: ParseManualImportResult | null | undefined
+  parseError: string | undefined
   canValidate: boolean
   openPreview: () => void
-  canPreview: boolean
+  previewCount: number | undefined
   onBack: () => void
 }) {
   return (
@@ -87,11 +86,11 @@ export function ImportJsonInput({
           </Alert>
         )}
 
-        {parsedResult?.error && (
+        {parseError && (
           <Alert variant="destructive">
             <AlertCircleIcon className="size-4" />
             <AlertTitle>Could not parse JSON</AlertTitle>
-            <AlertDescription>{parsedResult.error}</AlertDescription>
+            <AlertDescription>{parseError}</AlertDescription>
           </Alert>
         )}
       </CardContent>
@@ -101,8 +100,7 @@ export function ImportJsonInput({
           Back
         </Button>
         <Button type="button" disabled={!canValidate} onClick={openPreview}>
-          Next: Preview{" "}
-          {canPreview && parsedResult ? `(${parsedResult.rows.length})` : ""}
+          Next: Preview {previewCount === undefined ? "" : `(${previewCount})`}
           <ArrowRightIcon className="ml-1.5 size-4" />
         </Button>
       </CardFooter>

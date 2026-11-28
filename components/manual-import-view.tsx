@@ -17,6 +17,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -51,12 +52,16 @@ import { accountOptionsQuery } from "@/lib/api/accounts"
 import { categoriesQuery } from "@/lib/api/categories"
 import { localeQuery } from "@/lib/api/settings"
 import { tagsQuery } from "@/lib/api/tags"
-import { importManualTransactionsApi } from "@/lib/api/transactions"
+import {
+  importManualTransactionsApi,
+  invalidateTransactionRelatedQueries,
+} from "@/lib/api/transactions"
 import { formatMinorCurrency } from "@/lib/format"
 import {
   buildManualImportPrompt,
   parseManualImportJson,
   type ParsedManualImportRow,
+  type ParseManualImportResult,
 } from "@/lib/manual-import"
 
 type WizardStep = 1 | 2 | 3
@@ -78,16 +83,19 @@ function AccountSelect({
   items,
   value,
   onValueChange,
+  disabled,
 }: {
   id: string
   className?: string
   items: AccountSelectItem[]
   value: string
   onValueChange: (value: string) => void
+  disabled?: boolean
 }) {
   return (
     <Select
       items={items}
+      disabled={disabled}
       value={value}
       onValueChange={(val) => onValueChange(val ?? "")}
     >
@@ -108,10 +116,12 @@ function AccountSelect({
 const ImportPreviewRow = memo(function ImportPreviewRow({
   row,
   isChecked,
+  disabled,
   onToggle,
 }: {
   row: ParsedManualImportRow
   isChecked: boolean
+  disabled: boolean
   onToggle: (index: number, checked: boolean) => void
 }) {
   return (
@@ -124,11 +134,11 @@ const ImportPreviewRow = memo(function ImportPreviewRow({
         <Checkbox
           aria-label={`Select row ${row.index + 1}`}
           checked={isChecked}
-          disabled={!row.valid}
+          disabled={disabled || !row.valid}
           onCheckedChange={(checked) => onToggle(row.index, Boolean(checked))}
         />
       </td>
-      <td className="whitespace-nowrap px-3 py-2.5 align-top text-xs">
+      <td className="px-3 py-2.5 align-top text-xs whitespace-nowrap">
         {row.dateDisplay}
       </td>
       <td className="px-3 py-2.5 align-top">
@@ -167,7 +177,7 @@ const ImportPreviewRow = memo(function ImportPreviewRow({
           )}
         </div>
       </td>
-      <td className="whitespace-nowrap px-3 py-2.5 text-right align-top font-medium tabular-nums">
+      <td className="px-3 py-2.5 text-right align-top font-medium whitespace-nowrap tabular-nums">
         {row.valid
           ? formatMinorCurrency(row.amountMinor, row.currency)
           : `${row.amountDisplay} ${row.currency}`}
@@ -200,7 +210,7 @@ export function ManualImportView() {
     [tagsDataQuery.data]
   )
 
-  const [step, setStep] = useState<WizardStep>(1)
+  const [requestedStep, setStep] = useState<WizardStep>(1)
   const [selectedAccountId, setSelectedAccountId] = useState<string>("")
   const [customInstructions, setCustomInstructions] = useState("")
   const [copied, setCopied] = useState(false)
@@ -262,17 +272,57 @@ export function ManualImportView() {
     [currency, timezone, categoryNames, tagNames]
   )
 
-  const parsedResult = useMemo(() => {
-    if (!rawJson.trim() || !isConfigured) {
-      return null
-    }
-    return parseManualImportJson(rawJson, parseOptions)
-  }, [rawJson, isConfigured, parseOptions])
+  const validationContext = isConfigured ? parseOptions : null
+  const currentContext = useRef(validationContext)
+  useLayoutEffect(() => {
+    currentContext.current = validationContext
+  }, [validationContext])
 
+  const [validation, setValidation] = useState<{
+    context: typeof parseOptions
+    result: ParseManualImportResult
+  } | null>(null)
+  const [isReadingFile, setIsReadingFile] = useState(false)
+  const [fileError, setFileError] = useState("")
+  const inputRevision = useRef(0)
+  const submitting = useRef(false)
+  const currentResult =
+    validation?.context === validationContext ? validation.result : null
   const canPreview = Boolean(
-    parsedResult && !parsedResult.error && parsedResult.rows.length > 0
+    !isReadingFile &&
+    currentResult &&
+    !currentResult.error &&
+    currentResult.rows.length > 0
+  )
+  const canValidate = Boolean(
+    !isReadingFile && validationContext && rawJson.trim()
   )
 
+  const importMutation = useMutation({
+    mutationFn: async ({
+      request,
+      accountName,
+    }: {
+      request: Parameters<typeof importManualTransactionsApi>[0]
+      accountName: string
+    }) => ({
+      ...(await importManualTransactionsApi(request)),
+      accountName,
+    }),
+    onSuccess: () => {
+      setRawJson("")
+      setValidation(null)
+      setDeselectedIndices(new Set())
+      invalidateTransactionRelatedQueries(queryClient)
+    },
+    onSettled: () => {
+      submitting.current = false
+    },
+  })
+
+  const parsedResult = importMutation.isPending
+    ? validation?.result
+    : currentResult
   const validRows = useMemo(
     () => (parsedResult?.rows ?? []).filter((r) => r.valid),
     [parsedResult]
@@ -286,37 +336,52 @@ export function ManualImportView() {
     [validRows, deselectedIndices]
   )
 
-  const importMutation = useMutation({
-    mutationFn: () => {
-      if (!effectiveAccountId) {
-        throw new Error("Select an account before importing.")
-      }
-      const payloads = selectedValidRows
-        .map((r) => r.payload)
-        .filter((p): p is NonNullable<typeof p> => Boolean(p))
-      return importManualTransactionsApi({
-        account_id: effectiveAccountId,
-        transactions: payloads,
-      })
-    },
-    onSuccess: () => {
-      setRawJson("")
-      setDeselectedIndices(new Set())
-      void queryClient.invalidateQueries({ queryKey: ["transactions"] })
-      void queryClient.invalidateQueries({ queryKey: ["spending"] })
-    },
-  })
+  const receipt = importMutation.data
+  const importedCount = receipt?.importedCount ?? null
+  const step =
+    requestedStep === 3 && !canPreview && !receipt && !importMutation.isPending
+      ? 2
+      : requestedStep
 
-  const importedCount = importMutation.data?.importedCount ?? null
+  function updateRawJson(nextJson: string) {
+    inputRevision.current += 1
+    setIsReadingFile(false)
+    setRawJson(nextJson)
+    setFileError("")
+    setValidation(null)
+    setDeselectedIndices(new Set())
+    importMutation.reset()
+  }
 
-  const updateRawJson = useCallback(
-    (nextJson: string) => {
-      setRawJson(nextJson)
-      setDeselectedIndices(new Set())
-      importMutation.reset()
-    },
-    [importMutation]
-  )
+  function preview(raw: string, context: typeof validationContext) {
+    if (!context || !raw.trim()) return
+    const result = parseManualImportJson(raw, context)
+    setValidation({ context, result })
+    setDeselectedIndices(new Set())
+    if (!result.error && result.rows.length > 0) setStep(3)
+  }
+
+  function openPreview() {
+    if (receipt || canPreview) {
+      setStep(3)
+    } else if (!currentResult) {
+      preview(rawJson, validationContext)
+    }
+  }
+
+  function submitImport() {
+    if (submitting.current || !canPreview || !selectedAccount) return
+    const transactions = selectedValidRows.flatMap((row) =>
+      row.payload ? [row.payload] : []
+    )
+    if (transactions.length === 0) return
+    submitting.current = true
+    inputRevision.current += 1
+    importMutation.mutate({
+      request: { account_id: selectedAccount.id, transactions },
+      accountName: selectedAccount.name,
+    })
+  }
 
   async function handleCopyPrompt() {
     if (!generatedPrompt) return
@@ -331,24 +396,36 @@ export function ManualImportView() {
     }, 2000)
   }
 
-  function handleFileUpload(event: ChangeEvent<HTMLInputElement>) {
+  async function handleFileUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
+    event.target.value = ""
     if (!file) return
-    void file.text().then((content) => {
-      updateRawJson(content)
-      if (isConfigured) {
-        const check = parseManualImportJson(content, parseOptions)
-        if (!check.error && check.rows.length > 0) {
-          setStep(3)
-        }
+
+    const revision = ++inputRevision.current
+    setIsReadingFile(true)
+    setFileError("")
+    let content: string
+    try {
+      content = await file.text()
+    } catch {
+      if (revision === inputRevision.current) {
+        setIsReadingFile(false)
+        setFileError("Could not read the JSON file. Select it again to retry.")
       }
-    }, () => {})
+      return
+    }
+    if (revision !== inputRevision.current) return
+
+    updateRawJson(content)
+    if (!content.trim()) {
+      setFileError("The JSON file is empty.")
+      return
+    }
+    preview(content, currentContext.current)
   }
 
   function handleStartOver() {
-    setRawJson("")
-    setDeselectedIndices(new Set())
-    importMutation.reset()
+    updateRawJson("")
     setStep(1)
   }
 
@@ -394,7 +471,9 @@ export function ManualImportView() {
             (s === 1 && step > 1) ||
             (s === 2 && (step > 2 || canPreview)) ||
             (s === 3 && importedCount !== null)
-          const isDisabled = s === 3 && !canPreview && importedCount === null
+          const isDisabled =
+            importMutation.isPending ||
+            (s === 3 && !canValidate && importedCount === null)
 
           return (
             <button
@@ -402,7 +481,7 @@ export function ManualImportView() {
               type="button"
               disabled={isDisabled}
               aria-current={isActive ? "step" : undefined}
-              onClick={() => setStep(s)}
+              onClick={() => (s === 3 ? openPreview() : setStep(s))}
               className={`flex items-center gap-3 rounded-lg border px-3.5 py-2.5 text-left text-sm transition-colors ${
                 isActive
                   ? "border-primary bg-primary/5 font-medium text-foreground"
@@ -563,6 +642,15 @@ export function ManualImportView() {
               />
             </div>
 
+            {isReadingFile && <p role="status">Reading JSON file…</p>}
+
+            {fileError && (
+              <Alert variant="destructive">
+                <AlertCircleIcon className="size-4" />
+                <AlertDescription>{fileError}</AlertDescription>
+              </Alert>
+            )}
+
             {parsedResult?.error && (
               <Alert variant="destructive">
                 <AlertCircleIcon className="size-4" />
@@ -572,19 +660,11 @@ export function ManualImportView() {
             )}
           </CardContent>
           <CardFooter className="flex items-center justify-between border-t pt-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setStep(1)}
-            >
+            <Button type="button" variant="outline" onClick={() => setStep(1)}>
               <ArrowLeftIcon className="mr-1.5 size-4" />
               Back
             </Button>
-            <Button
-              type="button"
-              disabled={!canPreview}
-              onClick={() => setStep(3)}
-            >
+            <Button type="button" disabled={!canValidate} onClick={openPreview}>
               Next: Preview{" "}
               {canPreview && parsedResult
                 ? `(${parsedResult.rows.length})`
@@ -605,7 +685,7 @@ export function ManualImportView() {
             </CardTitle>
             <CardDescription>
               Saved as unreviewed manual transactions
-              {selectedAccount ? ` on ${selectedAccount.name}` : ""}.
+              {receipt?.accountName ? ` on ${receipt.accountName}` : ""}.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap items-center gap-3">
@@ -616,11 +696,7 @@ export function ManualImportView() {
               Review imported transactions
               <ArrowRightIcon className="ml-1.5 size-4" />
             </Link>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleStartOver}
-            >
+            <Button type="button" variant="outline" onClick={handleStartOver}>
               <RotateCcwIcon className="mr-1.5 size-4" />
               Import another statement
             </Button>
@@ -628,115 +704,118 @@ export function ManualImportView() {
         </Card>
       )}
 
-      {step === 3 && importedCount === null && canPreview && parsedResult && (
-          <Card>
-            <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
-              <div>
-                <CardTitle className="text-base">
-                  3. Preview &amp; select rows to import
-                </CardTitle>
-                <CardDescription>
-                  {selectedValidRows.length} of {validRows.length} valid{" "}
-                  {validRows.length === 1 ? "row" : "rows"} selected
-                  {invalidRowsCount > 0
-                    ? ` · ${invalidRowsCount} invalid ${invalidRowsCount === 1 ? "row" : "rows"} excluded`
-                    : ""}
-                  . Unmatched categories default to Other and unmatched tags are
-                  dropped.
-                </CardDescription>
+      {step === 3 && importedCount === null && parsedResult && (
+        <Card>
+          <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-base">
+                3. Preview &amp; select rows to import
+              </CardTitle>
+              <CardDescription>
+                {selectedValidRows.length} of {validRows.length} valid{" "}
+                {validRows.length === 1 ? "row" : "rows"} selected
+                {invalidRowsCount > 0
+                  ? ` · ${invalidRowsCount} invalid ${invalidRowsCount === 1 ? "row" : "rows"} excluded`
+                  : ""}
+                . Unmatched categories default to Other and unmatched tags are
+                dropped.
+              </CardDescription>
+            </div>
+            {accounts.length > 0 && (
+              <div className="flex items-center gap-2">
+                <Label
+                  htmlFor="preview-account"
+                  className="text-xs whitespace-nowrap text-muted-foreground"
+                >
+                  Target account
+                </Label>
+                <AccountSelect
+                  id="preview-account"
+                  disabled={importMutation.isPending}
+                  className="w-48"
+                  items={accountSelectItems}
+                  value={effectiveAccountId}
+                  onValueChange={setSelectedAccountId}
+                />
               </div>
-              {accounts.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <Label
-                    htmlFor="preview-account"
-                    className="whitespace-nowrap text-xs text-muted-foreground"
-                  >
-                    Target account
-                  </Label>
-                  <AccountSelect
-                    id="preview-account"
-                    className="w-48"
-                    items={accountSelectItems}
-                    value={effectiveAccountId}
-                    onValueChange={setSelectedAccountId}
-                  />
-                </div>
-              )}
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {importMutation.isError && (
-                <Alert variant="destructive">
-                  <AlertCircleIcon className="size-4" />
-                  <AlertTitle>Import failed</AlertTitle>
-                  <AlertDescription>
-                    {importMutation.error instanceof Error
-                      ? importMutation.error.message
-                      : "Failed to import transactions."}
-                  </AlertDescription>
-                </Alert>
-              )}
+            )}
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {importMutation.isError && (
+              <Alert variant="destructive">
+                <AlertCircleIcon className="size-4" />
+                <AlertTitle>Import failed</AlertTitle>
+                <AlertDescription>
+                  {importMutation.error instanceof Error
+                    ? importMutation.error.message
+                    : "Failed to import transactions."}
+                </AlertDescription>
+              </Alert>
+            )}
 
-              <div className="overflow-x-auto rounded-md border">
-                <table className="w-full text-sm">
-                  <thead className="border-b bg-muted/40 text-left text-xs font-medium text-muted-foreground">
-                    <tr>
-                      <th className="w-10 px-3 py-2.5">
-                        <Checkbox
-                          aria-label="Select all valid rows"
-                          checked={allValidSelected}
-                          disabled={validRows.length === 0}
-                          onCheckedChange={(checked) =>
-                            toggleAllValid(Boolean(checked))
-                          }
-                        />
-                      </th>
-                      <th className="px-3 py-2.5">Date</th>
-                      <th className="px-3 py-2.5">Merchant</th>
-                      <th className="px-3 py-2.5">Kind</th>
-                      <th className="px-3 py-2.5">Category &amp; Tags</th>
-                      <th className="px-3 py-2.5 text-right">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {parsedResult.rows.map((row) => (
-                      <ImportPreviewRow
-                        key={row.index}
-                        row={row}
-                        isChecked={
-                          row.valid && !deselectedIndices.has(row.index)
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full text-sm">
+                <thead className="border-b bg-muted/40 text-left text-xs font-medium text-muted-foreground">
+                  <tr>
+                    <th className="w-10 px-3 py-2.5">
+                      <Checkbox
+                        aria-label="Select all valid rows"
+                        checked={allValidSelected}
+                        disabled={
+                          importMutation.isPending || validRows.length === 0
                         }
-                        onToggle={toggleRowSelection}
+                        onCheckedChange={(checked) =>
+                          toggleAllValid(Boolean(checked))
+                        }
                       />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-            <CardFooter className="flex items-center justify-between border-t pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setStep(2)}
-              >
-                <ArrowLeftIcon className="mr-1.5 size-4" />
-                Back
-              </Button>
-              <Button
-                type="button"
-                disabled={
-                  selectedValidRows.length === 0 ||
-                  !effectiveAccountId ||
-                  importMutation.isPending
-                }
-                onClick={() => importMutation.mutate()}
-              >
-                {importMutation.isPending
-                  ? "Importing..."
-                  : `Import ${selectedValidRows.length} ${selectedValidRows.length === 1 ? "transaction" : "transactions"}`}
-              </Button>
-            </CardFooter>
-          </Card>
-        )}
+                    </th>
+                    <th className="px-3 py-2.5">Date</th>
+                    <th className="px-3 py-2.5">Merchant</th>
+                    <th className="px-3 py-2.5">Kind</th>
+                    <th className="px-3 py-2.5">Category &amp; Tags</th>
+                    <th className="px-3 py-2.5 text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {parsedResult.rows.map((row) => (
+                    <ImportPreviewRow
+                      key={row.index}
+                      row={row}
+                      disabled={importMutation.isPending}
+                      isChecked={row.valid && !deselectedIndices.has(row.index)}
+                      onToggle={toggleRowSelection}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+          <CardFooter className="flex items-center justify-between border-t pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={importMutation.isPending}
+              onClick={() => setStep(2)}
+            >
+              <ArrowLeftIcon className="mr-1.5 size-4" />
+              Back
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                selectedValidRows.length === 0 ||
+                !selectedAccount ||
+                importMutation.isPending
+              }
+              onClick={submitImport}
+            >
+              {importMutation.isPending
+                ? "Importing..."
+                : `Import ${selectedValidRows.length} ${selectedValidRows.length === 1 ? "transaction" : "transactions"}`}
+            </Button>
+          </CardFooter>
+        </Card>
+      )}
     </PageLayout>
   )
 }

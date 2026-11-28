@@ -333,3 +333,55 @@ func TestListTransactions_SourceTypeFilter(t *testing.T) {
 		t.Fatalf("expected error for invalid sourceType")
 	}
 }
+
+func TestListTransactions_FiltersDestinationAccountTypeBeforePagination(t *testing.T) {
+	gdb := openDomainTestDB(t)
+	card := seedTestAccount(t, gdb, "credit-card", "Credit card", "IDR")
+	bank := seedTestAccount(t, gdb, "bank", "Bank", "IDR")
+	if err := gdb.Model(&db.Account{}).Where("id = ?", bank).Update("type", "debit_card").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	seedTransfer := func(merchant, timestamp, from, to string) string {
+		t.Helper()
+		row, err := CreateManualTransaction(gdb, CreateManualTransactionInput{
+			AmountMinor: 100_000, OccurredAtUtc: timestamp, Merchant: merchant, AccountID: &from,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := gdb.Model(&db.Transaction{}).Where("id = ?", row.ID).Updates(map[string]any{
+			"kind": "transfer", "destination_account_id": to,
+			"destination_amount_minor": 100_000, "destination_currency": "IDR",
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		return row.ID
+	}
+
+	newest := seedTransfer("From card", "2026-11-22T12:00:00Z", card, bank)
+	first := seedTransfer("First card payment", "2026-11-22T11:00:00Z", bank, card)
+	second := seedTransfer("Second card payment", "2026-11-22T10:00:00Z", bank, card)
+
+	for _, tc := range []struct {
+		destinationType string
+		page            int
+		wantCount       int64
+		wantID          string
+	}{
+		{"credit_card", 1, 2, first},
+		{"credit_card", 2, 2, second},
+		{"", 1, 3, newest},
+	} {
+		result, err := ListTransactions(gdb, ListTransactionsParams{
+			Kind: "transfer", DestinationAccountType: tc.destinationType, Page: tc.page, PageSize: 1,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.TotalCount != tc.wantCount || len(result.Items) != 1 || result.Items[0].ID != tc.wantID {
+			t.Fatalf("destination type %q page %d expected count %d and item %q: %+v",
+				tc.destinationType, tc.page, tc.wantCount, tc.wantID, result)
+		}
+	}
+}

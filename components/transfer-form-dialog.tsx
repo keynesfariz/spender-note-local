@@ -187,7 +187,6 @@ function SkippedPaymentEvidence({ emailId }: { emailId: string }) {
 
 function TransferMatchPicker({
   active,
-  accounts,
   cardPayment,
   matchId,
   name,
@@ -195,7 +194,6 @@ function TransferMatchPicker({
   timezone,
 }: {
   active: boolean
-  accounts: AccountSummary[]
   cardPayment?: boolean
   matchId: string
   name: string
@@ -207,6 +205,7 @@ function TransferMatchPicker({
     ...transactionsQuery({
       kind: "transfer",
       ledgerRange: "all",
+      destinationAccountType: cardPayment ? "credit_card" : undefined,
       page: matchPage,
     }),
     enabled: active,
@@ -214,19 +213,7 @@ function TransferMatchPicker({
 
   if (!active) return null
 
-  const items = matches.data?.items ?? []
-  let candidates = items
-  if (cardPayment) {
-    const cardIds = new Set(
-      accounts
-        .filter((account) => account.type === "credit_card")
-        .map((account) => account.id)
-    )
-    candidates = items.filter(
-      (item) =>
-        item.destination_account_id && cardIds.has(item.destination_account_id)
-    )
-  }
+  const candidates = matches.data?.items ?? []
 
   return (
     <div className="space-y-3">
@@ -379,7 +366,7 @@ const TransferFields = memo(function TransferFields({
       )}
       <TransferMatchPicker
         active={draft.mode === "match"}
-        accounts={accounts}
+        key={target.cardPayment ? "card-payment" : "transfer"}
         cardPayment={target.cardPayment}
         matchId={draft.matchId}
         name={`${id}-match`}

@@ -19,19 +19,20 @@ func GET(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(q.Get("page"))
 	pageSize, _ := strconv.Atoi(q.Get("pageSize"))
 	res, err := domain.ListTransactions(gdb.WithContext(r.Context()), domain.ListTransactionsParams{
-		LedgerRange:    q.Get("ledgerRange"),
-		Month:          q.Get("month"),
-		StartDate:      q.Get("startDate"),
-		EndDate:        q.Get("endDate"),
-		Category:       q.Get("category"),
-		Tag:            q.Get("tag"),
-		AccountID:      q.Get("accountId"),
-		Kind:           q.Get("kind"),
-		SourceType:     q.Get("sourceType"),
-		Search:         q.Get("search"),
-		UnreviewedOnly: q.Get("unreviewedOnly") == "true" || q.Get("unreviewedOnly") == "1",
-		Page:           page,
-		PageSize:       pageSize,
+		LedgerRange:            q.Get("ledgerRange"),
+		Month:                  q.Get("month"),
+		StartDate:              q.Get("startDate"),
+		EndDate:                q.Get("endDate"),
+		Category:               q.Get("category"),
+		Tag:                    q.Get("tag"),
+		AccountID:              q.Get("accountId"),
+		Kind:                   q.Get("kind"),
+		SourceType:             q.Get("sourceType"),
+		DestinationAccountType: q.Get("destination_account_type"),
+		Search:                 q.Get("search"),
+		UnreviewedOnly:         q.Get("unreviewedOnly") == "true" || q.Get("unreviewedOnly") == "1",
+		Page:                   page,
+		PageSize:               pageSize,
 	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())

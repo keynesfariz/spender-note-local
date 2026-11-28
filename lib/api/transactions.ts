@@ -49,6 +49,7 @@ export const transactionsQuery = (params?: {
   tag?: string
   accountId?: string
   kind?: "expense" | "income" | "transfer"
+  destinationAccountType?: "credit_card"
   sourceType?: TransactionListItem["source_type"]
   search?: string
   unreviewedOnly?: boolean
@@ -67,6 +68,9 @@ export const transactionsQuery = (params?: {
       if (params?.tag) sp.set("tag", params.tag)
       if (params?.accountId) sp.set("accountId", params.accountId)
       if (params?.kind) sp.set("kind", params.kind)
+      if (params?.destinationAccountType) {
+        sp.set("destination_account_type", params.destinationAccountType)
+      }
       if (params?.sourceType) sp.set("sourceType", params.sourceType)
       if (params?.search) sp.set("search", params.search)
       if (params?.unreviewedOnly) sp.set("unreviewedOnly", "true")

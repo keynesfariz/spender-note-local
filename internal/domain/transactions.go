@@ -324,19 +324,20 @@ func transactionTaxonomyFilters(category, tag string) ([]string, []any) {
 }
 
 type ListTransactionsParams struct {
-	LedgerRange    string
-	Month          string
-	StartDate      string
-	EndDate        string
-	Category       string
-	Tag            string
-	AccountID      string
-	Kind           string
-	SourceType     string
-	Search         string
-	UnreviewedOnly bool
-	Page           int
-	PageSize       int
+	DestinationAccountType string
+	LedgerRange            string
+	Month                  string
+	StartDate              string
+	EndDate                string
+	Category               string
+	Tag                    string
+	AccountID              string
+	Kind                   string
+	SourceType             string
+	Search                 string
+	UnreviewedOnly         bool
+	Page                   int
+	PageSize               int
 }
 
 type LedgerScope struct {
@@ -458,6 +459,13 @@ func listTransactionsAt(gdb *gorm.DB, params ListTransactionsParams, now time.Ti
 		default:
 			return nil, errors.New("Invalid transaction source.")
 		}
+	}
+	if destinationType := strings.TrimSpace(params.DestinationAccountType); destinationType != "" {
+		if destinationType != "credit_card" {
+			return nil, errors.New("Invalid destination account type.")
+		}
+		conds = append(conds, "EXISTS (SELECT 1 FROM accounts WHERE accounts.id = t.destination_account_id AND accounts.type = ?)")
+		args = append(args, destinationType)
 	}
 	if params.AccountID != "" && params.AccountID != "all" {
 		if params.AccountID == "unassigned" {

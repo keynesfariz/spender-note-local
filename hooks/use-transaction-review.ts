@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 
+import { transactionInspectorQuery } from "@/lib/api/transaction-inspector"
 import { transactionsQuery } from "@/lib/api/transactions"
 import type { PaginatedTransactionsResponse } from "@/lib/api/types.generated"
 import {
@@ -79,6 +80,7 @@ export function useTransactionReview({
 
   const open = useCallback(
     (id: string) => {
+      void queryClient.prefetchQuery(transactionInspectorQuery(id))
       const nextSelection: Selection = {
         id,
         scope,

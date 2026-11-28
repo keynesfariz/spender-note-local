@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>React and Next.js audit</title>
+<style>
+:root { color-scheme: light dark; }
+body { max-width: 74ch; margin: 3rem auto; padding: 0 1.25rem; font: 1rem/1.6 system-ui, sans-serif; }
+h1, h2, h3 { line-height: 1.2; }
+article { border-block-start: 1px solid GrayText; padding-block: .75rem; }
+small, footer { color: GrayText; }
+</style>
+</head>
+<body>
+<header><h1>React and Next.js audit</h1><p><time datetime="2026-11-28">November 28, 2026</time> · React, App Router, and component design</p></header>
+<details><summary>Document metadata</summary><dl><dt>topic</dt><dd>react-nextjs-audit</dd><dt>mode</dt><dd>repo-grounded</dd></dl></details>
+<section id="codebase-context"><h2>Codebase Context</h2>
+<p>The app uses App Router, TanStack Query, and local Go route handlers. The <a href="../plans/2026-11-25-1039-perf-address-react-performance-audit-plan.md">previous performance plan</a> already addressed several common issues, including cancellable ledger queries and intent-driven prefetching. This review prioritized observable behavior, concrete request sequences, and component design that makes regressions harder to introduce.</p>
+<p>ESLint and TypeScript passed. The web-platform legacy scanner reported zero matches across 96 files and 52 rules, covering roughly 20% of its guidance corpus. The review used static source inspection and did not measure timings or run browser reproductions.</p>
+</section>
+<section id="topic-axes"><h2>Topic Axes</h2><ul><li>Mutation state and cache consistency</li><li>Route state and loading</li><li>Render work and component design</li></ul></section>
+<section id="ranked-ideas"><h2>Ranked Ideas</h2>
+<nav aria-label="Ranked ideas"><ol><li><a href="#i1">Keep import results tied to the submitted draft</a></li><li><a href="#i2">Refresh account balances and category and tag counts after import</a></li><li><a href="#i3">Filter card-payment candidates before pagination</a></li><li><a href="#i4">Use one source of truth for the Settings tab</a></li><li><a href="#i5">Start inspector data and code loading together</a></li><li><a href="#i6">Parse each import draft once</a></li><li><a href="#i7">Isolate transaction patch construction</a></li></ol></nav>
+<article id="i1"><h3>I1. Keep import results tied to the submitted draft</h3><small>Mutation state · 98% confidence · Medium complexity</small>
+<p>A late <code>file.text()</code> completion can overwrite newer input and advance the wizard. While import is pending, the user can change accounts or steps. Success then clears current input and the receipt reads the current account.</p>
+<p>Track the latest input intent, surface read failures, and capture immutable submission variables for the success receipt. Decide which pending transitions should remain available, since locking every control can make a long import feel stuck.</p>
+<p>Source evidence at <a href="../../components/manual-import-view.tsx#L289">submission and success</a>, <a href="../../components/manual-import-view.tsx#L334">file reads</a>, and <a href="../../components/manual-import-view.tsx#L606">receipt and account controls</a>.</p></article>
+<article id="i2"><h3>I2. Refresh account balances and category and tag counts after import</h3><small>Cache consistency · 98% confidence · Low complexity</small>
+<p>The import attaches transactions to accounts, categories, and tags. Its success handler refreshes the ledger and spending queries only. Recently cached balances and transaction counts can therefore reappear stale when the user navigates to those views.</p>
+<p>Reuse the transaction invalidation helper, or narrow it to the affected query keys if a trace shows avoidable fetches. The existing helper invalidates broad query families, which can cause extra requests for mounted consumers.</p>
+<p>Source evidence at <a href="../../components/manual-import-view.tsx#L302">import success</a>, <a href="../../internal/domain/transactions_import.go#L169">import writes</a>, and <a href="../../lib/api/transactions.ts#L211">the shared invalidation helper</a>.</p></article>
+<article id="i3"><h3>I3. Filter card-payment candidates before pagination</h3><small>Data flow · 97% confidence · Medium complexity</small>
+<p>The transfer picker requests a page of all transfers, then removes rows whose destination is outside the credit-card accounts. It can show an empty page even when eligible matches exist, and the pager reflects the count of all transfers.</p>
+<p>Put eligibility into the query that returns rows and counts. This takes a Go and TypeScript query-contract change and needs coverage for mixed transfer history.</p>
+<p>Source evidence at <a href="../../components/transfer-form-dialog.tsx#L205">the transfer picker</a>.</p></article>
+<article id="i4"><h3>I4. Use one source of truth for the Settings tab</h3><small>Route state · 95% confidence · Low complexity</small>
+<p>The page passes URL parameters to a component that consumes them only in a state initializer. Same-route URL changes can retain the mounted tab state. Each tab click also uses <code>router.replace</code> for a client-side display choice.</p>
+<p>Use the established URL-state pattern from Categories &amp; Tags. Preserve Gmail callback defaults and feedback while checking direct links and browser navigation.</p>
+<p>Source evidence at <a href="../../app/settings/page.tsx#L3">the route</a>, <a href="../../components/settings-view.tsx#L85">the client tab state</a>, and <a href="../../components/categories-tags-view.tsx#L226">the existing pattern</a>. See <a href="https://nextjs.org/docs/app/getting-started/linking-and-navigating#native-history-api">Next.js navigation guidance</a>.</p></article>
+<article id="i5"><h3>I5. Start inspector data and code loading together</h3><small>Loading · 96% confidence in the request sequence · Low complexity</small>
+<p>The first drawer open downloads the dynamic component, then starts the detail query after mount. Start the canonical detail query when the user opens a transaction so code and data can load together. Retain lazy loading and measure a cold drawer open. Each abandoned open can still issue a detail request.</p>
+<p>Source evidence at <a href="../../components/transactions-view.tsx#L83">the dynamic boundary</a>, <a href="../../hooks/use-transaction-review.ts#L80">the open handler</a>, and <a href="../../components/transaction-inspector-drawer.tsx#L264">the detail query</a>. See <a href="https://nextjs.org/docs/app/guides/lazy-loading">Next.js lazy-loading guidance</a>.</p></article>
+<article id="i6"><h3>I6. Parse each import draft once</h3><small>Render work · 99% confidence in repeated work · Medium complexity</small>
+<p>The controlled input parses and normalizes all rows for each text edit. A file upload parses in the handler and the render path parses the same payload again. <code>useMemo</code> still recomputes for each edit because the input changes.</p>
+<p>Share one parse result per committed input. Decide when to validate based on whether users need live feedback or can validate at Preview. Profile a representative large import before introducing workers or paginating the preview.</p>
+<p>Source evidence at <a href="../../components/manual-import-view.tsx#L265">render-time parsing</a>, <a href="../../components/manual-import-view.tsx#L334">upload parsing</a>, and <a href="../../lib/manual-import.ts#L170">the parser</a>. See <a href="https://react.dev/reference/react/useMemo">React memoization guidance</a>.</p></article>
+<article id="i7"><h3>I7. Isolate transaction patch construction</h3><small>Component design · 90% confidence · Low complexity</small>
+<p>The inspector form builds its update payload inline alongside draft guards, mutations, and UI. The patch rules combine currency changes, timezone conversion, and omitted or cleared fields. A pure transaction patch function would make those cases independently testable. Keep it close to the inspector unless another caller needs the same rules.</p>
+<p>Source evidence at <a href="../../components/transaction-inspector-drawer.tsx#L485">the submit flow</a> and <a href="../solutions/design-patterns/inventory-fields-before-sharing-create-edit-forms.md">the prior form design learning</a>.</p></article>
+</section>
+<section id="rejected"><h2>Ideas Set Aside</h2>
+<ul>
+<li>Fetch Go handlers from Server Components across the app. Installed Next.js guidance describes the build-time listener limitation and runtime round trip. Keep the existing same-origin client path unless a supported direct data path earns its cost.</li>
+<li>Replace TanStack Query with SWR or wrap independent query hooks in Promise.all. The hooks already run in parallel and share cache entries.</li>
+<li>Remove effects or add memoization broadly. Existing effects handle lifecycle cleanup and URL synchronization. Memoization would need a measured render bottleneck.</li>
+<li>Move every dialog behind a new dynamic boundary or prefetch every row. Several heavy paths already load on demand. Blanket prefetch would multiply detail requests.</li>
+<li>Replace the full Lucide dynamic icon path. The broad registry is present, but delivered bundle cost and icon paint need measurement. Keep persisted custom icon names in any later experiment.</li>
+<li>Split the inspector by file size. Extracting the patch rules gives a specific testability benefit without moving draft and focus ownership.</li>
+</ul>
+</section>
+<footer>Composed November 28, 2026 with ce-ideate and Vercel React Best Practices from the codebase audit request.</footer>
+</body>
+</html>

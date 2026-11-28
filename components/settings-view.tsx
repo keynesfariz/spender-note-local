@@ -2,8 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query"
 import dynamic from "next/dynamic"
-import { useRouter } from "next/navigation"
-import { useState } from "react"
+import { parseAsString, parseAsStringLiteral, useQueryStates } from "nuqs"
 
 import { PageLayout } from "@/components/PageLayout"
 import { LocaleSettingsTab } from "@/components/settings/locale-settings-tab"
@@ -52,53 +51,32 @@ function preloadTriageRulesTab() {
   void import("@/components/settings/triage-rules-tab").catch(() => {})
 }
 
-type SettingsTabValue = "general" | "gmail" | "triage" | "llm"
+const settingsTabParser = parseAsStringLiteral([
+  "general",
+  "gmail",
+  "triage",
+  "llm",
+] as const)
 
-function resolveInitialTab(
-  tabParam?: string,
-  gmailParam?: string,
-  errorParam?: string
-): SettingsTabValue {
-  if (
-    tabParam === "general" ||
-    tabParam === "gmail" ||
-    tabParam === "triage" ||
-    tabParam === "llm"
-  ) {
-    return tabParam
-  }
-  if (gmailParam || errorParam) {
-    return "gmail"
-  }
-  return "general"
+const settingsSearchParsers = {
+  tab: settingsTabParser,
+  gmail: parseAsString,
+  error: parseAsString,
 }
 
-export function SettingsView({
-  tabParam,
-  gmailParam,
-  errorParam,
-}: {
-  tabParam?: string
-  gmailParam?: string
-  errorParam?: string
-}) {
-  const router = useRouter()
-  const settings = useQuery(settingsQuery())
-  const [activeTab, setActiveTab] = useState<SettingsTabValue>(() =>
-    resolveInitialTab(tabParam, gmailParam, errorParam)
+export function SettingsView() {
+  const [{ tab, gmail, error }, setSearch] = useQueryStates(
+    settingsSearchParsers
   )
+  const settings = useQuery(settingsQuery())
+  const activeTab = tab ?? (gmail || error ? "gmail" : "general")
 
   function handleTabChange(nextValue: unknown) {
-    if (
-      nextValue !== "general" &&
-      nextValue !== "gmail" &&
-      nextValue !== "triage" &&
-      nextValue !== "llm"
-    ) {
-      return
+    const nextTab =
+      typeof nextValue === "string" ? settingsTabParser.parse(nextValue) : null
+    if (nextTab) {
+      void setSearch({ tab: nextTab, gmail: null, error: null })
     }
-    setActiveTab(nextValue)
-    router.replace(`/settings?tab=${nextValue}`, { scroll: false })
   }
 
   return (
@@ -107,16 +85,14 @@ export function SettingsView({
       subtitle="Configure your locale, Gmail connection, trusted senders, triage
           rules, and local LLM server."
     >
-      {gmailParam === "connected" && (
+      {gmail === "connected" && (
         <Alert>
           <AlertDescription>Gmail connected successfully.</AlertDescription>
         </Alert>
       )}
-      {errorParam && (
+      {error && (
         <Alert variant="destructive">
-          <AlertDescription>
-            Gmail connection error: {errorParam}
-          </AlertDescription>
+          <AlertDescription>Gmail connection error: {error}</AlertDescription>
         </Alert>
       )}
 

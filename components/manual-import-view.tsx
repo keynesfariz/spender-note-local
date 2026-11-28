@@ -299,16 +299,12 @@ export function ManualImportView() {
   )
 
   const importMutation = useMutation({
-    mutationFn: async ({
+    mutationFn: ({
       request,
-      accountName,
     }: {
       request: Parameters<typeof importManualTransactionsApi>[0]
       accountName: string
-    }) => ({
-      ...(await importManualTransactionsApi(request)),
-      accountName,
-    }),
+    }) => importManualTransactionsApi(request),
     onSuccess: () => {
       setRawJson("")
       setValidation(null)
@@ -327,10 +323,7 @@ export function ManualImportView() {
     () => (parsedResult?.rows ?? []).filter((r) => r.valid),
     [parsedResult]
   )
-  const invalidRowsCount = useMemo(
-    () => (parsedResult?.rows ?? []).filter((r) => !r.valid).length,
-    [parsedResult]
-  )
+  const invalidRowsCount = (parsedResult?.rows.length ?? 0) - validRows.length
   const selectedValidRows = useMemo(
     () => validRows.filter((r) => !deselectedIndices.has(r.index)),
     [validRows, deselectedIndices]
@@ -338,6 +331,9 @@ export function ManualImportView() {
 
   const receipt = importMutation.data
   const importedCount = receipt?.importedCount ?? null
+  const importedAccountName = receipt
+    ? importMutation.variables?.accountName
+    : undefined
   const step =
     requestedStep === 3 && !canPreview && !receipt && !importMutation.isPending
       ? 2
@@ -685,7 +681,7 @@ export function ManualImportView() {
             </CardTitle>
             <CardDescription>
               Saved as unreviewed manual transactions
-              {receipt?.accountName ? ` on ${receipt.accountName}` : ""}.
+              {importedAccountName ? ` on ${importedAccountName}` : ""}.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap items-center gap-3">

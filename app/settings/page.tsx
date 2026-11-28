@@ -1,16 +1,12 @@
-import { SettingsView } from "@/components/settings-view"
+import { Suspense } from "react"
 
-export default async function SettingsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ tab?: string; gmail?: string; error?: string }>
-}) {
-  const params = await searchParams
+import { SettingsView } from "@/components/settings-view"
+import { Skeleton } from "@/components/ui/skeleton"
+
+export default function SettingsPage() {
   return (
-    <SettingsView
-      tabParam={params.tab}
-      gmailParam={params.gmail}
-      errorParam={params.error}
-    />
+    <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+      <SettingsView />
+    </Suspense>
   )
 }

@@ -8,6 +8,8 @@ import type {
 export const transactionInspectorQuery = (id: string) =>
   queryOptions({
     queryKey: ["transactions", "inspector", id] as const,
+    // Match the drawer’s client retry behavior when prefetch starts the request.
+    retry: 3,
     queryFn: ({ signal }) =>
       apiFetch<TransactionInspectorView>(
         `/api/transactions/${encodeURIComponent(id)}`,

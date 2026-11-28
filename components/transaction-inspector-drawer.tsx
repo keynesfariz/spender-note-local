@@ -89,28 +89,19 @@ import {
   type TransactionListItem,
 } from "@/lib/api/types.generated"
 import {
-  dateTimeInputToUtcIso,
   formatTransactionAmount,
   formatUtcInTimezone,
   groupAmountInput,
   minorToDecimalInput,
-  parseDecimalToMinorClient,
   transactionKindLabel,
   utcToDateInputValue,
   utcToTimeInputValue,
 } from "@/lib/format"
+import {
+  buildInspectorPatch,
+  type InspectorDraftField,
+} from "@/lib/transaction-inspector-patch"
 import { type ReviewDirection } from "@/lib/transaction-review"
-
-type DraftField =
-  | "remark"
-  | "merchant"
-  | "amount"
-  | "category"
-  | "tags"
-  | "account"
-  | "date"
-  | "note"
-  | "conversion"
 
 function loadDraft(tx: TransactionListItem, timezone?: string | null) {
   const date = utcToDateInputValue(tx.occurred_at_utc, timezone)
@@ -123,7 +114,7 @@ function loadDraft(tx: TransactionListItem, timezone?: string | null) {
       time,
       timezone,
     },
-    edits: new Set<DraftField>(),
+    edits: new Set<InspectorDraftField>(),
     remark: tx.remark ?? tx.merchant,
     merchant: tx.merchant,
     remarkUserEdited: tx.remark_user_edited,
@@ -471,7 +462,7 @@ function InspectorForm({
   })
 
   function editDraft(
-    field: DraftField,
+    field: InspectorDraftField,
     values:
       Partial<DraftValues> | ((current: DraftValues) => Partial<DraftValues>)
   ) {
@@ -502,48 +493,19 @@ function InspectorForm({
     setFormError(null)
     setStatusMessage(null)
     try {
-      const saveAmount = edits.has("amount") || convertToLocalCurrency
-      if (saveAmount && baseline.currency !== tx.currency) {
-        throw new Error(
-          "The transaction currency changed. Reopen it before editing the amount."
-        )
-      }
-      const targetCurrency = isIncome
-        ? receivingCurrency
-        : convertToLocalCurrency
-          ? localCurrency
-          : tx.currency
-      const saveDate =
-        edits.has("date") && (date !== baseline.date || time !== baseline.time)
-
-      if (saveDate && (!date.trim() || !time.trim())) {
-        throw new Error("Enter the occurred date and time before saving.")
-      }
-
-      const saveMerchant = edits.has("merchant")
-      const saveRemark = edits.has("remark") || saveMerchant
-      const patch = {
-        id: tx.id,
-        remark: saveRemark ? remark.trim() : undefined,
-        merchant: saveMerchant ? merchant : undefined,
-        remark_user_edited: saveRemark ? remarkUserEdited : undefined,
-        amount_minor: saveAmount
-          ? parseDecimalToMinorClient(amount, targetCurrency)
-          : undefined,
-        category: edits.has("category") ? category : undefined,
-        tag_ids: edits.has("tags") ? selectedTagIds : undefined,
-        tag_names: edits.has("tags") ? draftTagNames : undefined,
-        account_id: edits.has("account")
-          ? accountId !== UNASSIGNED_ACCOUNT
-            ? accountId
-            : null
-          : undefined,
-        occurred_at_utc: saveDate
-          ? dateTimeInputToUtcIso(date, time || "00:00", baseline.timezone)
-          : undefined,
-        note: edits.has("note") ? note.trim() || null : undefined,
-        convertToLocalCurrency: saveAmount ? convertToLocalCurrency : undefined,
-      }
+      const patch = buildInspectorPatch(
+        {
+          ...draft,
+          accountId: accountId === UNASSIGNED_ACCOUNT ? null : accountId,
+        },
+        {
+          id: tx.id,
+          currency: tx.currency,
+          isIncome,
+          receivingCurrency,
+          localCurrency,
+        }
+      )
       void review.write(() => updateMutation.mutateAsync(patch), advance)
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Invalid input.")

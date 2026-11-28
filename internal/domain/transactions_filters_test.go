@@ -374,10 +374,14 @@ func TestListTransactions_FiltersDestinationAccountTypeBeforePagination(t *testi
 		{"", 1, 3, newest},
 	} {
 		result, err := ListTransactions(gdb, ListTransactionsParams{
-			Kind: "transfer", DestinationAccountType: tc.destinationType, Page: tc.page, PageSize: 1,
+			Kind: "transfer", LedgerRange: "all", DestinationAccountType: tc.destinationType, Page: tc.page, PageSize: 1,
 		})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if result.TotalInRangeCount != 3 {
+			t.Fatalf("destination type %q page %d changed the overall range count: got %d, want 3",
+				tc.destinationType, tc.page, result.TotalInRangeCount)
 		}
 		if result.TotalCount != tc.wantCount || len(result.Items) != 1 || result.Items[0].ID != tc.wantID {
 			t.Fatalf("destination type %q page %d expected count %d and item %q: %+v",
